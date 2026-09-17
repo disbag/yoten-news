@@ -22,9 +22,22 @@ export type FeedItem = {
 };
 
 export async function getFeed(
-  options: { limit?: number; offset?: number; category?: string } = {}
+  options: {
+    limit?: number;
+    category?: string;
+    // Курсор для подгрузки следующей страницы — пара (published_at,
+    // cluster_id) последней уже показанной карточки, а не OFFSET. OFFSET
+    // сдвигается, когда между загрузкой страниц в таблицу добавляются новые
+    // статьи (а фоновый npm run fetch может отработать в любой момент) — ORDER
+    // BY published_at DESC не гарантирует, что то, что было на позиции N,
+    // останется на позиции N при следующем запросе, из-за чего "Показать
+    // ещё" могло показать одну и ту же карточку дважды или пропустить
+    // какую-то. Курсор по последней увиденной паре не зависит от того,
+    // сколько строк появилось до него с момента предыдущего запроса.
+    before?: { publishedAt: string; clusterId: number };
+  } = {}
 ): Promise<FeedItem[]> {
-  const { limit = 30, offset = 0, category } = options;
+  const { limit = 30, category, before } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
   // одного кластера описывают один инфоповод, категория у них должна
@@ -33,7 +46,7 @@ export async function getFeed(
   // относиться сразу к двум темам (см. CATEGORY_INSTRUCTIONS в
   // src/lib/prompt.ts), поэтому category — массив, и фильтр — вхождение, а
   // не равенство.
-  const params: unknown[] = [limit, offset];
+  const params: unknown[] = [limit];
   let categoryClause = "";
   if (category) {
     params.push(category);
@@ -82,9 +95,9 @@ export async function getFeed(
     JOIN sources s ON s.id = a.source_id
     ${categoryClause}
     GROUP BY a.cluster_id
+    ${before ? `HAVING (max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})` : ""}
     ORDER BY published_at DESC, a.cluster_id DESC
     LIMIT $1
-    OFFSET $2
     `,
     params
   );

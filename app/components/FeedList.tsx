@@ -20,11 +20,14 @@ export default function FeedList({
   const [loading, setLoading] = useState(false);
 
   async function loadMore() {
+    if (items.length === 0) return;
     setLoading(true);
     try {
+      const last = items[items.length - 1];
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
-        offset: String(items.length),
+        beforePublishedAt: last.publishedAt ?? "",
+        beforeClusterId: String(last.clusterId),
       });
       if (category) params.set("category", category);
       const res = await fetch(`/api/feed?${params}`);

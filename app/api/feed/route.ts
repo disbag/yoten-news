@@ -9,9 +9,14 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const category = searchParams.get("category") ?? undefined;
   const limit = Number(searchParams.get("limit") ?? 30);
-  const offset = Number(searchParams.get("offset") ?? 0);
+  const beforePublishedAt = searchParams.get("beforePublishedAt");
+  const beforeClusterId = searchParams.get("beforeClusterId");
+  const before =
+    beforePublishedAt && beforeClusterId
+      ? { publishedAt: beforePublishedAt, clusterId: Number(beforeClusterId) }
+      : undefined;
 
-  const rows = await getFeed({ category, limit: limit + 1, offset });
+  const rows = await getFeed({ category, limit: limit + 1, before });
   const hasMore = rows.length > limit;
 
   return NextResponse.json({ items: rows.slice(0, limit), hasMore });
