@@ -7,6 +7,7 @@ import { DETAILED_SUMMARY_PROMPT } from "../lib/prompt.js";
 import { fetchOgTags } from "../lib/ogTags.js";
 import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
+import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
 // Lifehacker — Ziff Davis) кладут туда ПОЛНЫЙ, уже чистый текст статьи прямо
@@ -149,6 +150,11 @@ async function processSource(
         rawSummary,
       }));
     } catch (err) {
+      // Лимиты исчерпаны везде (все ключи, все модели, см. gemini.ts) — дальше
+      // пропускать статьи по одной бессмысленно, каждая следующая упрётся в ту
+      // же стену. Останавливаем весь пайплайн, а не долбим исчерпанный лимит
+      // до конца списка источников.
+      if (err instanceof GeminiQuotaExhaustedError) throw err;
       console.error(`  ошибка саммаризации: ${(err as Error).message}`);
       continue;
     }
@@ -207,6 +213,7 @@ async function processSource(
         if (aiSummaryLong === item.title) aiSummaryLong = null;
         await sleep(1000);
       } catch (err) {
+        if (err instanceof GeminiQuotaExhaustedError) throw err;
         console.error(`  ошибка подробной саммаризации: ${(err as Error).message}`);
       }
     }
@@ -223,9 +230,18 @@ async function processSource(
     const embedding = await embed(`${item.title}. ${excerpt ?? fullDescription ?? rawSummary}`);
     const vectorLiteral = toVectorLiteral(embedding);
 
+    // ON CONFLICT DO NOTHING — не только защита от повторной обработки внутри
+    // одного прогона (это уже покрыто проверкой exists выше), а именно от
+    // гонки МЕЖДУ параллельными прогонами: если случайно запущены два
+    // npm run fetch одновременно (реальный случай — один упал с
+    // 23505/unique_violation на articles_link_key, когда второй успел
+    // вставить ту же ссылку first), без ON CONFLICT это валит весь процесс
+    // с необработанным исключением вместо того, чтобы просто пропустить уже
+    // занятую кем-то статью.
     const insert = await pool.query(
       `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, ai_summary, ai_summary_long, category, embedding)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)
+       ON CONFLICT (link) DO NOTHING
        RETURNING id`,
       [
         source.id,
@@ -241,6 +257,7 @@ async function processSource(
         vectorLiteral,
       ]
     );
+    if (insert.rowCount === 0) continue; // параллельный прогон уже вставил эту ссылку
     const newId = insert.rows[0].id;
 
     // Тот же инфоповод: строгий порог, короткое окно. Источник может быть
