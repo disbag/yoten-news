@@ -1,4 +1,6 @@
 import * as cheerio from "cheerio";
+import type { CheerioAPI, Cheerio } from "cheerio";
+import type { AnyNode } from "domhandler";
 
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -29,51 +31,46 @@ async function fetchHtmlChunk(url: string, maxBytes = 500_000): Promise<string> 
   return html;
 }
 
-function extractMetaContent(html: string, name: string): string | undefined {
-  // Атрибуты property/content в meta-тегах идут в произвольном порядке —
-  // пробуем оба варианта.
-  const patterns = [
-    new RegExp(
-      `<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=["']([^"']*)["']`,
-      "i"
-    ),
-    new RegExp(
-      `<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${name}["']`,
-      "i"
-    ),
-  ];
-  for (const re of patterns) {
-    const match = html.match(re);
-    if (match) return decodeHtmlEntities(match[1]);
-  }
-  return undefined;
-}
-
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&#x27;/gi, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+// Раньше вся эта логика была на regex по сырой HTML-строке — оказалось
+// принципиально ненадёжно на реальных страницах: если где-то на странице
+// встречается незакрытый/невалидно вложенный тег (частый случай в реальной
+// вёрстке — сами браузеры и cheerio молча "чинят" это по правилам HTML5, а
+// regex нет), совпадение может "съехать" и просто пропустить настоящий текст
+// статьи, подставив вместо него мусор из другого места страницы. Конкретный
+// случай: TIME100 Art — <p> с реальным текстом статьи никак не находился
+// через regex `<p[^>]*>(.*?)<\/p>`, хотя текст был на странице (видно в
+// браузере) — cheerio находит его с первого раза. Теперь везде работаем
+// через нормальное дерево DOM.
+function extractMetaContent($: CheerioAPI, name: string): string | undefined {
+  const content =
+    $(`meta[property="${name}"]`).attr("content") ?? $(`meta[name="${name}"]`).attr("content");
+  return content?.trim() || undefined;
 }
 
 // Многие сайты (Wired, The New Yorker, The Verge — похоже, общий шаблон у
 // Condé Nast/Vox Media) кладут ПОЛНЫЙ чистый текст статьи в JSON-LD-разметку
 // (schema.org NewsArticle) — без единого тега и без навигационного мусора.
 // Это надёжнее, чем парсить <p>, если поле есть — проверяем в первую очередь.
-function extractArticleBodyFromJsonLd(html: string): string | undefined {
-  const match = html.match(/"articleBody":"((?:[^"\\]|\\.)*)"/);
-  if (!match) return undefined;
-  try {
-    return JSON.parse(`"${match[1]}"`);
-  } catch {
-    // Обрезали HTML по лимиту байт посреди JSON-строки — просто пропускаем.
-    return undefined;
+// На странице может быть несколько <script type="application/ld+json">
+// (часто ещё Organization/BreadcrumbList рядом с NewsArticle) — проверяем
+// все, берём первый, где реально нашлось articleBody.
+function extractArticleBodyFromJsonLd($: CheerioAPI): string | undefined {
+  const scripts = $('script[type="application/ld+json"]').toArray();
+  for (const el of scripts) {
+    const raw = $(el).contents().text();
+    try {
+      const parsed = JSON.parse(raw);
+      const candidates = Array.isArray(parsed) ? parsed : [parsed, ...(parsed?.["@graph"] ?? [])];
+      for (const node of candidates) {
+        if (typeof node?.articleBody === "string" && node.articleBody.trim()) {
+          return node.articleBody;
+        }
+      }
+    } catch {
+      // Не валидный/обрезанный по лимиту байт JSON — пропускаем этот блок.
+    }
   }
+  return undefined;
 }
 
 // HTML5 <article> — семантическая разметка самого тела статьи, отдельно от
@@ -83,17 +80,20 @@ function extractArticleBodyFromJsonLd(html: string): string | undefined {
 // некоторых сайтов (Polygon, 9to5Mac — оба проверены) <article> используется
 // ещё и для карточек анонсов в списках похожих статей, поэтому тегов
 // несколько и не любой из них — тело текущей статьи. Берём самый длинный по
-// сырой разметке (эвристика: карточка-анонс в разы короче полноценной
+// видимому тексту (эвристика: карточка-анонс в разы короче полноценной
 // статьи) — это не идеально для таких сайтов, но не хуже, чем просто
-// игнорировать <article> совсем: extractArticleExcerpt ниже всё равно
-// фильтрует результат теми же правилами длины/плотности пробелов, а если
-// внутри выбранного блока ничего не прошло фильтр (как для 9to5Mac, где
-// самый длинный <article> — это всё равно чужая карточка на пару строк),
-// вызывающий код просто откатывается на поиск по всей странице.
-function extractLargestArticleScope(html: string): string | undefined {
-  const matches = [...html.matchAll(/<article[^>]*>([\s\S]*?)<\/article>/g)];
-  if (matches.length === 0) return undefined;
-  return matches.map((m) => m[1]).sort((a, b) => b.length - a.length)[0];
+// игнорировать <article> совсем: extractParagraphs ниже всё равно фильтрует
+// результат теми же правилами длины/плотности пробелов, а если внутри
+// выбранного блока ничего не прошло фильтр (как для 9to5Mac, где самый
+// длинный <article> — это всё равно чужая карточка на пару строк), вызывающий
+// код просто откатывается на поиск по всей странице.
+function findLargestArticleScope($: CheerioAPI): Cheerio<AnyNode> | undefined {
+  const articles = $("article").toArray();
+  if (articles.length === 0) return undefined;
+  const largest = articles
+    .map((el) => $(el))
+    .sort((a, b) => b.text().length - a.text().length)[0];
+  return largest;
 }
 
 // Запасной вариант, если JSON-LD с текстом статьи не нашёлся (напр. TIME,
@@ -111,25 +111,27 @@ function extractLargestArticleScope(html: string): string | undefined {
 //    отличаются заметно меньшей плотностью пробелов (проверено на реальных
 //    страницах: реальный абзац — ~0.15 пробелов на символ, навигационный
 //    мусор — ~0.09).
-// 3. Верхний предел длины: почти на каждом сайте (9to5Mac, Eurogamer — оба
-//    проверены на реальных страницах) шапка сайта — это ОДИН гигантский <p>
-//    на 1400-1750+ символов, куда вёрстка склеивает всё меню и сайдбар
-//    "похожие статьи"/"latest news" целиком (теги внутри превращаются в
-//    пробелы при снятии разметки, так что по остальным двум фильтрам такой
-//    блок выглядит как совершенно нормальный длинный абзац). Настоящие
-//    абзацы статьи почти всегда укладываются в 150-700 символов на тех же
-//    страницах — граница в 900 отсекает эту "шапку" с запасом, не трогая
-//    реальный текст. Без этого фильтра эмбеддинг статьи наполовину состоял
-//    из чужих заголовков сайдбара — из-за этого реальные дубли одной новости
-//    с разных изданий не долетали до порога похожести, а разные статьи с
-//    ОДНОГО издания (общий сайдбар) ложно склеивались между собой.
-function extractArticleExcerpt(html: string, maxParagraphs = 10): string | undefined {
-  const paragraphs = [...html.matchAll(/<p[^>]*>(.*?)<\/p>/gs)]
-    .map((m) =>
-      decodeHtmlEntities(m[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim()
-    )
+// Раньше здесь был ещё и верхний предел длины (900 символов) — вводился
+// против "гигантских" <p> на 1400-1750+ символов, куда якобы вёрстка склеивала
+// целиком меню и сайдбар. Убрали: то был артефакт СТАРОГО regex-парсинга
+// (`html.matchAll(/<p[^>]*>(.*?)<\/p>/gs)`), а не реальная структура HTML —
+// он "терял синхронизацию" на невалидно вложенных/незакрытых тегах где-то на
+// странице и склеивал в один фиктивный "абзац" куски совершенно разных
+// участков документа. С переходом на cheerio (настоящий DOM-парсер, разбирает
+// вложенность по правилам HTML5) такого блока не находится ни на одном из
+// проверенных сайтов — а лимит при этом резал настоящие длинные абзацы (TIME
+// — 1245 символов, Polygon — 952), из-за чего для части статей терялся весь
+// реальный текст.
+function extractParagraphs(
+  $: CheerioAPI,
+  scope: Cheerio<AnyNode> | undefined,
+  maxParagraphs = 10
+): string | undefined {
+  const paragraphs = (scope ? scope.find("p") : $("p"))
+    .toArray()
+    .map((el) => $(el).text().replace(/\s+/g, " ").trim())
     .filter((text) => {
-      if (text.length < 80 || text.length > 900) return false;
+      if (text.length < 80) return false;
       const spaceRatio = (text.match(/ /g)?.length ?? 0) / text.length;
       return spaceRatio > 0.12;
     })
@@ -140,15 +142,11 @@ function extractArticleExcerpt(html: string, maxParagraphs = 10): string | undef
 }
 
 // Ручной override на конкретное издание (см. contentSelector в
-// src/config/sources.ts) — использует настоящий DOM-парсер (cheerio), а не
-// regex-эвристики ниже, поэтому не подвержен их слабым местам (вложенные
-// теги, несколько кандидатов на странице и т.п.). Выбирает первый элемент по
-// селектору и берёт его текст целиком — источник добавляет это в конфиг,
-// только когда уже вручную проверил, что селектор однозначно ведёт к телу
-// статьи на этом сайте.
-function extractBySelector(html: string, selector: string): string | undefined {
+// src/config/sources.ts) — источник добавляет это в конфиг, только когда уже
+// вручную проверил, что селектор однозначно ведёт к телу статьи на этом
+// сайте.
+function extractBySelector($: CheerioAPI, selector: string): string | undefined {
   try {
-    const $ = cheerio.load(html);
     const text = $(selector).first().text().replace(/\s+/g, " ").trim();
     return text.length >= 80 ? text.slice(0, 4000) : undefined;
   } catch {
@@ -160,21 +158,22 @@ export type OgTags = { description?: string; image?: string; excerpt?: string };
 
 export async function fetchOgTags(url: string, contentSelector?: string): Promise<OgTags> {
   const html = await fetchHtmlChunk(url);
-  const articleScope = extractLargestArticleScope(html);
+  const $ = cheerio.load(html);
+  const articleScope = findLargestArticleScope($);
   // Порядок: ручной селектор источника (если задан и сработал) > JSON-LD
   // (самый чистый общий вариант, когда есть) > абзацы внутри <article>
   // (исключает общий сайдбар/меню сайта, если тег размечен как в Eurogamer) >
   // абзацы по всей странице (запасной вариант — для сайтов, где <article>
   // либо отсутствует, либо указывает не туда, см. коммент у
-  // extractLargestArticleScope).
+  // findLargestArticleScope).
   const excerpt =
-    (contentSelector && extractBySelector(html, contentSelector)) ??
-    extractArticleBodyFromJsonLd(html)?.slice(0, 4000) ??
-    (articleScope && extractArticleExcerpt(articleScope)) ??
-    extractArticleExcerpt(html);
+    (contentSelector && extractBySelector($, contentSelector)) ??
+    extractArticleBodyFromJsonLd($)?.slice(0, 4000) ??
+    (articleScope && extractParagraphs($, articleScope)) ??
+    extractParagraphs($, undefined);
   return {
-    description: extractMetaContent(html, "og:description"),
-    image: extractMetaContent(html, "og:image"),
+    description: extractMetaContent($, "og:description"),
+    image: extractMetaContent($, "og:image"),
     excerpt,
   };
 }
