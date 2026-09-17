@@ -1,0 +1,84 @@
+"use client";
+
+import { useState } from "react";
+import type { FeedItem } from "../../src/lib/feed";
+import FeedCard from "./FeedCard";
+
+const PAGE_SIZE = 30;
+
+export default function FeedList({
+  initialItems,
+  initialHasMore,
+  category,
+}: {
+  initialItems: FeedItem[];
+  initialHasMore: boolean;
+  category?: string;
+}) {
+  const [items, setItems] = useState(initialItems);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [loading, setLoading] = useState(false);
+
+  async function loadMore() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(items.length),
+      });
+      if (category) params.set("category", category);
+      const res = await fetch(`/api/feed?${params}`);
+      const data: { items: FeedItem[]; hasMore: boolean } = await res.json();
+      setItems((prev) => [...prev, ...data.items]);
+      setHasMore(data.hasMore);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="card-list">
+        {items.map((item) => (
+          <FeedCard key={item.clusterId} item={item} />
+        ))}
+      </div>
+
+      {hasMore && (
+        <div className="load-more">
+          <button onClick={loadMore} disabled={loading}>
+            {loading ? "Загрузка…" : "Показать ещё"}
+          </button>
+        </div>
+      )}
+
+      <style jsx>{`
+        .load-more {
+          text-align: center;
+          margin-top: 36px;
+        }
+        button {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 0.78rem;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--text-dim);
+          background: none;
+          border: 1px solid var(--border);
+          border-radius: 999px;
+          padding: 10px 24px;
+          cursor: pointer;
+        }
+        button:hover:not(:disabled) {
+          color: var(--accent);
+          border-color: var(--accent);
+        }
+        button:disabled {
+          cursor: default;
+          opacity: 0.6;
+        }
+      `}</style>
+    </>
+  );
+}
