@@ -8,6 +8,7 @@ import { fetchOgTags } from "../lib/ogTags.js";
 import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
 import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
+import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
 // Lifehacker — Ziff Davis) кладут туда ПОЛНЫЙ, уже чистый текст статьи прямо
@@ -93,6 +94,7 @@ async function processSource(
   }
 
   for (const item of feed.items) {
+    heartbeat(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
     if (remaining.count <= 0) {
       console.log(`  лимит статей достигнут, пропускаем остальное`);
       return;
@@ -299,14 +301,22 @@ async function cleanupOld() {
 }
 
 async function main() {
-  const sources = await pool.query("SELECT id, name, rss_url FROM sources");
-  const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
-  for (const source of sources.rows) {
-    if (remaining.count <= 0) break;
-    await processSource(source, remaining);
+  // Проверка на уже запущенный прогон — см. src/lib/fetchLock.ts. Ждёт
+  // завершения, если тот прогресс идёт нормально, либо останавливает его и
+  // продолжает сама, если он завис (не подавал признаков жизни).
+  await acquireLock();
+  try {
+    const sources = await pool.query("SELECT id, name, rss_url FROM sources");
+    const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
+    for (const source of sources.rows) {
+      if (remaining.count <= 0) break;
+      await processSource(source, remaining);
+    }
+    await cleanupOld();
+    await pool.end();
+  } finally {
+    releaseLock();
   }
-  await cleanupOld();
-  await pool.end();
 }
 
 main().catch((err) => {
