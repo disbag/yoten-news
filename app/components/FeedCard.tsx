@@ -79,8 +79,18 @@ export default function FeedCard({ item }: { item: FeedItem }) {
         </p>
       </div>
       {item.imageUrl && (
+        // Через /api/image-proxy, а не напрямую — некоторые издания (Rolling
+        // Stone, Variety, Hollywood Reporter, все три на инфраструктуре
+        // Penske Media) блокируют именно хотлинк картинки из чужого домена
+        // (см. коммент в app/api/image-proxy/route.ts), хотя тот же URL
+        // прекрасно отдаётся на серверный запрос при сборе новостей.
         // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание)
-        <img src={item.imageUrl} alt="" className="cover" loading="lazy" />
+        <img
+          src={`/api/image-proxy?url=${encodeURIComponent(item.imageUrl)}`}
+          alt=""
+          className="cover"
+          loading="lazy"
+        />
       )}
 
       <ArticleModal item={open ? item : null} onClose={() => setOpen(false)} />
