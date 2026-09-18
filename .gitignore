@@ -4,3 +4,4 @@ dist/
 .env
 *.log
 .fetch.lock
+.gemini-state.json

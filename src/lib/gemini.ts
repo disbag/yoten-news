@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
 import { SUMMARY_PROMPT, ensureCompleteSentence } from "./prompt.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,6 +37,55 @@ function getModels(): string[] {
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean);
+}
+
+// Запоминаем, какая комбинация модель+ключ сработала последней — чтобы
+// каждый новый прогон (новый процесс, свежий список из 0 попыток) начинал
+// перебор сразу с неё, а не заново с models[0]/keys[0]. Актуально в первую
+// очередь для дневной квоты: если ключ №1 исчерпал её вчера в середине
+// прогона, без этого каждый следующий прогон today всё равно начинал бы с
+// него и первым делом ловил бы гарантированный 429. Файл — не в БД: это
+// служебное состояние самого пайплайна, а не данные приложения.
+const STATE_PATH = path.join(process.cwd(), ".gemini-state.json");
+
+type GeminiState = { model: string; keyIndex: number };
+
+function loadState(): GeminiState | null {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_PATH, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: GeminiState): void {
+  try {
+    fs.writeFileSync(STATE_PATH, JSON.stringify(state));
+  } catch {
+    // Не критично — просто не сможем начать со сработавшей комбинации в
+    // следующий раз, само по себе не ломает саммаризацию.
+  }
+}
+
+// Плоский список всех комбинаций (модель, индекс ключа) в порядке перебора
+// по умолчанию: все ключи на models[0], потом все ключи на models[1] и т.д.
+// — тот же порядок, что раньше был жёстко зашит во вложенных циклах.
+function buildComboOrder(models: string[], apiKeys: string[]): { model: string; keyIndex: number }[] {
+  return models.flatMap((model) => apiKeys.map((_, keyIndex) => ({ model, keyIndex })));
+}
+
+// Циклический сдвиг списка так, чтобы он начинался с сохранённой рабочей
+// комбинации — весь список всё равно проходится целиком (просто с другой
+// точки старта), так что fallback на остальные модели/ключи никуда не
+// делся, если сохранённая комбинация вдруг тоже перестала работать.
+function rotateToLastKnownGood(
+  combos: { model: string; keyIndex: number }[],
+  state: GeminiState | null
+): { model: string; keyIndex: number }[] {
+  if (!state) return combos;
+  const startIndex = combos.findIndex((c) => c.model === state.model && c.keyIndex === state.keyIndex);
+  if (startIndex <= 0) return combos; // не нашли (конфиг поменялся) — начинаем как обычно
+  return [...combos.slice(startIndex), ...combos.slice(0, startIndex)];
 }
 
 // Gemini отдаёт квоту как вложенный JSON (details[] с QuotaFailure/RetryInfo)
@@ -84,58 +135,53 @@ export async function summarize(
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) throw new Error("Gemini: не задан ни один ключ (GEMINI_API_KEYS)");
 
+  const combos = rotateToLastKnownGood(buildComboOrder(models, apiKeys), loadState());
   const exhausted: string[] = [];
 
-  // Перебор: все ключи на первой модели, затем все ключи на второй модели и
-  // т.д. — переключение модели ТОЛЬКО после того, как все ключи текущей себя
-  // исчерпали, не раньше (см. запрошенный порядок: 3 ключа на Flash Lite 3.5,
-  // потом те же 3 ключа заново на Flash Lite 3.1).
-  for (const model of models) {
+  for (let i = 0; i < combos.length; i++) {
+    const { model, keyIndex } = combos[i];
     const body = buildRequestBody(title, rawSummary, systemPrompt, model);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKeys[keyIndex]}`;
 
-    for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKeys[keyIndex]}`;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
 
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
-
-        if (res.status === 429) {
-          exhausted.push(describeQuotaError(model, await res.text()));
-          const isLastKey = keyIndex === apiKeys.length - 1;
-          const isLastModel = model === models[models.length - 1];
-          if (isLastKey && isLastModel) {
-            throw new GeminiQuotaExhaustedError(
-              `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
-            );
-          }
-          console.log(
-            isLastKey
-              ? `  Gemini: модель "${model}" исчерпана на всех ключах, переключаюсь на модель "${models[models.indexOf(model) + 1]}"`
-              : `  Gemini: ключ #${keyIndex + 1} исчерпан для "${model}", переключаюсь на ключ #${keyIndex + 2}`
+      if (res.status === 429) {
+        exhausted.push(describeQuotaError(model, await res.text()));
+        if (i === combos.length - 1) {
+          throw new GeminiQuotaExhaustedError(
+            `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
           );
-          break; // следующий ключ (а если это был последний — внешний цикл перейдёт к следующей модели)
         }
+        const next = combos[i + 1];
+        console.log(
+          next.model !== model
+            ? `  Gemini: модель "${model}" исчерпана на всех ключах, переключаюсь на модель "${next.model}"`
+            : `  Gemini: ключ #${keyIndex + 1} исчерпан для "${model}", переключаюсь на ключ #${next.keyIndex + 1}`
+        );
+        break; // следующая комбинация в перебор
+      }
 
-        if (res.status >= 500 && attempt < MAX_RETRIES) {
-          await sleep(2000 * 2 ** attempt);
+      if (res.status >= 500 && attempt < MAX_RETRIES) {
+        await sleep(2000 * 2 ** attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Gemini error ${res.status}: ${await res.text()}`);
+      }
+
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (!text) {
+        if (attempt < MAX_RETRIES) {
+          await sleep(1000);
           continue;
         }
-
-        if (!res.ok) {
-          throw new Error(`Gemini error ${res.status}: ${await res.text()}`);
-        }
-
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (!text) {
-          if (attempt < MAX_RETRIES) {
-            await sleep(1000);
-            continue;
-          }
-          throw new Error("Gemini вернул пустой ответ");
-        }
-        return ensureCompleteSentence(text);
+        throw new Error("Gemini вернул пустой ответ");
       }
+      saveState({ model, keyIndex });
+      return ensureCompleteSentence(text);
     }
   }
 
