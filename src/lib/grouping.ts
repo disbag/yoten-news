@@ -54,7 +54,7 @@ export async function findAndAssignGroup(
        AND ($2::int IS NULL OR source_id != $2)
        AND created_at > now() - interval '${options.windowHours} hours'
        AND 1 - (embedding <=> $3::vector) > (
-         CASE WHEN $5::bool OR full_description IS NULL THEN $6 ELSE $4 END
+         CASE WHEN $5::bool OR full_description IS NULL THEN $6::float8 ELSE $4::float8 END
        )
      ORDER BY embedding <=> $3::vector
      LIMIT 1`,
