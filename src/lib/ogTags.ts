@@ -8,27 +8,45 @@ const BROWSER_HEADERS = {
   Accept: "text/html,application/xhtml+xml",
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // og-теги в <head>, но реальный текст статьи — уже в <body>, поэтому читаем
 // заметно больше, чем раньше (когда останавливались на </head>). Всё ещё со
 // стримингом и лимитом байт, чтобы не тащить целиком тяжёлые страницы с кучей
 // встроенного JS.
-async function fetchHtmlChunk(url: string, maxBytes = 500_000): Promise<string> {
-  const res = await fetch(url, { headers: BROWSER_HEADERS });
-  if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
+//
+// Ретраи — та же причина, что и у fetchFeedText в fetchAndProcess.ts: Node/
+// undici иногда ловит ConnectTimeoutError на TLS-хендшейке к отдельным CDN
+// (Variety и, похоже, не только) при в остальном полностью доступном сайте.
+// Без ретраев такая статья навсегда остаётся без full_description/image_url,
+// хотя страница на самом деле открывается (реальный случай: горстка статей
+// Variety/WaPo/TIME/IGN с NULL там, где остальные статьи того же издания
+// нормально обработались).
+async function fetchHtmlChunk(url: string, maxBytes = 500_000, attempts = 3): Promise<string> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(url, { headers: BROWSER_HEADERS });
+      if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let html = "";
-  let bytes = 0;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let html = "";
+      let bytes = 0;
 
-  while (bytes < maxBytes) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.length;
-    html += decoder.decode(value, { stream: true });
+      while (bytes < maxBytes) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.length;
+        html += decoder.decode(value, { stream: true });
+      }
+      reader.cancel().catch(() => {});
+      return html;
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      await sleep(1000 * attempt);
+    }
   }
-  reader.cancel().catch(() => {});
-  return html;
+  throw new Error("unreachable");
 }
 
 // Раньше вся эта логика была на regex по сырой HTML-строке — оказалось
