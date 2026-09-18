@@ -70,16 +70,32 @@ function stripHtml(html: string): string {
 // Некоторые издания (напр. Telegraph) блокируют запросы node:http/https по
 // TLS-отпечатку, но пропускают fetch() с браузерным User-Agent — поэтому
 // забираем текст сами, а не через parser.parseURL().
-async function fetchFeedText(rssUrl: string): Promise<string> {
-  const res = await fetch(rssUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Accept: "application/rss+xml, application/xml, text/xml, */*",
-    },
-  });
-  if (!res.ok) throw new Error(`Status code ${res.status}`);
-  return res.text();
+//
+// Ретраи — реальный случай: Variety стабильно проходит через curl (свежий
+// DNS-резолв на каждый запрос), но у Node/undici иногда (не всегда — из 5
+// подряд попыток упала только 1) ловит ConnectTimeoutError на TLS-хендшейке
+// (10с) к их CDN — судя по всему, отдельные edge-ноды у них периодически
+// подвисают, а не блокировка/смена доступа. Один короткий повтор перекрывает
+// такие разовые сбои, не тратя много времени на источник, который в
+// остальном доступен.
+async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(rssUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "application/rss+xml, application/xml, text/xml, */*",
+        },
+      });
+      if (!res.ok) throw new Error(`Status code ${res.status}`);
+      return await res.text();
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      await sleep(1000 * attempt);
+    }
+  }
+  throw new Error("unreachable"); // для TypeScript — цикл выше либо вернёт, либо бросит
 }
 
 async function processSource(
