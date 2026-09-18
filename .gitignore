@@ -7,3 +7,4 @@ dist/
 .gemini-state.json
 .vercel
 .env*
+.cache/

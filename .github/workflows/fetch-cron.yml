@@ -1,0 +1,41 @@
+name: Fetch news
+
+on:
+  schedule:
+    # Каждые 2 часа — баланс между свежестью ленты и бесплатным лимитом
+    # Actions-минут (2000/мес на приватный репозиторий).
+    - cron: "0 */2 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: fetch-cron
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: xenova-all-MiniLM-L6-v2
+
+      - run: npm ci
+
+      - run: npm run fetch
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_MODELS: ${{ secrets.GEMINI_MODELS }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          RETENTION_DAYS: ${{ secrets.RETENTION_DAYS }}
+          DEDUPE_THRESHOLD: ${{ secrets.DEDUPE_THRESHOLD }}
