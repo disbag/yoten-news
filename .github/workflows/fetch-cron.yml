@@ -2,8 +2,7 @@ name: Fetch news
 
 on:
   schedule:
-    # TODO: тестовый интервал 5 минут — вернуть на "0 */2 * * *" после проверки.
-    - cron: "*/5 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 concurrency:
