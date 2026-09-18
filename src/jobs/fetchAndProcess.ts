@@ -30,6 +30,15 @@ const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
 // для разовой докатки после перерыва, без изменения дефолтного поведения.
 const FETCH_SINCE_DAYS = Number(process.env.FETCH_SINCE_DAYS ?? 0);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// Свободный тариф Gemini ограничивает "-lite" модели 15 запросами в минуту
+// НА КЛЮЧ — 4 секунды между запросами держит нас точно на этой границе.
+// Раньше пауза была 1с (~60 запросов/мин, вчетверо больше лимита), из-за
+// чего каждый ключ мгновенно упирался в 429 и ключи/модели (см. ротацию в
+// src/lib/gemini.ts) перебирались почти на каждой статье — само по себе не
+// ломалось (429 не считается за фатальную ошибку, пока не исчерпаны все
+// ключи и все модели разом), но это шумно и означает, что мы искусственно
+// жжём дневную квоту retry'ями быстрее, чем нужно.
+const REQUEST_INTERVAL_MS = 4000;
 
 // Wired (и потенциально другие издания) подмешивают в общий RSS свою
 // партнёрскую рубрику купонов/промокодов — это не редакционный контент, а
@@ -183,8 +192,8 @@ async function processSource(
       continue;
     }
 
-    // Небольшая пауза между вызовами, чтобы не упираться в rate limit Gemini.
-    await sleep(1000);
+    // Пауза между вызовами под лимит Gemini — см. REQUEST_INTERVAL_MS.
+    await sleep(REQUEST_INTERVAL_MS);
 
     // Подробная версия для модального окна — своими словами, но заметно
     // подробнее короткой. Best-effort: если не получилось, лента всё равно
@@ -213,7 +222,7 @@ async function processSource(
         // Polygon). Просто оставляем null — модалка и так корректно
         // откатывается на короткую версию.
         if (aiSummaryLong === item.title) aiSummaryLong = null;
-        await sleep(1000);
+        await sleep(REQUEST_INTERVAL_MS);
       } catch (err) {
         if (err instanceof GeminiQuotaExhaustedError) throw err;
         console.error(`  ошибка подробной саммаризации: ${(err as Error).message}`);
