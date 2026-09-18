@@ -23,6 +23,9 @@ const parser = new Parser<Record<string, never>, FeedItem>({
   customFields: { item: ["dc:content", "content:encoded"] },
 });
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
+// Мягче обычного порога — только для пар, где хотя бы одна статья без
+// полного текста страницы (см. isThin в findAndAssignGroup/grouping.ts).
+const THIN_DEDUPE_THRESHOLD = Number(process.env.THIN_DEDUPE_THRESHOLD ?? 0.65);
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
 // По умолчанию лента показывает только сегодняшние новости — RSS-фиды изданий
 // часто отдают материалы за последние несколько дней (особенно если давно не
@@ -321,7 +324,13 @@ async function processSource(
       "cluster_id",
       newId,
       vectorLiteral,
-      { excludeSourceId: null, windowHours: 12, threshold: DEDUPE_THRESHOLD }
+      {
+        excludeSourceId: null,
+        windowHours: 12,
+        threshold: DEDUPE_THRESHOLD,
+        isThin: !fullDescription,
+        thinThreshold: THIN_DEDUPE_THRESHOLD,
+      }
     );
 
     console.log(

@@ -7,7 +7,25 @@ export async function findAndAssignGroup(
   column: "cluster_id",
   newId: number,
   vectorLiteral: string,
-  options: { excludeSourceId: number | null; windowHours: number; threshold: number }
+  options: {
+    excludeSourceId: number | null;
+    windowHours: number;
+    threshold: number;
+    // Более мягкий порог для пар, где хотя бы одна сторона — тизер из RSS
+    // без полного текста страницы (full_description IS NULL, платные/
+    // блокирующие бота издания вроде Bloomberg/WSJ/NYT). На реальных
+    // примерах: BBC (богатый текст, 1433 символа) + Bloomberg (тизер,
+    // тизер ~100 символов) про один и тот же расстрел в школе на
+    // Филиппинах — 0.694, ниже общего порога 0.75, хотя это точно один и
+    // тот же инфоповод; то же самое было с Barbra Streisand (0.667,
+    // Rolling Stone тизер + Hollywood Reporter тизер). Общий порог нельзя
+    // просто понизить всем — на нём же держится реальный случай с двумя
+    // РАЗНЫМИ новостями от одного издания (Flock cameras, оба текста
+    // богатые) на 0.674, ниже thinThreshold, но так и должно остаться
+    // неслипшимся.
+    isThin: boolean;
+    thinThreshold: number;
+  }
 ): Promise<{ groupId: number; matched: boolean }> {
   // Важно: id < $1, а не просто != $1. В реальном инкрементальном пайплайне
   // это одно и то же (будущих строк ещё не существует на момент вставки), но
@@ -35,10 +53,12 @@ export async function findAndAssignGroup(
        AND ${column} = id
        AND ($2::int IS NULL OR source_id != $2)
        AND created_at > now() - interval '${options.windowHours} hours'
-       AND 1 - (embedding <=> $3::vector) > $4
+       AND 1 - (embedding <=> $3::vector) > (
+         CASE WHEN $5::bool OR full_description IS NULL THEN $6 ELSE $4 END
+       )
      ORDER BY embedding <=> $3::vector
      LIMIT 1`,
-    [newId, options.excludeSourceId, vectorLiteral, options.threshold]
+    [newId, options.excludeSourceId, vectorLiteral, options.threshold, options.isThin, options.thinThreshold]
   );
   const groupId = match.rowCount ? match.rows[0][column] ?? match.rows[0].id : newId;
   await pool.query(`UPDATE articles SET ${column} = $1 WHERE id = $2`, [groupId, newId]);
