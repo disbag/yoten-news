@@ -46,6 +46,20 @@ const REQUEST_INTERVAL_MS = 4000;
 // заголовку до любых сетевых запросов/саммаризации — не тратим на них квоту.
 const PROMO_TITLE_PATTERN = /\b(promo codes?|coupons?|discount codes?)\b/i;
 
+// Guardian (и, вероятно, другие издания с тем же форматом) ведёт "live"-блоги
+// — одна страница на весь день, куда постоянно дописываются апдейты сразу по
+// НЕСКОЛЬКИМ разным темам (реальный случай: заголовок "Victoria police
+// officer charged with assault...; embattled builders Bathla given 12-month
+// lifeline" — две никак не связанные истории в одном URL). Это не единичный
+// инфоповод, а скорее дайджест: наш скрапер честно вытаскивает текст
+// страницы, но раз она затрагивает сразу несколько тем, эмбеддинг оказывается
+// похож на КАЖДУЮ из них по отдельности — из-за чего live-блог ложно
+// склеивался с отдельной статьёй ровно про одну из своих многих тем. Формат
+// URL у Guardian стабильный (/live/YYYY/mon/DD/...) — проще и надёжнее
+// отсечь такие страницы совсем, чем пытаться разделить их на отдельные
+// новости или чинить кластеризацию под этот формат.
+const LIVE_BLOG_LINK_PATTERN = /\/live\/\d{4}\/\w{3}\/\d{2}\//;
+
 // Сравниваем по UTC-дате (тот же принцип, что и в getFeed.ts/published_at) —
 // само сравнение дат, а не времени, поэтому не зависит от часового пояса
 // запуска пайплайна. FETCH_SINCE_DAYS=0 (дефолт) — только сегодня;
@@ -126,6 +140,7 @@ async function processSource(
     }
     if (!item.link || !item.title) continue;
     if (PROMO_TITLE_PATTERN.test(item.title)) continue; // партнёрский купон/промокод, не новость
+    if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
     if (!isWithinFetchWindow(item.isoDate)) continue; // вне окна FETCH_SINCE_DAYS — не берём в ленту
 
     const exists = await pool.query("SELECT 1 FROM articles WHERE link = $1", [item.link]);
