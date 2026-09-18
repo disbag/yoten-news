@@ -5,3 +5,5 @@ dist/
 *.log
 .fetch.lock
 .gemini-state.json
+.vercel
+.env*
