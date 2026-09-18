@@ -18,10 +18,25 @@ import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 // — стандартный тег из RSS content-модуля, rss-parser его видит, но не
 // подставляет в item.content (там короткий item.description) — читаем
 // напрямую по ключу, как и нестандартный dc:content.
-type FeedItem = { "dc:content"?: string; "content:encoded"?: string };
+// media:content — картинка прямо в RSS-фиде (NYT и, вероятно, другие издания
+// на этом же RSS-модуле). Нужен как fallback именно для изданий вроде NYT,
+// которые блокируют fetchOgTags (см. комментарий у og-запроса ниже) — без
+// og:image со страницы это единственный источник картинки, который у нас
+// вообще есть.
+type MediaContent = { $: { url: string; medium?: string } };
+type FeedItem = {
+  "dc:content"?: string;
+  "content:encoded"?: string;
+  "media:content"?: MediaContent | MediaContent[];
+};
 const parser = new Parser<Record<string, never>, FeedItem>({
-  customFields: { item: ["dc:content", "content:encoded"] },
+  customFields: { item: ["dc:content", "content:encoded", "media:content"] },
 });
+
+function extractFeedImage(media: MediaContent | MediaContent[] | undefined): string | undefined {
+  const items = Array.isArray(media) ? media : media ? [media] : [];
+  return items.find((m) => !m.$.medium || m.$.medium === "image")?.$.url;
+}
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
 // Мягче обычного порога — только для пар, где хотя бы одна статья без
 // полного текста страницы (см. isThin в findAndAssignGroup/grouping.ts).
@@ -180,6 +195,7 @@ async function processSource(
       // страница недоступна боту — это ожидаемо для части источников
       excerpt = feedContent;
     }
+    imageUrl ??= extractFeedImage(item["media:content"]);
 
     // Приоритет контекста для саммаризации: реальные абзацы статьи > og:description
     // (часто просто тизер без фактов) > сниппет из RSS — с автоматическим откатом
