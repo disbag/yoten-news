@@ -16,12 +16,12 @@ type SourceConfig = {
   rssUrl: string;
   homepageUrl: string;
   contentSelector?: string;
-  // "hearst" — на странице статьи есть ссылка(и) на подгалерею /photos с
-  // несколькими кадрами (см. extractGallery в src/lib/ogTags.ts). Пока
-  // проверено только на Hearst-изданиях (Motor Trend, Car and Driver) —
-  // другие сайты вёрстают галереи иначе, включать им этот флаг нельзя без
-  // отдельной проверки их разметки.
-  gallery?: "hearst";
+  // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
+  // (Motor Trend, Car and Driver). "wallpaper" — инлайн-виджет .inline-gallery
+  // прямо в теле статьи, с явным счётчиком "Image N of M" (см. extractGallery
+  // в src/lib/ogTags.ts). Другие сайты вёрстают галереи иначе, включать им
+  // эти флаги нельзя без отдельной проверки их разметки.
+  gallery?: "hearst" | "wallpaper";
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -91,6 +91,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Wallpaper",
     rssUrl: "https://www.wallpaper.com/feeds.xml",
     homepageUrl: "https://www.wallpaper.com",
+    gallery: "wallpaper",
   },
   {
     // Полный чистый текст в стандартном content:encoded — используется тот
