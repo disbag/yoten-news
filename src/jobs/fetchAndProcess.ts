@@ -41,6 +41,11 @@ const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
 // Мягче обычного порога — только для пар, где хотя бы одна статья без
 // полного текста страницы (см. isThin в findAndAssignGroup/grouping.ts).
 const THIN_DEDUPE_THRESHOLD = Number(process.env.THIN_DEDUPE_THRESHOLD ?? 0.65);
+// Пороги по заголовкам (эмбеддинг одного заголовка) — второй сигнал к
+// сходству тел, см. комментарий у titleThreshold в src/lib/grouping.ts.
+const TITLE_DEDUPE_THRESHOLD = Number(process.env.TITLE_DEDUPE_THRESHOLD ?? 0.8);
+const TITLE_ASSIST_THRESHOLD = Number(process.env.TITLE_ASSIST_THRESHOLD ?? 0.7);
+const TITLE_ASSIST_BODY_THRESHOLD = Number(process.env.TITLE_ASSIST_BODY_THRESHOLD ?? 0.58);
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
 // По умолчанию лента показывает только сегодняшние новости — RSS-фиды изданий
 // часто отдают материалы за последние несколько дней (особенно если давно не
@@ -290,6 +295,7 @@ async function processSource(
     // короткое саммари для эмбеддинга больше не используем.
     const embedding = await embed(`${item.title}. ${excerpt ?? fullDescription ?? rawSummary}`);
     const vectorLiteral = toVectorLiteral(embedding);
+    const titleVectorLiteral = toVectorLiteral(await embed(item.title));
 
     // ON CONFLICT DO NOTHING — не только защита от повторной обработки внутри
     // одного прогона (это уже покрыто проверкой exists выше), а именно от
@@ -300,8 +306,8 @@ async function processSource(
     // с необработанным исключением вместо того, чтобы просто пропустить уже
     // занятую кем-то статью.
     const insert = await pool.query(
-      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, ai_summary, ai_summary_long, category, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)
+      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, ai_summary, ai_summary_long, category, embedding, title_embedding)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector, $12::vector)
        ON CONFLICT (link) DO NOTHING
        RETURNING id`,
       [
@@ -316,6 +322,7 @@ async function processSource(
         aiSummaryLong,
         category,
         vectorLiteral,
+        titleVectorLiteral,
       ]
     );
     if (insert.rowCount === 0) continue; // параллельный прогон уже вставил эту ссылку
@@ -346,6 +353,10 @@ async function processSource(
         threshold: DEDUPE_THRESHOLD,
         isThin: !fullDescription,
         thinThreshold: THIN_DEDUPE_THRESHOLD,
+        titleVector: titleVectorLiteral,
+        titleThreshold: TITLE_DEDUPE_THRESHOLD,
+        titleAssistThreshold: TITLE_ASSIST_THRESHOLD,
+        titleAssistBodyThreshold: TITLE_ASSIST_BODY_THRESHOLD,
       }
     );
 

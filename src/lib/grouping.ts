@@ -25,6 +25,21 @@ export async function findAndAssignGroup(
     // неслипшимся.
     isThin: boolean;
     thinThreshold: number;
+    // Второй сигнал — сходство ЗАГОЛОВКОВ (см. title_embedding в схеме).
+    // Тело статьи у разных изданий об одном инфоповоде часто расходится по
+    // акценту (Variety/THR про Оливера: тела 0.62, заголовки 0.83), а вес
+    // заголовка в эмбеддинге тела — единицы процентов. Склеиваем, если:
+    //  - заголовки почти одинаковые (titleThreshold), тело не важно; либо
+    //  - заголовки близки (titleAssistThreshold) И тела хотя бы отдалённо
+    //    об одном (titleAssistBodyThreshold). Второе условие отсекает
+    //    похожие по формулировке, но разные материалы: подборки "что смотреть
+    //    на выходных" (заголовки 0.72, тела 0.46-0.56) и серии статей.
+    // Подобрано на реальных парах за 60 часов (см. коммит): все 5 пар с
+    // заголовками ≥0.80 и 8 пар по второму правилу — настоящие дубли.
+    titleVector: string;
+    titleThreshold: number;
+    titleAssistThreshold: number;
+    titleAssistBodyThreshold: number;
   }
 ): Promise<{ groupId: number; matched: boolean }> {
   // Важно: id < $1, а не просто != $1. В реальном инкрементальном пайплайне
@@ -53,12 +68,37 @@ export async function findAndAssignGroup(
        AND ${column} = id
        AND ($2::int IS NULL OR source_id != $2)
        AND created_at > now() - interval '${options.windowHours} hours'
-       AND 1 - (embedding <=> $3::vector) > (
-         CASE WHEN $5::bool OR full_description IS NULL THEN $6::float8 ELSE $4::float8 END
+       AND (
+         1 - (embedding <=> $3::vector) > (
+           CASE WHEN $5::bool OR full_description IS NULL THEN $6::float8 ELSE $4::float8 END
+         )
+         OR (
+           title_embedding IS NOT NULL AND (
+             1 - (title_embedding <=> $7::vector) >= $8::float8
+             OR (
+               1 - (title_embedding <=> $7::vector) >= $9::float8
+               AND 1 - (embedding <=> $3::vector) >= $10::float8
+             )
+           )
+         )
        )
-     ORDER BY embedding <=> $3::vector
+     ORDER BY GREATEST(
+       1 - (embedding <=> $3::vector),
+       COALESCE(1 - (title_embedding <=> $7::vector), 0)
+     ) DESC
      LIMIT 1`,
-    [newId, options.excludeSourceId, vectorLiteral, options.threshold, options.isThin, options.thinThreshold]
+    [
+      newId,
+      options.excludeSourceId,
+      vectorLiteral,
+      options.threshold,
+      options.isThin,
+      options.thinThreshold,
+      options.titleVector,
+      options.titleThreshold,
+      options.titleAssistThreshold,
+      options.titleAssistBodyThreshold,
+    ]
   );
   const groupId = match.rowCount ? match.rows[0][column] ?? match.rows[0].id : newId;
   await pool.query(`UPDATE articles SET ${column} = $1 WHERE id = $2`, [groupId, newId]);
