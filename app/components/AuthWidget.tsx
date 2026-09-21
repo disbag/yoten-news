@@ -20,6 +20,9 @@ export default function AuthWidget() {
   const [user, setUser] = useState<SessionUser>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // true после неудачной попытки входа — следующий клик по той же иконке
+  // создаёт новый passkey вместо повторной попытки входа (см. handleClick).
+  const [needsRegister, setNeedsRegister] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/session")
@@ -27,22 +30,29 @@ export default function AuthWidget() {
       .then((data) => setUser(data.user));
   }, []);
 
-  // Один и тот же путь для входа и регистрации: сперва пробуем вход по
-  // discoverable-credential (без email/имени — браузер сам покажет passkey,
-  // если он уже есть, синхронизированный через iCloud Keychain/Google
-  // Password Manager с любого устройства пользователя). Если у браузера нет
-  // ни одного подходящего passkey для этого сайта — переключаемся на
-  // регистрацию нового. NotAllowedError бросается в обоих случаях: и когда
-  // credential-ов нет вовсе, и когда пользователь сам закрыл системный
-  // диалог — поэтому регистрация запускается тем же кликом без лишнего
-  // "хотите зарегистрироваться?" экрана. Худший случай при случайной отмене
-  // реального входа — второй, тоже отменяемый диалог создания passkey, а не
-  // потеря доступа.
+  // Раньше вход и регистрация были одним кликом: неудачный вход тут же сам
+  // запускал второй диалог (создание passkey), без явного согласия
+  // пользователя. Проблема в том, что WebAuthn бросает один и тот же
+  // NotAllowedError и когда credential-а нет вовсе, и когда пользователь
+  // просто закрыл системный диалог — надёжно отличить одно от другого
+  // нельзя. На практике это привело к мусорным аккаунтам: человек закрывал
+  // окно входа, не глядя подтверждал следом вылезший диалог регистрации (или
+  // тот вообще срабатывал через синхронизированный QR-флоу) — и получал
+  // новый passkey/пользователя, которого не хотел.
   //
-  // Вход по коду на email временно убран из интерфейса (не из кода) — на
-  // общем тестовом адресе Resend письма уходят только на почту владельца
-  // аккаунта, для остальных получателей нужен верифицированный домен.
-  async function handlePasskey() {
+  // Теперь это два явных шага с одного и того же клика по иконке: первый
+  // клик — только попытка входа. Если её отменили/credential-а нет —
+  // отдельно просим следующий клик именно на регистрацию, вместо того чтобы
+  // тихо открывать второй системный диалог самим.
+  async function handleClick() {
+    if (needsRegister) {
+      await handleRegister();
+      return;
+    }
+    await handleLogin();
+  }
+
+  async function handleLogin() {
     setError(null);
     setLoading(true);
     try {
@@ -53,21 +63,30 @@ export default function AuthWidget() {
       // отрендерен на сервере с isRead для конкретного userId (см.
       // app/page.tsx), без reload он остался бы посчитан для гостя.
       window.location.reload();
-      return;
     } catch (err) {
-      if ((err as Error).name !== "NotAllowedError") {
+      if ((err as Error).name === "NotAllowedError") {
+        setNeedsRegister(true);
+        setError("Passkey для входа не найден. Нажмите ещё раз, чтобы создать новый.");
+      } else {
         setError((err as Error).message);
-        setLoading(false);
-        return;
       }
+    } finally {
+      setLoading(false);
     }
+  }
 
+  async function handleRegister() {
+    setError(null);
+    setLoading(true);
     try {
       const options = await postJson("/api/auth/register/options");
       const response = await startRegistration({ optionsJSON: options });
       await postJson("/api/auth/register/verify", response);
       window.location.reload();
     } catch (err) {
+      // Остаёмся в режиме регистрации — отмена здесь не должна откатывать
+      // обратно к попытке входа, пользователь уже осознанно выбрал создать
+      // passkey и может просто попробовать ещё раз.
       if ((err as Error).name !== "NotAllowedError") setError((err as Error).message);
     } finally {
       setLoading(false);
@@ -120,7 +139,12 @@ export default function AuthWidget() {
 
   return (
     <div className="auth">
-      <button className="icon-button" onClick={handlePasskey} disabled={loading} title="Войти по Face ID/Touch ID">
+      <button
+        className="icon-button"
+        onClick={handleClick}
+        disabled={loading}
+        title={needsRegister ? "Создать новый passkey" : "Войти по Face ID/Touch ID"}
+      >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
           <path
             d="M15.25 10C15.25 11.7949 13.7949 13.25 12 13.25C10.2051 13.25 8.75 11.7949 8.75 10C8.75 8.20507 10.2051 6.75 12 6.75C13.7949 6.75 15.25 8.20507 15.25 10Z"
