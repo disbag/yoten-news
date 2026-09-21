@@ -14,6 +14,23 @@ const BROWSER_HEADERS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 };
 
+// Telegraph — противоположный случай: браузерный User-Agent там как раз
+// триггерит анти-бот блокировку (402, тот же паттерн, что у Penske Media
+// выше, только наоборот), а обычный серверный запрос БЕЗ заголовков
+// проходит нормально. Пробуем сперва как для Penske (это большинство
+// изданий), и если не получилось — повторяем совсем без заголовков.
+async function fetchImage(url: string): Promise<Response> {
+  const withBrowserUA = await fetch(url, { headers: BROWSER_HEADERS });
+  if (withBrowserUA.ok) return withBrowserUA;
+  try {
+    const bare = await fetch(url);
+    if (bare.ok) return bare;
+  } catch {
+    // сетевая ошибка на повторе — вернём исходный (уже неудачный) ответ
+  }
+  return withBrowserUA;
+}
+
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get("url");
   if (!url) return new NextResponse("Missing url", { status: 400 });
@@ -30,7 +47,7 @@ export async function GET(request: NextRequest) {
 
   let res: Response;
   try {
-    res = await fetch(target.toString(), { headers: BROWSER_HEADERS });
+    res = await fetchImage(target.toString());
   } catch {
     return new NextResponse(null, { status: 502 });
   }
