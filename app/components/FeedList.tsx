@@ -10,10 +10,12 @@ export default function FeedList({
   initialItems,
   initialHasMore,
   category,
+  unreadOnly,
 }: {
   initialItems: FeedItem[];
   initialHasMore: boolean;
   category?: string;
+  unreadOnly?: boolean;
 }) {
   const [items, setItems] = useState(initialItems);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -30,6 +32,7 @@ export default function FeedList({
         beforeClusterId: String(last.clusterId),
       });
       if (category) params.set("category", category);
+      if (unreadOnly) params.set("unread", "1");
       const res = await fetch(`/api/feed?${params}`);
       const data: { items: FeedItem[]; hasMore: boolean } = await res.json();
       setItems((prev) => [...prev, ...data.items]);
@@ -39,11 +42,19 @@ export default function FeedList({
     }
   }
 
+  // В режиме "только непрочитанные" карточка, которую только что открыли
+  // (см. onRead в FeedCard), должна тут же пропасть из ленты — иначе
+  // прочитанное продолжает висеть в списке, специально отфильтрованном под
+  // непрочитанное, до следующей перезагрузки страницы.
+  function handleRead(clusterId: number) {
+    if (unreadOnly) setItems((prev) => prev.filter((item) => item.clusterId !== clusterId));
+  }
+
   return (
     <>
       <div className="card-list">
         {items.map((item) => (
-          <FeedCard key={item.clusterId} item={item} />
+          <FeedCard key={item.clusterId} item={item} onRead={handleRead} />
         ))}
       </div>
 

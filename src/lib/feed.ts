@@ -19,6 +19,7 @@ export type FeedItem = {
   primaryLink: string;
   sources: FeedSource[];
   category: string[] | null;
+  isRead: boolean;
 };
 
 export async function getFeed(
@@ -35,9 +36,13 @@ export async function getFeed(
     // какую-то. Курсор по последней увиденной паре не зависит от того,
     // сколько строк появилось до него с момента предыдущего запроса.
     before?: { publishedAt: string; clusterId: number };
+    // Без userId (гость) isRead всегда false и unreadOnly ничего не фильтрует
+    // — сравнение ar.user_id = NULL никогда не истинно в SQL.
+    userId?: number | null;
+    unreadOnly?: boolean;
   } = {}
 ): Promise<FeedItem[]> {
-  const { limit = 30, category, before } = options;
+  const { limit = 30, category, before, userId = null, unreadOnly = false } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
   // одного кластера описывают один инфоповод, категория у них должна
@@ -46,11 +51,21 @@ export async function getFeed(
   // относиться сразу к двум темам (см. CATEGORY_INSTRUCTIONS в
   // src/lib/prompt.ts), поэтому category — массив, и фильтр — вхождение, а
   // не равенство.
-  const params: unknown[] = [limit];
+  const params: unknown[] = [limit, userId];
   let categoryClause = "";
   if (category) {
     params.push(category);
     categoryClause = `WHERE $${params.length} = ANY(a.category)`;
+  }
+
+  const havingClauses: string[] = [];
+  if (before) {
+    havingClauses.push(
+      `(max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})`
+    );
+  }
+  if (unreadOnly) {
+    havingClauses.push("NOT bool_or(ar.user_id IS NOT NULL)");
   }
 
   const { rows } = await pool.query(
@@ -90,12 +105,14 @@ export async function getFeed(
         WHERE a2.cluster_id = a.cluster_id AND a2.category IS NOT NULL
         ORDER BY a2.created_at ASC
         LIMIT 1
-      ) AS category
+      ) AS category,
+      bool_or(ar.user_id IS NOT NULL) AS is_read
     FROM articles a
     JOIN sources s ON s.id = a.source_id
+    LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
     ${categoryClause}
     GROUP BY a.cluster_id
-    ${before ? `HAVING (max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})` : ""}
+    ${havingClauses.length ? `HAVING ${havingClauses.join(" AND ")}` : ""}
     ORDER BY published_at DESC, a.cluster_id DESC
     LIMIT $1
     `,
@@ -120,6 +137,7 @@ export async function getFeed(
       primaryLink: row.primary_link,
       sources: row.source_list as FeedSource[],
       category: row.category,
+      isRead: row.is_read,
     })
   );
 }

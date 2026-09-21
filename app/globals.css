@@ -32,6 +32,7 @@ main {
 }
 
 header {
+  position: relative;
   padding: 0 0 20px;
   text-align: center;
 }
@@ -39,6 +40,17 @@ header {
 header .logo {
   height: 64px;
   width: auto;
+}
+
+/* 25px — вертикальный центр самой надписи "Yōten" внутри logo.svg (не всего
+   64px-блока логотипа, в который снизу ещё входит мелкая подпись NEWS) —
+   посчитано по bounding box глифов в исходном SVG (viewBox 72px высотой,
+   надпись занимает примерно 10.3..46.4, масштаб 64/72). */
+.auth-corner {
+  position: absolute;
+  top: 25px;
+  right: 0;
+  transform: translateY(-50%);
 }
 
 /* Фильтр по категориям — ряд тегов без разделителей, каждый — ссылка на
@@ -72,6 +84,23 @@ header .logo {
 }
 
 .filters-list a.active {
+  color: var(--accent);
+}
+
+.unread-toggle {
+  display: inline-block;
+  margin-top: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.unread-toggle:hover,
+.unread-toggle.active {
   color: var(--accent);
 }
 

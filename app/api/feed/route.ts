@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFeed } from "../../../src/lib/feed";
+import { getSessionUserId } from "../../../src/lib/session";
 
 // Отдаёт на одну карточку больше запрошенного limit, чтобы понять, есть ли
 // ещё данные, без отдельного count-запроса — hasMore = смогли получить
@@ -15,8 +16,10 @@ export async function GET(request: NextRequest) {
     beforePublishedAt && beforeClusterId
       ? { publishedAt: beforePublishedAt, clusterId: Number(beforeClusterId) }
       : undefined;
+  const unreadOnly = searchParams.get("unread") === "1";
+  const userId = await getSessionUserId();
 
-  const rows = await getFeed({ category, limit: limit + 1, before });
+  const rows = await getFeed({ category, limit: limit + 1, before, userId, unreadOnly });
   const hasMore = rows.length > limit;
 
   return NextResponse.json({ items: rows.slice(0, limit), hasMore });

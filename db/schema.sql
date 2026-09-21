@@ -61,6 +61,57 @@ CREATE INDEX IF NOT EXISTS idx_articles_category ON articles USING GIN (category
 -- такого масштаба. Если база вырастет на порядки — тогда стоит вернуться
 -- к ivfflat/hnsw и подобрать параметры под реальный объём.
 
+-- Passkey-аутентификация (WebAuthn) — без паролей и email, один пользователь
+-- может иметь несколько passkey (напр. с разных устройств).
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS passkeys (
+  -- credential_id — то, что браузер присылает при каждой аутентификации
+  -- (WebAuthnCredential.id из @simplewebauthn/server), уже base64url-строка,
+  -- глобально уникальна сама по себе — отдельный SERIAL не нужен.
+  credential_id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  public_key BYTEA NOT NULL,
+  -- Счётчик подписей от authenticator — растёт с каждым использованием,
+  -- откат назад при следующей аутентификации означает клонированный
+  -- credential (защита от replay, см. verifyAuthenticationResponse).
+  counter BIGINT NOT NULL DEFAULT 0,
+  transports TEXT[],
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_passkeys_user_id ON passkeys (user_id);
+
+-- Прочитанные карточки ленты — по cluster_id (см. cluster_id выше), т.к.
+-- именно кластер, а не отдельная статья, это то, что пользователь видит и
+-- открывает как одну карточку.
+CREATE TABLE IF NOT EXISTS article_reads (
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  cluster_id INTEGER NOT NULL,
+  read_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, cluster_id)
+);
+
+-- Вход по одноразовому коду на email (без пароля). Аккаунт создаётся при
+-- первом успешном подтверждении кода. email — нижним регистром (см.
+-- normalizeEmail в src/lib/emailCode.ts), NULL у пользователей, которые
+-- зарегистрировались только через passkey.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE;
+
+-- Не более одного активного кода на адрес (PRIMARY KEY по email): повторный
+-- запрос перезаписывает предыдущий код. В базе только хэш кода, не сам код.
+-- attempts ограничивает подбор шестизначного кода (см. verify-роут).
+CREATE TABLE IF NOT EXISTS email_login_codes (
+  email TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Эмбеддинг ОДНОГО заголовка — второй сигнал для дедупликации (см.
 -- findAndAssignGroup в src/lib/grouping.ts). Эмбеддинг тела (embedding выше)
 -- считается по заголовку+началу текста, где заголовок — единицы процентов
@@ -69,3 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_articles_category ON articles USING GIN (category
 -- Оливера и Эллисона — тела 0.62, заголовки 0.83). NULL у статей, собранных
 -- до появления колонки, — для них работает только сравнение тел.
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_embedding vector(384);
+
+-- Порядковые "user-01", "user-02"... для user.name/displayName при passkey-
+-- регистрации без ручного ввода имени (см. app/api/auth/register/options).
+CREATE SEQUENCE IF NOT EXISTS passkey_user_seq;
