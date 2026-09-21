@@ -19,7 +19,17 @@ export async function POST() {
     userName: displayName,
     userDisplayName: displayName,
     attestationType: "none",
-    authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
+    // authenticatorAttachment: "platform" — только встроенный Touch ID/Face
+    // ID/Windows Hello. Без этого браузер показывает полный выбор способа
+    // входа (в т.ч. QR-код на телефон, USB-ключ) вместо того, чтобы сразу
+    // открыть системный диалог биометрии — так и произошло на проде, где ещё
+    // не было ни одного passkey для этого домена (тот, что создан на
+    // localhost, для другого origin не годится, WebAuthn их не смешивает).
+    authenticatorSelection: {
+      residentKey: "required",
+      userVerification: "preferred",
+      authenticatorAttachment: "platform",
+    },
   });
 
   setChallengeCookie({ challenge: options.challenge, displayName });
