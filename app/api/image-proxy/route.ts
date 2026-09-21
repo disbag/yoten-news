@@ -22,11 +22,13 @@ const BROWSER_HEADERS = {
 async function fetchImage(url: string): Promise<Response> {
   const withBrowserUA = await fetch(url, { headers: BROWSER_HEADERS });
   if (withBrowserUA.ok) return withBrowserUA;
+  console.error(`[image-proxy] browser UA -> ${withBrowserUA.status} для ${url}`);
   try {
     const bare = await fetch(url);
     if (bare.ok) return bare;
-  } catch {
-    // сетевая ошибка на повторе — вернём исходный (уже неудачный) ответ
+    console.error(`[image-proxy] bare -> ${bare.status} для ${url}`);
+  } catch (err) {
+    console.error(`[image-proxy] bare бросил ошибку для ${url}:`, err);
   }
   return withBrowserUA;
 }
