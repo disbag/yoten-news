@@ -229,6 +229,11 @@ export default function FeedCard({
         .summary.read {
           color: var(--text-dim);
         }
+        @media (max-width: 640px) {
+          .summary {
+            font-size: 1rem;
+          }
+        }
       `}</style>
     </article>
   );
