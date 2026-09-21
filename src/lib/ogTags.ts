@@ -172,9 +172,38 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
   }
 }
 
-export type OgTags = { description?: string; image?: string; excerpt?: string };
+// Hearst-издания (Motor Trend, Car and Driver — см. gallery в
+// src/config/sources.ts) кладут на страницу статьи миниатюры отдельной
+// подгалереи /photos с несколькими кадрами — каждая обёрнута в <a
+// href="…/photos…">. Это НЕ виджет "похожие статьи" (те ведут на другой
+// слаг совсем другой статьи) — проверено на реальных примерах: у Motor
+// Trend ссылка "{путь статьи}/photos", у Car and Driver — "/photos/{id}/…
+// -gallery/", в обоих случаях путь содержит "/photos". Убираем resize-
+// параметры Next.js из query (?w=...&format=webp) — та же голая ссылка на
+// картинку, что уже хранится в image_url для остальных источников.
+function extractGallery($: CheerioAPI, baseUrl: string): string[] {
+  const urls = new Set<string>();
+  $('a[href*="/photos"] img').each((_, el) => {
+    const src = $(el).attr("src");
+    if (!src) return;
+    try {
+      const parsed = new URL(src, baseUrl);
+      parsed.search = "";
+      urls.add(parsed.toString());
+    } catch {
+      // невалидный/относительный мусор в src — пропускаем
+    }
+  });
+  return Array.from(urls);
+}
 
-export async function fetchOgTags(url: string, contentSelector?: string): Promise<OgTags> {
+export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[] };
+
+export async function fetchOgTags(
+  url: string,
+  contentSelector?: string,
+  gallery?: "hearst"
+): Promise<OgTags> {
   const html = await fetchHtmlChunk(url);
   const $ = cheerio.load(html);
   const articleScope = findLargestArticleScope($);
@@ -193,5 +222,6 @@ export async function fetchOgTags(url: string, contentSelector?: string): Promis
     description: extractMetaContent($, "og:description"),
     image: extractMetaContent($, "og:image"),
     excerpt,
+    gallery: gallery === "hearst" ? extractGallery($, url) : undefined,
   };
 }

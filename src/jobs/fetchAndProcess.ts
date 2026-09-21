@@ -145,7 +145,8 @@ async function processSource(
   // синхронизируются в БД через db:init, но сам селектор там не хранится
   // (это dev-time настройка парсинга, не пользовательские данные), поэтому
   // ищем его в конфиге по имени.
-  const contentSelector = SOURCES.find((s) => s.name === source.name)?.contentSelector;
+  const sourceConfig = SOURCES.find((s) => s.name === source.name);
+  const contentSelector = sourceConfig?.contentSelector;
   let feed;
   try {
     const xml = await fetchFeedText(source.rss_url);
@@ -178,11 +179,13 @@ async function processSource(
     // остаёмся с сниппетом из RSS и без картинки, без ошибки для всей статьи.
     let fullDescription: string | undefined;
     let imageUrl: string | undefined;
+    let gallery: string[] | undefined;
     let excerpt: string | undefined;
     try {
-      const og = await fetchOgTags(item.link, contentSelector);
+      const og = await fetchOgTags(item.link, contentSelector, sourceConfig?.gallery);
       fullDescription = og.description;
       imageUrl = og.image;
+      gallery = og.gallery?.length ? og.gallery : undefined;
       // Берём более длинный из двух источников контента, а не всегда
       // feedContent — у Wallpaper/Lifehacker/IGN content:encoded из RSS
       // содержит ПОЛНУЮ статью (страница слишком тяжёлая или не отдаёт
@@ -306,8 +309,8 @@ async function processSource(
     // с необработанным исключением вместо того, чтобы просто пропустить уже
     // занятую кем-то статью.
     const insert = await pool.query(
-      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, ai_summary, ai_summary_long, category, embedding, title_embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector, $12::vector)
+      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, ai_summary, ai_summary_long, category, embedding, title_embedding, image_urls)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector, $12::vector, $13)
        ON CONFLICT (link) DO NOTHING
        RETURNING id`,
       [
@@ -323,6 +326,7 @@ async function processSource(
         category,
         vectorLiteral,
         titleVectorLiteral,
+        gallery ?? null,
       ]
     );
     if (insert.rowCount === 0) continue; // параллельный прогон уже вставил эту ссылку

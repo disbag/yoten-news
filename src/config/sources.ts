@@ -16,6 +16,12 @@ type SourceConfig = {
   rssUrl: string;
   homepageUrl: string;
   contentSelector?: string;
+  // "hearst" — на странице статьи есть ссылка(и) на подгалерею /photos с
+  // несколькими кадрами (см. extractGallery в src/lib/ogTags.ts). Пока
+  // проверено только на Hearst-изданиях (Motor Trend, Car and Driver) —
+  // другие сайты вёрстают галереи иначе, включать им этот флаг нельзя без
+  // отдельной проверки их разметки.
+  gallery?: "hearst";
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -144,12 +150,14 @@ export const SOURCES: SourceConfig[] = [
     name: "Car and Driver",
     rssUrl: "https://www.caranddriver.com/rss/all.xml/",
     homepageUrl: "https://www.caranddriver.com",
+    gallery: "hearst",
   },
   {
     // Тоже Hearst — тот же паттерн, что у Car and Driver.
     name: "Motor Trend",
     rssUrl: "https://www.motortrend.com/rss/all.xml/",
     homepageUrl: "https://www.motortrend.com",
+    gallery: "hearst",
   },
   {
     name: "InsideEVs",

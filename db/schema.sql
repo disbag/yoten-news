@@ -124,3 +124,9 @@ ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_embedding vector(384);
 -- Порядковые "user-01", "user-02"... для user.name/displayName при passkey-
 -- регистрации без ручного ввода имени (см. app/api/auth/register/options).
 CREATE SEQUENCE IF NOT EXISTS passkey_user_seq;
+
+-- Галерея картинок статьи (Hearst-издания — Motor Trend, Car and Driver —
+-- кладут на страницу отдельную подгалерею /photos с несколькими кадрами,
+-- см. extractGallery в src/lib/ogTags.ts). NULL/пусто — обычная одна картинка
+-- через image_url, без карусели в FeedCard.tsx.
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS image_urls TEXT[];

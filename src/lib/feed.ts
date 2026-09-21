@@ -10,6 +10,10 @@ export type FeedSource = { name: string; homepage: string | null; link: string }
 export type FeedItem = {
   clusterId: number;
   imageUrl: string | null;
+  // Галерея (Hearst-издания — Motor Trend, Car and Driver, см. gallery в
+  // src/config/sources.ts) — несколько кадров вместо одной картинки, показывается
+  // каруселью в FeedCard.tsx. null/пусто у обычных статей с одной картинкой.
+  imageUrls: string[] | null;
   summary: string;
   summaryLong: string | null;
   description: string | null;
@@ -106,6 +110,15 @@ export async function getFeed(
         ORDER BY a2.created_at ASC
         LIMIT 1
       ) AS category,
+      -- Тот же 2D-массив-через-array_agg капкан, что и у category выше —
+      -- image_urls тоже TEXT[] на статью, коррелированный подзапрос вместо
+      -- array_agg(...)[1].
+      (
+        SELECT a2.image_urls FROM articles a2
+        WHERE a2.cluster_id = a.cluster_id AND a2.image_urls IS NOT NULL
+        ORDER BY a2.created_at ASC
+        LIMIT 1
+      ) AS image_urls,
       bool_or(ar.user_id IS NOT NULL) AS is_read
     FROM articles a
     JOIN sources s ON s.id = a.source_id
@@ -128,6 +141,7 @@ export async function getFeed(
     (row): FeedItem => ({
       clusterId: row.cluster_id,
       imageUrl: row.image_url,
+      imageUrls: row.image_urls,
       summary: row.summary,
       summaryLong: row.summary_long,
       description: row.description,

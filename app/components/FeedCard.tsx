@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FeedItem } from "../../src/lib/feed";
 import { categoryLabels } from "../../src/config/categories";
 import ArticleModal from "./ArticleModal";
+import Gallery from "./Gallery";
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "";
@@ -127,19 +128,23 @@ export default function FeedCard({
           {item.summary}
         </p>
       </div>
-      {item.imageUrl && (
-        // Через /api/image-proxy, а не напрямую — некоторые издания (Rolling
-        // Stone, Variety, Hollywood Reporter, все три на инфраструктуре
-        // Penske Media) блокируют именно хотлинк картинки из чужого домена
-        // (см. коммент в app/api/image-proxy/route.ts), хотя тот же URL
-        // прекрасно отдаётся на серверный запрос при сборе новостей.
-        // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание)
-        <img
-          src={`/api/image-proxy?url=${encodeURIComponent(item.imageUrl)}`}
-          alt=""
-          className="cover"
-          loading="lazy"
-        />
+      {item.imageUrls && item.imageUrls.length > 1 ? (
+        <Gallery urls={item.imageUrls} />
+      ) : (
+        item.imageUrl && (
+          // Через /api/image-proxy, а не напрямую — некоторые издания (Rolling
+          // Stone, Variety, Hollywood Reporter, все три на инфраструктуре
+          // Penske Media) блокируют именно хотлинк картинки из чужого домена
+          // (см. коммент в app/api/image-proxy/route.ts), хотя тот же URL
+          // прекрасно отдаётся на серверный запрос при сборе новостей.
+          // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание)
+          <img
+            src={`/api/image-proxy?url=${encodeURIComponent(item.imageUrl)}`}
+            alt=""
+            className="cover"
+            loading="lazy"
+          />
+        )
       )}
 
       <ArticleModal item={open ? item : null} onClose={() => setOpen(false)} />
