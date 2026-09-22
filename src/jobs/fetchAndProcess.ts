@@ -93,6 +93,19 @@ const PROMO_TITLE_PATTERN = /\b(promo codes?|coupons?|discount codes?)\b/i;
 // новости или чинить кластеризацию под этот формат.
 const LIVE_BLOG_LINK_PATTERN = /\/live\/\d{4}\/\w{3}\/\d{2}\//;
 
+// Ежедневная рубрика The New Yorker (одна карикатура в день, без единого
+// абзаца связного текста) — реальный случай: и RSS-сниппет, и og:description
+// у КАЖДОГО выпуска — фиксированный шаблонный текст ("A drawing that riffs
+// on the latest news and happenings." / "See today's Daily Cartoon."), один
+// и тот же из раза в раз, без единого факта. Так как это НЕПУСТОЙ текст,
+// проверка "aiSummary === title" (см. ниже, ловит случаи, где модель
+// сигналит NO_CONTENT) не срабатывает — модель просто переводит шаблонную
+// фразу на русский ("Рисунок обыгрывает последние новости и события."),
+// и такая "статья" молча проходит в ленту без единого слова о том, что на
+// самом деле на карикатуре. Отсекаем по стабильному формату URL
+// (/cartoons/daily-cartoon/...) до саммаризации, как и live-блоги выше.
+const DAILY_CARTOON_LINK_PATTERN = /\/cartoons\/daily-cartoon\//;
+
 // Сравниваем по UTC-дате (тот же принцип, что и в getFeed.ts/published_at) —
 // само сравнение дат, а не времени, поэтому не зависит от часового пояса
 // запуска пайплайна. FETCH_SINCE_DAYS=0 (дефолт) — только сегодня;
@@ -183,6 +196,7 @@ async function processSource(
     if (!item.link || !item.title) continue;
     if (PROMO_TITLE_PATTERN.test(item.title)) continue; // партнёрский купон/промокод, не новость
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
+    if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
     if (!isWithinFetchWindow(item.isoDate)) continue; // вне окна FETCH_SINCE_DAYS — не берём в ленту
 
     const exists = await pool.query("SELECT 1 FROM articles WHERE link = $1", [item.link]);
