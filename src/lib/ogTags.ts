@@ -72,6 +72,16 @@ function extractMetaContent($: CheerioAPI, name: string): string | undefined {
 // На странице может быть несколько <script type="application/ld+json">
 // (часто ещё Organization/BreadcrumbList рядом с NewsArticle) — проверяем
 // все, берём первый, где реально нашлось articleBody.
+// Порог "похоже на настоящее тело статьи, а не на дек/подзаголовок" — см.
+// коммент у вызова ниже. Реальный случай: у Rolling Stone (Penske Media)
+// articleBody в JSON-LD оказался вообще ОДНИМ предложением-деком (94
+// символа: "The actress' death was ruled an accident caused by..."), а не
+// полным текстом — при этом сам полный текст (~4650 символов) лежит
+// обычными <p> прямо на странице, доступен без всякого бота-блока, просто
+// extractArticleBodyFromJsonLd "успешно" находил короткий дек и им же
+// останавливал каскад раньше, чем до этих <p> вообще доходило дело.
+const MIN_JSONLD_BODY_LENGTH = 200;
+
 function extractArticleBodyFromJsonLd($: CheerioAPI): string | undefined {
   const scripts = $('script[type="application/ld+json"]').toArray();
   for (const el of scripts) {
@@ -80,7 +90,10 @@ function extractArticleBodyFromJsonLd($: CheerioAPI): string | undefined {
       const parsed = JSON.parse(raw);
       const candidates = Array.isArray(parsed) ? parsed : [parsed, ...(parsed?.["@graph"] ?? [])];
       for (const node of candidates) {
-        if (typeof node?.articleBody === "string" && node.articleBody.trim()) {
+        if (
+          typeof node?.articleBody === "string" &&
+          node.articleBody.trim().length >= MIN_JSONLD_BODY_LENGTH
+        ) {
           return node.articleBody;
         }
       }
