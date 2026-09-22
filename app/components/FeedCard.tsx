@@ -37,6 +37,10 @@ export default function FeedCard({
 }) {
   const [open, setOpen] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
+  // Некоторые издания (Telegraph — известный случай) отдают 402/битые байты
+  // даже через прокси (см. коммент в app/api/image-proxy/route.ts) — вместо
+  // сломанной иконки картинки в ленте просто скрываем блок с ней целиком.
+  const [imageBroken, setImageBroken] = useState(false);
   const cardRef = useRef<HTMLElement>(null);
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
@@ -138,7 +142,8 @@ export default function FeedCard({
       {item.imageUrls && item.imageUrls.length > 1 ? (
         <Gallery urls={item.imageUrls} />
       ) : (
-        item.imageUrl && (
+        item.imageUrl &&
+        !imageBroken && (
           // Через /api/image-proxy, а не напрямую — некоторые издания (Rolling
           // Stone, Variety, Hollywood Reporter, все три на инфраструктуре
           // Penske Media) блокируют именно хотлинк картинки из чужого домена
@@ -150,6 +155,7 @@ export default function FeedCard({
             alt=""
             className="cover"
             loading="lazy"
+            onError={() => setImageBroken(true)}
           />
         )
       )}

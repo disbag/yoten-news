@@ -8,50 +8,68 @@ import { useState } from "react";
 // показывается обычная одна картинка без карусели.
 export default function Gallery({ urls }: { urls: string[] }) {
   const [index, setIndex] = useState(0);
+  // Сломанные (402/битые байты — см. app/api/image-proxy/route.ts) кадры
+  // просто исключаем из карусели по мере обнаружения, а не показываем
+  // битую иконку — тот же принцип, что и для одиночной обложки в
+  // FeedCard.tsx.
+  const [broken, setBroken] = useState<Set<string>>(new Set());
+
+  const workingUrls = urls.filter((u) => !broken.has(u));
+  if (workingUrls.length === 0) return null;
+  const safeIndex = index % workingUrls.length;
 
   function go(delta: number) {
-    setIndex((i) => (i + delta + urls.length) % urls.length);
+    setIndex((i) => (i + delta + workingUrls.length) % workingUrls.length);
+  }
+
+  function markBroken(url: string) {
+    setBroken((prev) => new Set(prev).add(url));
   }
 
   return (
     <div className="gallery">
       {/* eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание), через /api/image-proxy как и одиночная обложка */}
       <img
-        src={`/api/image-proxy?url=${encodeURIComponent(urls[index])}`}
+        src={`/api/image-proxy?url=${encodeURIComponent(workingUrls[safeIndex])}`}
         alt=""
         className="cover"
         loading="lazy"
+        onError={() => markBroken(workingUrls[safeIndex])}
       />
-      <button
-        className="arrow left"
-        aria-label="Предыдущее фото"
-        onClick={(e) => {
-          e.stopPropagation();
-          go(-1);
-        }}
-      >
-        ‹
-      </button>
-      <button
-        className="arrow right"
-        aria-label="Следующее фото"
-        onClick={(e) => {
-          e.stopPropagation();
-          go(1);
-        }}
-      >
-        ›
-      </button>
-      <div className="dots" onClick={(e) => e.stopPropagation()}>
-        {urls.map((_, i) => (
+      {workingUrls.length > 1 && (
+        <>
           <button
-            key={i}
-            className={i === index ? "dot active" : "dot"}
-            aria-label={`Фото ${i + 1}`}
-            onClick={() => setIndex(i)}
-          />
-        ))}
-      </div>
+            className="arrow left"
+            aria-label="Предыдущее фото"
+            onClick={(e) => {
+              e.stopPropagation();
+              go(-1);
+            }}
+          >
+            ‹
+          </button>
+          <button
+            className="arrow right"
+            aria-label="Следующее фото"
+            onClick={(e) => {
+              e.stopPropagation();
+              go(1);
+            }}
+          >
+            ›
+          </button>
+          <div className="dots" onClick={(e) => e.stopPropagation()}>
+            {workingUrls.map((_, i) => (
+              <button
+                key={i}
+                className={i === safeIndex ? "dot active" : "dot"}
+                aria-label={`Фото ${i + 1}`}
+                onClick={() => setIndex(i)}
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       <style jsx>{`
         .gallery {
