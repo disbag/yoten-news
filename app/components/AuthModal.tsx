@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "./useAuth";
 
 type Mode = "login" | "register";
@@ -52,7 +53,18 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
 
   if (!mounted) return null;
 
-  return (
+  // Портал в body — иначе модалка рендерится внутри Sidebar (десктоп) или
+  // MobileChrome (мобилка), а у Sidebar position: sticky, который (как и
+  // sticky в целом, независимо от z-index) сам создаёт stacking context.
+  // Внутри него z-index модалки сравнивается только с соседями ВНУТРИ
+  // Sidebar — снаружи весь этот stacking context целиком проигрывает
+  // FeedTabs с её явным z-index: 10 (см. FeedTabs.tsx), у которого
+  // положительный z-index против z-index: auto у Sidebar побеждает
+  // независимо от порядка в DOM. Реальный баг: табы оставались НЕ
+  // затемнены оверлеем модалки. Портал в body убирает Sidebar/MobileChrome
+  // из цепочки предков совсем — z-index: 100 сравнивается уже на верхнем
+  // уровне, где и выигрывает.
+  return createPortal(
     <div
       onClick={onClose}
       // Инлайн, не styled-jsx — тот же баг SWC, что описан в ArticleModal.tsx:
@@ -234,6 +246,7 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
           }
         `}</style>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
