@@ -1,15 +1,14 @@
 :root {
   color-scheme: light;
-  /* Тёплая, "уютная" редакторская палитра в духе Kinfolk — белый общий фон,
-     приглушённый терракотовый акцент вместо ярко-синего. Намеренно один
-     светлый вариант без переключения на тёмную тему — так же, как и сам
-     журнал Kinfolk не меняет оформление под системную тему. */
-  --bg: #ffffff;
-  --card: #fdfbf6;
-  --card-hover: #f9f4ea;
-  --border: #e6ddcd;
-  --text: #2c261e;
-  --text-dim: #8a7f6d;
+  /* Редизайн 2026 (см. Figma) — почти белый фон, чёрный текст, холодный
+     серый разделитель вместо прежней тёплой Kinfolk-палитры. Терракотовый
+     акцент (--accent) не менялся — он и в новом макете тот же цвет. */
+  --bg: #fbfbfb;
+  --card: #ffffff;
+  --card-hover: #f2f2f0;
+  --border: #dedfd9;
+  --text: #000000;
+  --text-dim: rgba(0, 0, 0, 0.5);
   --accent: #c94f3d;
   --accent-soft: rgba(201, 79, 61, 0.1);
 }
@@ -25,92 +24,80 @@ body {
   font-family: var(--font-serif), Georgia, "Times New Roman", serif;
 }
 
+.shell {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
 main {
   max-width: 600px;
+  width: 100%;
   margin: 0 auto;
-  padding: 48px 24px 80px;
+  /* Без верхнего паддинга на мобилке: по макету между шапкой (лого+иконки)
+     и табами/лентой нет зазора — там уже свой отступ (padding-bottom
+     шапки + padding-top табов, см. MobileChrome.tsx). 20px сверху нужны
+     только на десктопе, чтобы main начинался вровень с сайдбаром — см.
+     media query ниже. */
+  padding: 0 0 80px;
 }
 
-header {
-  position: relative;
-  padding: 0 0 20px;
-  text-align: center;
+.mobile-only {
+  display: block;
 }
 
-header .logo {
-  height: 64px;
-  width: auto;
-}
-
-/* 25px — вертикальный центр самой надписи "Yōten" внутри logo.svg (не всего
-   64px-блока логотипа, в который снизу ещё входит мелкая подпись NEWS) —
-   посчитано по bounding box глифов в исходном SVG (viewBox 72px высотой,
-   надпись занимает примерно 10.3..46.4, масштаб 64/72). */
-.auth-corner {
-  position: absolute;
-  top: 25px;
-  right: 0;
-  transform: translateY(-50%);
-}
-
-/* Фильтр по категориям — ряд тегов без разделителей, каждый — ссылка на
-   /?category=<id> (см. app/page.tsx). */
-.filters {
-  text-align: center;
-  padding-bottom: 28px;
-  margin-bottom: 40px;
-  border-bottom: 1px solid var(--border);
-}
-
-.filters-list {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 10px 22px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.filters-list a {
-  color: var(--text-dim);
-  text-decoration: none;
-}
-
-.filters-list a:hover {
-  color: var(--accent);
-}
-
-.filters-list a.active {
-  color: var(--accent);
-}
-
-.unread-toggle {
-  display: inline-block;
-  margin-top: 14px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  text-decoration: none;
-}
-
-.unread-toggle:hover,
-.unread-toggle.active {
-  color: var(--accent);
+.desktop-only {
+  display: none;
 }
 
 .card-list {
   display: flex;
   flex-direction: column;
+  margin-top: 30px;
+  padding: 0 20px;
 }
 
 .card-list > article:not(:last-child) {
-  margin-bottom: 18px;
-  padding-bottom: 18px;
+  margin-bottom: 32px;
+  padding-bottom: 32px;
   border-bottom: 1px solid var(--border);
+}
+
+@media (min-width: 900px) {
+  .shell {
+    display: flex;
+    /* Не flex-start: сайдбар внутри .desktop-only — position: sticky (см.
+       Sidebar.tsx), а sticky-элемент может "прилипнуть" только в пределах
+       высоты СВОЕГО родителя. При align-items: flex-start .desktop-only
+       сжимался бы точно по высоте сайдбара — заведомо той же высоты, что и
+       сам прилипающий элемент, то есть без единого пикселя запаса на
+       прилипание (сайдбар просто уезжал со страницей). При stretch
+       (по умолчанию) .desktop-only растягивается на высоту всей строки
+       (по main, который намного выше) — теперь есть, в пределах чего
+       прилипать. На сам main это не влияет: его высота и так задаётся
+       контентом, stretch только даёт ему same-as-content высоту явно.
+    */
+  }
+
+  .mobile-only {
+    display: none;
+  }
+
+  .desktop-only {
+    display: block;
+  }
+
+  main {
+    /* Без flex-grow main как flex-item сайзится по контенту (auto), а не на
+       всю доступную ширину строки — на пустой вкладке "Прочитанные" (нет
+       карточек, нечем растянуть) это схлопывало весь блок, включая табы,
+       до ширины надписей. flex-basis:0 + grow:1 растягивает контейнер
+       независимо от контента, max-width всё ещё держит потолок в 600px. */
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 20px 0 80px;
+  }
+
+  .card-list {
+    padding: 0;
+  }
 }

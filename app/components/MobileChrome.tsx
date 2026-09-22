@@ -1,0 +1,170 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import CategoryNav from "./CategoryNav";
+import AuthMenuItem from "./AuthMenuItem";
+
+export default function MobileChrome({
+  activeCategory,
+  isLoggedIn,
+}: {
+  activeCategory?: string;
+  isLoggedIn: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Без блокировки скролла body на iOS Safari прокрутка длинного меню
+  // (fixed + overflow-y: auto) иногда не работает вовсе — тот же паттерн,
+  // что уже проверен в ArticleModal.tsx.
+  //
+  // Компенсация ширины скроллбара — без неё на десктопном браузере (виден
+  // полосой справа, в отличие от настоящего мобильного) overflow:hidden
+  // тут же убирает эту полосу, страница резко становится на её ширину
+  // шире, и весь центрированный по флексу контент шапки (в т.ч. лого
+  // ровно посередине) скачет вбок на полширины скроллбара — выглядит как
+  // "лого дёрнулось/пропало и появилось снова".
+  useEffect(() => {
+    if (!open) return;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = "";
+      document.body.style.paddingRight = "";
+    };
+  }, [open]);
+
+  return (
+    <>
+      <div className="header">
+        <button className="icon-button" aria-label="Меню" onClick={() => setOpen(true)}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+            <path d="M2.75 8.25H21.25M2.75 15.75H21.25" stroke="#4C515E" strokeLinecap="round" />
+          </svg>
+        </button>
+        {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+        <img src="/logo-outlined.svg" alt="Yoten" className="logo" />
+        {/* Пустой спейсер вместо иконки авторизации — в макете справа в
+            шапке ленты ничего нет (вход/выход — только через меню), спейсер
+            лишь держит логотип по центру симметрично левой кнопке меню. */}
+        <span className="spacer" />
+      </div>
+
+      {open && (
+        <div className="overlay">
+          <div className="header">
+            <button className="icon-button" aria-label="Закрыть" onClick={() => setOpen(false)}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+                <path d="M6.25 6.25L17.75 17.75M17.75 6.25L6.25 17.75" stroke="#4C515E" strokeLinecap="round" />
+              </svg>
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+            <img src="/logo-outlined.svg" alt="Yoten" className="logo" />
+            {/* Пустой спейсер вместо иконки — держит логотип по центру
+                симметрично левой кнопке закрытия, как в макете. */}
+            <span className="spacer" />
+          </div>
+          <div className="body">
+            <nav className="categories">
+              <CategoryNav activeCategory={activeCategory} onNavigate={() => setOpen(false)} />
+            </nav>
+            <div className="divider" />
+            <div className="account">
+              {/* Настройка ленты нужна авторизованному пользователю (это
+                  настройки ЕГО ленты) — гостю попросту нечего настраивать. */}
+              {isLoggedIn && <span className="disabled">Настройка ленты</span>}
+              <AuthMenuItem />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        .header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 20px 20px 12px;
+          width: 100%;
+        }
+        .icon-button {
+          display: flex;
+          background: none;
+          border: none;
+          padding: 0;
+          cursor: pointer;
+          width: 24px;
+          height: 24px;
+        }
+        .spacer {
+          width: 24px;
+          height: 24px;
+        }
+        .logo {
+          /* 150px — подтверждено метаданными фрейма в Figma (frame
+             "yoten_logo_outlined 2 1" внутри мобильной шапки/меню — 150x55),
+             в отличие от десктоп-сайдбара, где тот же логотип в раза меньше
+             (96px, отдельный фрейм). Пиксельные замеры скриншота раньше
+             ошибочно приняли отступ ВНУТРИ SVG за реальный размер контейнера. */
+          width: 150px;
+          height: auto;
+        }
+        .overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          background: var(--bg);
+          display: flex;
+          flex-direction: column;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior: contain;
+        }
+        .body {
+          display: flex;
+          flex-direction: column;
+          gap: 32px;
+          padding-bottom: 32px;
+        }
+        .categories {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          text-align: left;
+          gap: 16px;
+          padding: 0 40px;
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-weight: 300;
+          font-size: 20px;
+        }
+        .categories :global(a) {
+          color: var(--text);
+          text-decoration: none;
+        }
+        .categories :global(a.active) {
+          color: var(--accent);
+        }
+        .divider {
+          height: 1px;
+          background: var(--border);
+          margin: 0 20px;
+        }
+        .account {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          text-align: left;
+          gap: 16px;
+          padding: 0 40px;
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-weight: 300;
+          font-size: 20px;
+          color: var(--text);
+        }
+        .disabled {
+          color: var(--text-dim);
+        }
+      `}</style>
+    </>
+  );
+}

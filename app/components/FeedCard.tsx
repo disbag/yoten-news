@@ -31,14 +31,17 @@ function faviconUrl(homepage: string | null): string | null {
 export default function FeedCard({
   item,
   onRead,
+  trackReads,
 }: {
   item: FeedItem;
   onRead?: (clusterId: number) => void;
+  // Без аккаунта отмечать нечего: у гостя нет ни вкладок "Новые"/
+  // "Прочитанные", ни смысла в точке-индикаторе — весь read-tracking
+  // (точка, наблюдение за скроллом, запрос на /api/reads) включается
+  // только для залогиненного пользователя.
+  trackReads: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  // isRead приходит с сервера только для залогиненного пользователя (см.
-  // getFeed) — для гостя всегда false, так что индикатор просто никогда не
-  // погаснет, что и корректно: без аккаунта нечего отслеживать.
   const [isRead, setIsRead] = useState(item.isRead);
   const cardRef = useRef<HTMLElement>(null);
   const favicon = faviconUrl(item.primaryHomepage);
@@ -47,9 +50,6 @@ export default function FeedCard({
   function markRead() {
     setIsRead(true);
     onRead?.(item.clusterId);
-    // Fire-and-forget: гость получит {ok:false} и ничего страшного не
-    // произойдёт — карточка и так уже выглядит прочитанной локально до
-    // следующей перезагрузки, а после логина отметка появится по-настоящему.
     fetch("/api/reads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -64,7 +64,7 @@ export default function FeedCard({
   // boundingClientRect: top < 0 при !isIntersecting означает "ушла наверх"
   // (пользователь проскроллил мимо), а не "ещё не долистали" (там top > 0).
   useEffect(() => {
-    if (isRead) return;
+    if (!trackReads || isRead) return;
     const el = cardRef.current;
     if (!el) return;
 
@@ -79,7 +79,7 @@ export default function FeedCard({
     observer.observe(el);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead читает актуальный isRead через замыкание на каждый ре-рендер, доп. зависимости пересоздавали бы observer без надобности
-  }, [isRead]);
+  }, [trackReads, isRead]);
 
   // timeAgo зависит от Date.now() — на сервере и при гидратации на клиенте
   // это разные моменты времени, и если между ними "перевалило" через минуту
@@ -94,17 +94,17 @@ export default function FeedCard({
 
   return (
     <article className="card" ref={cardRef}>
-      <div className="body">
-        <div className="attribution">
+      <div className="content">
+        <div className="header">
           {favicon ? (
             // eslint-disable-next-line @next/next/no-img-element -- фавиконки с произвольных доменов изданий
             <img src={favicon} alt="" className="favicon" />
           ) : (
             <span className="favicon favicon-placeholder" />
           )}
-          <div className="attribution-text">
+          <div className="meta">
             <div className="source-row">
-              {!isRead && <span className="unread-dot" />}
+              {trackReads && !isRead && <span className="unread-dot" />}
               <a
                 href={item.primaryLink}
                 target="_blank"
@@ -125,7 +125,7 @@ export default function FeedCard({
           </div>
         </div>
         <p className={isRead ? "summary read" : "summary"} onClick={() => setOpen(true)}>
-          {item.summary}
+          {item.summary} <span className="read-more">Читать</span>
         </p>
       </div>
       {item.imageUrls && item.imageUrls.length > 1 ? (
@@ -151,38 +151,43 @@ export default function FeedCard({
 
       <style jsx>{`
         .card {
-          display: block;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+        .content {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
         }
         .cover {
           display: block;
           width: 100%;
-          max-height: 320px;
+          aspect-ratio: 1200 / 630;
           object-fit: cover;
-          margin-top: 16px;
+          border-radius: 14px;
         }
-        .body {
-          padding: 0 2px;
-        }
-        .attribution {
+        .header {
           display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          margin-bottom: 6px;
+          align-items: center;
+          gap: 12px;
         }
         .favicon {
           width: 24px;
           height: 24px;
-          border-radius: 6px;
+          border-radius: 50%;
+          object-fit: cover;
           flex-shrink: 0;
         }
         .favicon-placeholder {
           background: var(--border);
         }
-        .attribution-text {
+        .meta {
           display: flex;
           flex-direction: column;
           align-items: flex-start;
-          gap: 3px;
+          flex: 1 0 0;
+          min-width: 0;
         }
         .source-row {
           display: flex;
@@ -197,12 +202,10 @@ export default function FeedCard({
           flex-shrink: 0;
         }
         .source-name {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          font-size: 0.64rem;
-          font-weight: 600;
-          letter-spacing: 0.07em;
-          text-transform: uppercase;
-          color: var(--text-dim);
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 12px;
+          line-height: 14px;
+          color: var(--text);
           text-decoration: none;
         }
         .source-name:hover {
@@ -214,22 +217,28 @@ export default function FeedCard({
           color: var(--accent);
         }
         .date {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          font-size: 0.64rem;
-          letter-spacing: 0.03em;
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 10px;
+          line-height: 12px;
           color: var(--text-dim);
         }
         .summary {
           margin: 0;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          font-size: 0.9rem;
-          line-height: 1.5;
+          font-weight: 400;
+          font-size: 15px;
+          line-height: 20px;
+          color: var(--text);
           cursor: pointer;
         }
         .summary.read {
           color: var(--text-dim);
         }
-        @media (max-width: 640px) {
+        .read-more {
+          color: #3186d1;
+          text-decoration: underline;
+        }
+        @media (max-width: 899px) {
           .summary {
             font-size: 1rem;
           }

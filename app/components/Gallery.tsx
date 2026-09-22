@@ -56,13 +56,13 @@ export default function Gallery({ urls }: { urls: string[] }) {
       <style jsx>{`
         .gallery {
           position: relative;
-          margin-top: 16px;
         }
         .cover {
           display: block;
           width: 100%;
-          max-height: 320px;
+          aspect-ratio: 1200 / 630;
           object-fit: cover;
+          border-radius: 14px;
         }
         .arrow {
           position: absolute;
