@@ -25,7 +25,11 @@ export default function FeedList({
   const [hasMore, setHasMore] = useState(initialHasMore);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const pendingRemovals = useRef<Set<number>>(new Set());
-  const removalScheduled = useRef(false);
+  // Удаление откладывается до паузы в скролле (см. handleRead/scroll-листенер
+  // ниже) — таймер сбрасывается на каждое новое чтение и на каждый scroll-
+  // событие, так что реально срабатывает только через IDLE_MS после того, как
+  // пользователь перестал прокручивать.
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Снимок высоты/скролла ПЕРЕД пакетным удалением карточек — см.
   // компенсацию в useLayoutEffect ниже. null значит "последнее изменение
   // items было не удалением" (например, догрузка по скроллу), тогда
@@ -95,41 +99,69 @@ export default function FeedList({
   // продолжает висеть в списке, специально отфильтрованном под
   // непрочитанное, до следующей перезагрузки страницы.
   //
-  // Убираем не по одной штуке сразу, а пачкой на следующий кадр — при
-  // быстром скролле IntersectionObserver у нескольких карточек подряд
-  // срабатывает почти одновременно, и без батчинга это несколько отдельных
-  // рефлоу подряд вместо одного.
-  //
   // Настоящая причина скачков скролла — не в количестве рефлоу самих по
   // себе, а в том, что удаляемые карточки стоят ВЫШЕ текущей позиции
   // скролла: страница резко становится короче, и если её новая высота
   // оказывается меньше текущего scrollY, браузер вынужден обрезать
   // (clamp) scrollTop до нового максимума — это и есть видимый прыжок
-  // назад. Проверено эмпирически: пошаговый скролл небольшими шагами
-  // (как у реального трекпада) с логированием scrollY стабильно показывал
-  // просадку ровно в момент удаления карточек (900 → 402 → 900 → 462 → 900).
-  // Полагаться на scroll anchoring браузера ненадёжно, когда за один кадр
-  // могут разом уйти несколько карточек, поэтому компенсируем вручную:
-  // снимаем высоту документа и scrollY ДО удаления, а в useLayoutEffect
-  // (синхронно после коммита DOM, до отрисовки кадра) прибавляем разницу
-  // высот обратно к scrollY — так браузеру никогда не приходится обрезать.
+  // назад. Полагаться на scroll anchoring браузера ненадёжно, когда за один
+  // кадр могут разом уйти несколько карточек (проверено: без ручной
+  // компенсации опорная карточка реально прыгает на экране на 300-700px),
+  // поэтому компенсируем вручную: снимаем высоту документа и scrollY ДО
+  // удаления, а в useLayoutEffect (синхронно после коммита DOM, до отрисовки
+  // кадра) прибавляем разницу высот обратно к scrollY — так браузеру никогда
+  // не приходится обрезать.
+  //
+  // Само удаление при этом откладывается до паузы в скролле (а не до
+  // следующего кадра, как раньше) — measured: с компенсацией на каждый кадр
+  // экранная позиция не сдвигается ни на пиксель, НО window.scrollTo прямо
+  // во время активной прокрутки (инерция трекпада/колеса) обрывает эту
+  // инерцию у браузера, что и ощущается как небольшое дёргание, даже когда
+  // итоговая позиция идеально верна. Откладывая flush до IDLE_MS после
+  // последнего скролл-события, компенсация никогда не попадает в момент
+  // активного жеста — только в паузу между ними, где её в любом случае
+  // никто не почувствует.
+  function flushRemovals() {
+    flushTimer.current = null;
+    if (pendingRemovals.current.size === 0) return;
+    const toRemove = pendingRemovals.current;
+    pendingRemovals.current = new Set();
+    removalSnapshot.current = {
+      height: document.documentElement.scrollHeight,
+      scrollY: window.scrollY,
+    };
+    setItems((prev) => prev.filter((item) => !toRemove.has(item.clusterId)));
+  }
+
+  const IDLE_MS = 200;
+
   function handleRead(clusterId: number) {
     onNewlyRead?.();
     if (tab !== "new") return;
     pendingRemovals.current.add(clusterId);
-    if (removalScheduled.current) return;
-    removalScheduled.current = true;
-    requestAnimationFrame(() => {
-      const toRemove = pendingRemovals.current;
-      pendingRemovals.current = new Set();
-      removalScheduled.current = false;
-      removalSnapshot.current = {
-        height: document.documentElement.scrollHeight,
-        scrollY: window.scrollY,
-      };
-      setItems((prev) => prev.filter((item) => !toRemove.has(item.clusterId)));
-    });
+    if (flushTimer.current) clearTimeout(flushTimer.current);
+    flushTimer.current = setTimeout(flushRemovals, IDLE_MS);
   }
+
+  // Подстраховка на случай, если между двумя срабатываниями handleRead
+  // (например, в разреженной части ленты с крупными картинками) проходит
+  // больше IDLE_MS, а пользователь всё ещё физически скроллит — без этого
+  // таймер из handleRead успел бы сработать посреди жеста. Каждое
+  // scroll-событие отодвигает flush дальше, так что он гарантированно
+  // происходит только после реальной остановки.
+  useEffect(() => {
+    function onScroll() {
+      if (pendingRemovals.current.size === 0) return;
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = setTimeout(flushRemovals, IDLE_MS);
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- flushRemovals читает актуальные pendingRemovals/items через замыкание/рефы, пересоздавать листенер не нужно
+  }, []);
 
   useLayoutEffect(() => {
     const snapshot = removalSnapshot.current;
