@@ -1,12 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import CategoryNav from "./CategoryNav";
 import AuthMenuItem from "./AuthMenuItem";
 import AuthWidget from "./AuthWidget";
 
 export default function MobileChrome({ activeCategory }: { activeCategory?: string }) {
   const [open, setOpen] = useState(false);
+
+  // Без блокировки скролла body на iOS Safari прокрутка длинного меню
+  // (fixed + overflow-y: auto) иногда не работает вовсе — тот же паттерн,
+  // что уже проверен в ArticleModal.tsx.
+  useEffect(() => {
+    if (!open) return;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [open]);
 
   return (
     <>
@@ -81,6 +92,8 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
           display: flex;
           flex-direction: column;
           overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior: contain;
         }
         .body {
           display: flex;

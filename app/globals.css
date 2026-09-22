@@ -31,6 +31,7 @@ body {
 
 main {
   max-width: 600px;
+  width: 100%;
   margin: 0 auto;
   padding: 20px 0 80px;
 }
@@ -46,6 +47,7 @@ main {
 .card-list {
   display: flex;
   flex-direction: column;
+  margin-top: 30px;
   padding: 0 20px;
 }
 
@@ -58,7 +60,17 @@ main {
 @media (min-width: 900px) {
   .shell {
     display: flex;
-    align-items: flex-start;
+    /* Не flex-start: сайдбар внутри .desktop-only — position: sticky (см.
+       Sidebar.tsx), а sticky-элемент может "прилипнуть" только в пределах
+       высоты СВОЕГО родителя. При align-items: flex-start .desktop-only
+       сжимался бы точно по высоте сайдбара — заведомо той же высоты, что и
+       сам прилипающий элемент, то есть без единого пикселя запаса на
+       прилипание (сайдбар просто уезжал со страницей). При stretch
+       (по умолчанию) .desktop-only растягивается на высоту всей строки
+       (по main, который намного выше) — теперь есть, в пределах чего
+       прилипать. На сам main это не влияет: его высота и так задаётся
+       контентом, stretch только даёт ему same-as-content высоту явно.
+    */
   }
 
   .mobile-only {
@@ -70,6 +82,13 @@ main {
   }
 
   main {
+    /* Без flex-grow main как flex-item сайзится по контенту (auto), а не на
+       всю доступную ширину строки — на пустой вкладке "Прочитанные" (нет
+       карточек, нечем растянуть) это схлопывало весь блок, включая табы,
+       до ширины надписей. flex-basis:0 + grow:1 растягивает контейнер
+       независимо от контента, max-width всё ещё держит потолок в 600px. */
+    flex: 1 1 0;
+    min-width: 0;
     padding: 20px 0 80px;
   }
 

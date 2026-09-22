@@ -27,6 +27,15 @@ export default function Sidebar({ activeCategory }: { activeCategory?: string })
           width: 240px;
           flex-shrink: 0;
           padding: 20px 0;
+          /* Фиксируем при скролле страницы — .shell (родитель) уже
+             align-items: flex-start, так что сайдбар не растянут на всю
+             высоту main и есть место "отлипнуть" и остаться в этой позиции.
+             Чистый CSS sticky, без JS/scroll-листенеров — не может давать
+             рывки/дёрганье, в отличие от position:fixed-эмуляции скроллом. */
+          position: sticky;
+          top: 0;
+          max-height: 100vh;
+          overflow-y: auto;
         }
         .logo {
           /* Без паддинга на самом img: с глобальным box-sizing: border-box
