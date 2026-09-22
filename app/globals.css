@@ -33,7 +33,12 @@ main {
   max-width: 600px;
   width: 100%;
   margin: 0 auto;
-  padding: 20px 0 80px;
+  /* Без верхнего паддинга на мобилке: по макету между шапкой (лого+иконки)
+     и табами/лентой нет зазора — там уже свой отступ (padding-bottom
+     шапки + padding-top табов, см. MobileChrome.tsx). 20px сверху нужны
+     только на десктопе, чтобы main начинался вровень с сайдбаром — см.
+     media query ниже. */
+  padding: 0 0 80px;
 }
 
 .mobile-only {

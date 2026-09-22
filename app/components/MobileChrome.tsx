@@ -16,11 +16,21 @@ export default function MobileChrome({
   // Без блокировки скролла body на iOS Safari прокрутка длинного меню
   // (fixed + overflow-y: auto) иногда не работает вовсе — тот же паттерн,
   // что уже проверен в ArticleModal.tsx.
+  //
+  // Компенсация ширины скроллбара — без неё на десктопном браузере (виден
+  // полосой справа, в отличие от настоящего мобильного) overflow:hidden
+  // тут же убирает эту полосу, страница резко становится на её ширину
+  // шире, и весь центрированный по флексу контент шапки (в т.ч. лого
+  // ровно посередине) скачет вбок на полширины скроллбара — выглядит как
+  // "лого дёрнулось/пропало и появилось снова".
   useEffect(() => {
     if (!open) return;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
     document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
     return () => {
       document.body.style.overflow = "";
+      document.body.style.paddingRight = "";
     };
   }, [open]);
 

@@ -13,7 +13,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-      <img src="/logo-outlined.svg" alt="Yoten" className="logo" />
+      <img src="/logo-desktop.svg" alt="Yoten" className="logo" />
       <div className="menu">
         <nav className="categories">
           <CategoryNav activeCategory={activeCategory} />
@@ -45,14 +45,18 @@ export default function Sidebar({
           top: 0;
         }
         .logo {
-          /* Без паддинга на самом img: с глобальным box-sizing: border-box
-             паддинг на replaced-элементе с явным width сжимает контентную
-             область (не сам квадрат width x height), а height:auto считает
-             пропорцию уже от суженной ширины — картинка выходит
-             расплющенной по вертикали. Отступ от левого края сайдбара
-             отдельным .menu ниже, у логотипа его вовсе нет — как и в макете. */
+          /* logo-desktop.svg — отдельный ассет из Figma (нода "LOGO",
+             16:2069), уже обрезанный под 96x55, а не тот же 150-ширинный
+             логотип, пропорционально сжатый до 96px. Он и mobile-логотип
+             (150 шириной, см. MobileChrome.tsx) — один и тот же рисунок:
+             в 150-версии вокруг текста оставлены поля (~27px с каждой
+             стороны) под мобильный ритм, а в 96-версии эти поля обрезаны
+             клипом, а не сжаты — засечки и толщина штриха остаются
+             исходного размера, просто без лишних пустых полей по бокам.
+             Поэтому здесь фиксированные width/height 1:1 с viewBox, а не
+             width + height:auto — это уже готовый под сайдбар кадр. */
           width: 96px;
-          height: auto;
+          height: 55px;
           display: block;
         }
         .menu {
