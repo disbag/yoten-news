@@ -5,14 +5,24 @@ import { SUMMARY_PROMPT, ensureCompleteSentence } from "./prompt.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAX_RETRIES = 4;
+// 503 (UNAVAILABLE) обычно значит перегрузку конкретной модели у Google, а не
+// проблему с конкретным ключом — ретраить ту же комбинацию ключ+модель 4 раза
+// с полным бэкоффом (2+4+8+16=30с) почти всегда бессмысленно и только тормозит
+// весь пайплайн: реальный случай — во время затяжного 503-инцидента у Gemini
+// каждая статья тратила 30-90с на ретраи одной и той же модели, прежде чем
+// вообще пропуститься как "ошибка саммаризации". Меньше попыток на комбинацию
+// — быстрее переключаемся на следующий ключ/модель (см. цикл ниже), где шанс
+// получить рабочий ответ выше, чем долбить уже недоступную.
+const MAX_RETRIES_5XX = 2;
 
-// Специальный тип ошибки — весь перебор моделей и ключей (см. ниже) исчерпан,
-// дальше пытаться нет смысла: любой следующий вызов упрётся в ту же стену.
-// fetchAndProcess.ts ловит именно этот тип отдельно от обычных ошибок
-// саммаризации одной статьи (сетевой сбой, пустой ответ и т.п.) — там
-// достаточно пропустить статью и пойти дальше, а здесь единственный
-// осмысленный вариант — полностью остановить пайплайн, а не долбить те же
-// исчерпанные лимиты на каждой следующей статье до конца списка источников.
+// Специальный тип ошибки — весь перебор моделей и ключей (см. ниже) исчерпан
+// (либо квота, либо стабильный 5xx на каждой комбинации) — дальше пытаться
+// нет смысла: любой следующий вызов упрётся в ту же стену. fetchAndProcess.ts
+// ловит именно этот тип отдельно от обычных ошибок саммаризации одной статьи
+// (сетевой сбой, пустой ответ и т.п.) — там достаточно пропустить статью и
+// пойти дальше, а здесь единственный осмысленный вариант — полностью
+// остановить пайплайн, а не долбить ту же стену на каждой следующей статье до
+// конца списка источников.
 export class GeminiQuotaExhaustedError extends Error {}
 
 // Список ключей через запятую (GEMINI_API_KEYS) — у бесплатного тарифа квота
@@ -146,23 +156,36 @@ export async function summarize(
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
 
-      if (res.status === 429) {
-        exhausted.push(describeQuotaError(model, await res.text()));
+      // 429 (квота) и стабильный 5xx (после MAX_RETRIES_5XX попыток именно
+      // этой комбинации) обрабатываются одинаково — эта комбинация ключ+модель
+      // сейчас нерабочая, переключаемся на следующую, а не бросаем всю статью
+      // как ошибку.
+      const quotaExceeded = res.status === 429;
+      const serviceDown = res.status >= 500 && attempt >= MAX_RETRIES_5XX;
+      if (quotaExceeded || serviceDown) {
+        exhausted.push(
+          quotaExceeded ? describeQuotaError(model, await res.text()) : `модель "${model}" (${res.status})`
+        );
         if (i === combos.length - 1) {
           throw new GeminiQuotaExhaustedError(
-            `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
+            quotaExceeded
+              ? `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
+              : `Gemini: сервис недоступен (5xx) у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Похоже на временный сбой на стороне Google — попробуй позже.`
           );
         }
         const next = combos[i + 1];
+        const reason = quotaExceeded ? "исчерпана" : "недоступна (5xx)";
+        const reasonKey = quotaExceeded ? "исчерпан" : "недоступен (5xx)";
         console.log(
           next.model !== model
-            ? `  Gemini: модель "${model}" исчерпана на всех ключах, переключаюсь на модель "${next.model}"`
-            : `  Gemini: ключ #${keyIndex + 1} исчерпан для "${model}", переключаюсь на ключ #${next.keyIndex + 1}`
+            ? `  Gemini: модель "${model}" ${reason} на всех ключах, переключаюсь на модель "${next.model}"`
+            : `  Gemini: ключ #${keyIndex + 1} ${reasonKey} для "${model}", переключаюсь на ключ #${next.keyIndex + 1}`
         );
         break; // следующая комбинация в перебор
       }
 
-      if (res.status >= 500 && attempt < MAX_RETRIES) {
+      if (res.status >= 500) {
+        // ещё остались попытки для ЭТОЙ комбинации (attempt < MAX_RETRIES_5XX)
         await sleep(2000 * 2 ** attempt);
         continue;
       }

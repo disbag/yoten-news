@@ -22,10 +22,18 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // хотя страница на самом деле открывается (реальный случай: горстка статей
 // Variety/WaPo/TIME/IGN с NULL там, где остальные статьи того же издания
 // нормально обработались).
+//
+// AbortSignal.timeout — у fetch() в Node нет дефолтного таймаута, а некоторые
+// издания (реальный случай — The Washington Post) иногда просто держат
+// соединение открытым, ничего не отдавая, вместо явной ошибки. Без таймаута
+// это вешало весь пайплайн на десятки минут на одной статье, пока прогон не
+// упирался в timeout-minutes джобы или пользователь не останавливал его
+// вручную — retry (attempts) тут не спасает, если сам fetch не возвращает
+// управление.
 async function fetchHtmlChunk(url: string, maxBytes = 500_000, attempts = 3): Promise<string> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const res = await fetch(url, { headers: BROWSER_HEADERS });
+      const res = await fetch(url, { headers: BROWSER_HEADERS, signal: AbortSignal.timeout(15_000) });
       if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
 
       const reader = res.body.getReader();

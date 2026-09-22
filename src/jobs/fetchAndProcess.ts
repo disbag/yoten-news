@@ -125,6 +125,13 @@ function stripHtml(html: string): string {
 // подвисают, а не блокировка/смена доступа. Один короткий повтор перекрывает
 // такие разовые сбои, не тратя много времени на источник, который в
 // остальном доступен.
+//
+// AbortSignal.timeout — без явного таймаута fetch() в Node может зависнуть на
+// источнике, который держит соединение открытым, ничего не отдавая (не
+// ошибка, а именно тишина) — тогда retry не срабатывает вообще, потому что
+// первая попытка никогда не завершается. Реальный случай — весь прогон
+// зависал на одном источнике на десятки минут, пока не упирался в
+// timeout-minutes джобы или его не останавливали вручную.
 async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -134,6 +141,7 @@ async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           Accept: "application/rss+xml, application/xml, text/xml, */*",
         },
+        signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) throw new Error(`Status code ${res.status}`);
       return await res.text();
