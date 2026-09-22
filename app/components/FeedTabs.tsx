@@ -39,6 +39,13 @@ export default function FeedTabs({
           align-items: stretch;
           width: 100%;
           border-bottom: 1px solid var(--border);
+          /* Липнут к верху экрана при скролле — свой непрозрачный фон
+             нужен, иначе карточки будут просвечивать сквозь табы, когда
+             уезжают вверх под них. */
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          background: var(--bg);
         }
         /* next/link рендерит <a> сам по себе — styled-jsx не проставляет
            scope-класс на JSX-компоненты (только на host-теги), поэтому
