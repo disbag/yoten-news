@@ -16,10 +16,10 @@ async function postJson(url: string, body?: unknown) {
   return data;
 }
 
-// Общая passkey-логика входа/регистрации/выхода — вынесена из AuthWidget,
-// чтобы новый редизайн мог показывать её и иконкой (мобильная шапка), и
-// текстовой ссылкой "Войти"/"Выйти" (сайдбар на десктопе, мобильное меню)
-// без дублирования обработки NotAllowedError/двухшагового флоу.
+// Общая passkey-логика входа/регистрации/выхода, используется текстовой
+// ссылкой "Войти"/"Выйти" в AuthMenuItem (сайдбар на десктопе, мобильное
+// меню) — общий хук вместо дублирования обработки NotAllowedError/
+// двухшагового флоу регистрации.
 export function useAuth() {
   const [user, setUser] = useState<SessionUser>(null);
   const [loading, setLoading] = useState(false);

@@ -2,9 +2,9 @@
 
 import { useAuth } from "./useAuth";
 
-// Текстовый вариант входа/выхода для нового меню (сайдбар на десктопе,
-// оверлей на мобилке) — та же passkey-логика из useAuth, что и у иконки в
-// AuthWidget, просто другое представление.
+// Текстовый вариант входа/выхода для меню (сайдбар на десктопе, оверлей на
+// мобилке) — единственный способ войти/выйти в текущем макете, иконки в
+// шапке больше нет (см. useAuth.ts).
 export default function AuthMenuItem() {
   const { user, loading, error, needsRegister, handleClick, handleLogout } = useAuth();
 

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import CategoryNav from "./CategoryNav";
 import AuthMenuItem from "./AuthMenuItem";
-import AuthWidget from "./AuthWidget";
 
 export default function MobileChrome({ activeCategory }: { activeCategory?: string }) {
   const [open, setOpen] = useState(false);
@@ -29,7 +28,10 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
         </button>
         {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
         <img src="/logo-outlined.svg" alt="Yoten" className="logo" />
-        <AuthWidget />
+        {/* Пустой спейсер вместо иконки авторизации — в макете справа в
+            шапке ленты ничего нет (вход/выход — только через меню), спейсер
+            лишь держит логотип по центру симметрично левой кнопке меню. */}
+        <span className="spacer" />
       </div>
 
       {open && (
@@ -81,8 +83,11 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
           height: 24px;
         }
         .logo {
-          height: 55px;
-          width: auto;
+          /* 96px, не 150 — проверено по факту рендера в Figma (пиксельные
+             замеры скриншота), автосгенерированный код завышал размер для
+             мобильных фреймов. То же значение, что и в десктоп-сайдбаре. */
+          width: 96px;
+          height: auto;
         }
         .overlay {
           position: fixed;
@@ -104,7 +109,8 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
         .categories {
           display: flex;
           flex-direction: column;
-          align-items: flex-end;
+          align-items: flex-start;
+          text-align: left;
           gap: 16px;
           padding: 0 40px;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -114,8 +120,6 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
         .categories :global(a) {
           color: var(--text);
           text-decoration: none;
-          width: 100%;
-          text-align: right;
         }
         .categories :global(a.active) {
           color: var(--accent);
@@ -128,8 +132,8 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
         .account {
           display: flex;
           flex-direction: column;
-          align-items: flex-end;
-          text-align: right;
+          align-items: flex-start;
+          text-align: left;
           gap: 16px;
           padding: 0 40px;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -139,8 +143,6 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
         }
         .disabled {
           color: var(--text-dim);
-          text-align: right;
-          width: 100%;
         }
       `}</style>
     </>
