@@ -27,7 +27,9 @@ export default function AuthMenuItem() {
           padding: 0;
           cursor: pointer;
           width: 100%;
-          text-align: right;
+          /* Направление текста (лево на десктоп-сайдбаре, право в мобильном
+             оверлее) задаёт родитель через text-align на .account/.categories. */
+          text-align: inherit;
         }
         button:disabled {
           opacity: 0.6;

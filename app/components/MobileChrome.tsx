@@ -116,6 +116,7 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
           display: flex;
           flex-direction: column;
           align-items: flex-end;
+          text-align: right;
           gap: 16px;
           padding: 0 40px;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
