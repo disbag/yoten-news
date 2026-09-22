@@ -30,14 +30,10 @@ function faviconUrl(homepage: string | null): string | null {
 
 export default function FeedCard({
   item,
-  trackReads,
+  onRead,
 }: {
   item: FeedItem;
-  // Без аккаунта отмечать нечего: у гостя нет ни вкладок "Новые"/
-  // "Прочитанные", ни смысла в точке-индикаторе — весь read-tracking
-  // (точка, наблюдение за скроллом, запрос на /api/reads) включается
-  // только для залогиненного пользователя.
-  trackReads: boolean;
+  onRead?: (clusterId: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
@@ -45,15 +41,13 @@ export default function FeedCard({
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
 
-  // Карточка остаётся на месте после отметки прочитанным (не убираем её из
-  // ленты "Новые" сразу) — раньше FeedList.handleRead тут же вырезал её из
-  // items, а это карточка ВЫШЕ текущей позиции скролла (уже проскроллили
-  // мимо), и её удаление из DOM на лету схлопывало контент над вьюпортом:
-  // браузер не всегда успевал скорректировать scrollY, из-за чего страницу
-  // резко дёргало в другое место посреди скролла. Теперь список меняется
-  // только при следующей полной загрузке страницы.
   function markRead() {
     setIsRead(true);
+    onRead?.(item.clusterId);
+    // Fire-and-forget: у гостя (без аккаунта) это тихо no-op'ается на
+    // бэкенде ({ok:false}, см. app/api/reads/route.ts) — карточка всё
+    // равно уже выглядит прочитанной локально, просто не переживёт
+    // перезагрузку страницы без аккаунта.
     fetch("/api/reads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -68,7 +62,7 @@ export default function FeedCard({
   // boundingClientRect: top < 0 при !isIntersecting означает "ушла наверх"
   // (пользователь проскроллил мимо), а не "ещё не долистали" (там top > 0).
   useEffect(() => {
-    if (!trackReads || isRead) return;
+    if (isRead) return;
     const el = cardRef.current;
     if (!el) return;
 
@@ -83,7 +77,7 @@ export default function FeedCard({
     observer.observe(el);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead читает актуальный isRead через замыкание на каждый ре-рендер, доп. зависимости пересоздавали бы observer без надобности
-  }, [trackReads, isRead]);
+  }, [isRead]);
 
   // timeAgo зависит от Date.now() — на сервере и при гидратации на клиенте
   // это разные моменты времени, и если между ними "перевалило" через минуту
@@ -108,7 +102,7 @@ export default function FeedCard({
           )}
           <div className="meta">
             <div className="source-row">
-              {trackReads && !isRead && <span className="unread-dot" />}
+              {!isRead && <span className="unread-dot" />}
               <a
                 href={item.primaryLink}
                 target="_blank"
