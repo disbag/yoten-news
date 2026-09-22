@@ -16,10 +16,19 @@ export async function GET(request: NextRequest) {
     beforePublishedAt && beforeClusterId
       ? { publishedAt: beforePublishedAt, clusterId: Number(beforeClusterId) }
       : undefined;
-  const unreadOnly = searchParams.get("unread") === "1";
+  // tab=read -> вкладка "Прочитанные", иначе (в т.ч. по умолчанию) -> "Новые"
+  // (непрочитанные) — см. FeedTabs.tsx, заменили режим "показать всё".
+  const readOnly = searchParams.get("tab") === "read";
   const userId = await getSessionUserId();
 
-  const rows = await getFeed({ category, limit: limit + 1, before, userId, unreadOnly });
+  const rows = await getFeed({
+    category,
+    limit: limit + 1,
+    before,
+    userId,
+    unreadOnly: !readOnly,
+    readOnly,
+  });
   const hasMore = rows.length > limit;
 
   return NextResponse.json({ items: rows.slice(0, limit), hasMore });

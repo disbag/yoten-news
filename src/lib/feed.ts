@@ -44,9 +44,14 @@ export async function getFeed(
     // — сравнение ar.user_id = NULL никогда не истинно в SQL.
     userId?: number | null;
     unreadOnly?: boolean;
+    // Обратный режим для таба "Прочитанные" — показывает только кластеры, где
+    // текущий пользователь отметил хотя бы одну статью прочитанной. Для
+    // гостя (userId=null) не бывает ни одной отметки, поэтому вкладка
+    // закономерно пустая — это ожидаемо, а не баг.
+    readOnly?: boolean;
   } = {}
 ): Promise<FeedItem[]> {
-  const { limit = 30, category, before, userId = null, unreadOnly = false } = options;
+  const { limit = 30, category, before, userId = null, unreadOnly = false, readOnly = false } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
   // одного кластера описывают один инфоповод, категория у них должна
@@ -70,6 +75,9 @@ export async function getFeed(
   }
   if (unreadOnly) {
     havingClauses.push("NOT bool_or(ar.user_id IS NOT NULL)");
+  }
+  if (readOnly) {
+    havingClauses.push("bool_or(ar.user_id IS NOT NULL)");
   }
 
   const { rows } = await pool.query(
@@ -154,4 +162,23 @@ export async function getFeed(
       isRead: row.is_read,
     })
   );
+}
+
+// Счётчик для бейджа рядом с табом "Новые" (см. FeedTabs.tsx) — общий по
+// всей ленте, без учёта текущего фильтра по категории (в макете бейдж один
+// на всю ленту, а не пересчитывается под конкретную категорию).
+export async function getUnreadCount(userId: number | null): Promise<number> {
+  const { rows } = await pool.query(
+    `
+    SELECT count(*) AS count FROM (
+      SELECT a.cluster_id
+      FROM articles a
+      LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
+      GROUP BY a.cluster_id
+      HAVING NOT bool_or(ar.user_id IS NOT NULL)
+    ) unread
+    `,
+    [userId]
+  );
+  return Number(rows[0].count);
 }

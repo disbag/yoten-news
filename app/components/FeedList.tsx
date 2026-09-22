@@ -10,12 +10,12 @@ export default function FeedList({
   initialItems,
   initialHasMore,
   category,
-  unreadOnly,
+  tab,
 }: {
   initialItems: FeedItem[];
   initialHasMore: boolean;
   category?: string;
-  unreadOnly?: boolean;
+  tab: "new" | "read";
 }) {
   const [items, setItems] = useState(initialItems);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -32,7 +32,7 @@ export default function FeedList({
         beforeClusterId: String(last.clusterId),
       });
       if (category) params.set("category", category);
-      if (unreadOnly) params.set("unread", "1");
+      if (tab === "read") params.set("tab", "read");
       const res = await fetch(`/api/feed?${params}`);
       const data: { items: FeedItem[]; hasMore: boolean } = await res.json();
       setItems((prev) => [...prev, ...data.items]);
@@ -47,7 +47,7 @@ export default function FeedList({
   // прочитанное продолжает висеть в списке, специально отфильтрованном под
   // непрочитанное, до следующей перезагрузки страницы.
   function handleRead(clusterId: number) {
-    if (unreadOnly) setItems((prev) => prev.filter((item) => item.clusterId !== clusterId));
+    if (tab === "new") setItems((prev) => prev.filter((item) => item.clusterId !== clusterId));
   }
 
   return (

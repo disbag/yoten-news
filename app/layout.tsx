@@ -12,11 +12,12 @@ const lora = Lora({
   variable: "--font-serif",
 });
 
-// Onest — гротеск для текста самой новости (см. .summary в FeedCard.tsx),
-// не для всего сайта: заголовок/дата/имя издания остаются на своих шрифтах.
+// Onest — гротеск для текста самой новости (см. .summary в FeedCard.tsx) и,
+// с редизайна 2026 года, для меню/табов/сайдбара (Light-начертание 300 —
+// см. Sidebar.tsx, MobileChrome.tsx, FeedTabs.tsx).
 const onest = Onest({
   subsets: ["latin", "cyrillic"],
-  weight: ["400", "500"],
+  weight: ["300", "400", "500"],
   variable: "--font-news",
 });
 
