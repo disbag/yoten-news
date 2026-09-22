@@ -30,11 +30,9 @@ function faviconUrl(homepage: string | null): string | null {
 
 export default function FeedCard({
   item,
-  onRead,
   trackReads,
 }: {
   item: FeedItem;
-  onRead?: (clusterId: number) => void;
   // Без аккаунта отмечать нечего: у гостя нет ни вкладок "Новые"/
   // "Прочитанные", ни смысла в точке-индикаторе — весь read-tracking
   // (точка, наблюдение за скроллом, запрос на /api/reads) включается
@@ -47,9 +45,15 @@ export default function FeedCard({
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
 
+  // Карточка остаётся на месте после отметки прочитанным (не убираем её из
+  // ленты "Новые" сразу) — раньше FeedList.handleRead тут же вырезал её из
+  // items, а это карточка ВЫШЕ текущей позиции скролла (уже проскроллили
+  // мимо), и её удаление из DOM на лету схлопывало контент над вьюпортом:
+  // браузер не всегда успевал скорректировать scrollY, из-за чего страницу
+  // резко дёргало в другое место посреди скролла. Теперь список меняется
+  // только при следующей полной загрузке страницы.
   function markRead() {
     setIsRead(true);
-    onRead?.(item.clusterId);
     fetch("/api/reads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

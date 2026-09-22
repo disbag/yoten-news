@@ -65,19 +65,11 @@ export default function FeedList({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMore читает актуальные items/category/tab через замыкание на каждый ре-рендер; пересоздавать observer при каждом изменении items не нужно
   }, [hasMore]);
 
-  // В режиме "только непрочитанные" карточка, которую только что открыли
-  // (см. onRead в FeedCard), должна тут же пропасть из ленты — иначе
-  // прочитанное продолжает висеть в списке, специально отфильтрованном под
-  // непрочитанное, до следующей перезагрузки страницы.
-  function handleRead(clusterId: number) {
-    if (tab === "new") setItems((prev) => prev.filter((item) => item.clusterId !== clusterId));
-  }
-
   return (
     <>
       <div className="card-list">
         {items.map((item) => (
-          <FeedCard key={item.clusterId} item={item} onRead={handleRead} trackReads={trackReads} />
+          <FeedCard key={item.clusterId} item={item} trackReads={trackReads} />
         ))}
       </div>
 
