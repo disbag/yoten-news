@@ -31,14 +31,17 @@ function faviconUrl(homepage: string | null): string | null {
 export default function FeedCard({
   item,
   onRead,
+  trackReads,
 }: {
   item: FeedItem;
   onRead?: (clusterId: number) => void;
+  // Без аккаунта отмечать нечего: у гостя нет ни вкладок "Новые"/
+  // "Прочитанные", ни смысла в точке-индикаторе — весь read-tracking
+  // (точка, наблюдение за скроллом, запрос на /api/reads) включается
+  // только для залогиненного пользователя.
+  trackReads: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  // isRead приходит с сервера только для залогиненного пользователя (см.
-  // getFeed) — для гостя всегда false, так что индикатор просто никогда не
-  // погаснет, что и корректно: без аккаунта нечего отслеживать.
   const [isRead, setIsRead] = useState(item.isRead);
   const cardRef = useRef<HTMLElement>(null);
   const favicon = faviconUrl(item.primaryHomepage);
@@ -47,9 +50,6 @@ export default function FeedCard({
   function markRead() {
     setIsRead(true);
     onRead?.(item.clusterId);
-    // Fire-and-forget: гость получит {ok:false} и ничего страшного не
-    // произойдёт — карточка и так уже выглядит прочитанной локально до
-    // следующей перезагрузки, а после логина отметка появится по-настоящему.
     fetch("/api/reads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -64,7 +64,7 @@ export default function FeedCard({
   // boundingClientRect: top < 0 при !isIntersecting означает "ушла наверх"
   // (пользователь проскроллил мимо), а не "ещё не долистали" (там top > 0).
   useEffect(() => {
-    if (isRead) return;
+    if (!trackReads || isRead) return;
     const el = cardRef.current;
     if (!el) return;
 
@@ -79,7 +79,7 @@ export default function FeedCard({
     observer.observe(el);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead читает актуальный isRead через замыкание на каждый ре-рендер, доп. зависимости пересоздавали бы observer без надобности
-  }, [isRead]);
+  }, [trackReads, isRead]);
 
   // timeAgo зависит от Date.now() — на сервере и при гидратации на клиенте
   // это разные моменты времени, и если между ними "перевалило" через минуту
@@ -104,7 +104,7 @@ export default function FeedCard({
           )}
           <div className="meta">
             <div className="source-row">
-              {!isRead && <span className="unread-dot" />}
+              {trackReads && !isRead && <span className="unread-dot" />}
               <a
                 href={item.primaryLink}
                 target="_blank"

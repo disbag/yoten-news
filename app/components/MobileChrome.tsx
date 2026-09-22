@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import CategoryNav from "./CategoryNav";
 import AuthMenuItem from "./AuthMenuItem";
 
-export default function MobileChrome({ activeCategory }: { activeCategory?: string }) {
+export default function MobileChrome({
+  activeCategory,
+  isLoggedIn,
+}: {
+  activeCategory?: string;
+  isLoggedIn: boolean;
+}) {
   const [open, setOpen] = useState(false);
 
   // Без блокировки скролла body на iOS Safari прокрутка длинного меню
@@ -54,7 +60,9 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
             </nav>
             <div className="divider" />
             <div className="account">
-              <span className="disabled">Настройка ленты</span>
+              {/* Настройка ленты нужна авторизованному пользователю (это
+                  настройки ЕГО ленты) — гостю попросту нечего настраивать. */}
+              {isLoggedIn && <span className="disabled">Настройка ленты</span>}
               <AuthMenuItem />
             </div>
           </div>
@@ -83,10 +91,12 @@ export default function MobileChrome({ activeCategory }: { activeCategory?: stri
           height: 24px;
         }
         .logo {
-          /* 96px, не 150 — проверено по факту рендера в Figma (пиксельные
-             замеры скриншота), автосгенерированный код завышал размер для
-             мобильных фреймов. То же значение, что и в десктоп-сайдбаре. */
-          width: 96px;
+          /* 150px — подтверждено метаданными фрейма в Figma (frame
+             "yoten_logo_outlined 2 1" внутри мобильной шапки/меню — 150x55),
+             в отличие от десктоп-сайдбара, где тот же логотип в раза меньше
+             (96px, отдельный фрейм). Пиксельные замеры скриншота раньше
+             ошибочно приняли отступ ВНУТРИ SVG за реальный размер контейнера. */
+          width: 150px;
           height: auto;
         }
         .overlay {

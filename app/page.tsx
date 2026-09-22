@@ -16,19 +16,23 @@ export default async function HomePage({
   searchParams: { category?: string; tab?: string };
 }) {
   const activeCategory = CATEGORIES.find((c) => c.id === searchParams.category);
-  const tab: "new" | "read" = searchParams.tab === "read" ? "read" : "new";
   const userId = await getSessionUserId();
-  // На единицу больше лимита — чтобы понять, есть ли ещё карточки для кнопки
-  // "Показать ещё" (см. FeedList.tsx), без отдельного count-запроса.
+  const isLoggedIn = userId !== null;
+  // Вкладки "Новые"/"Прочитанные" — фича для аккаунта (у гостя нет истории
+  // прочитанного, отмечать нечего). Без аккаунта игнорируем tab из URL и
+  // всегда показываем весь фид, без unreadOnly/readOnly фильтра.
+  const tab: "new" | "read" = isLoggedIn && searchParams.tab === "read" ? "read" : "new";
+  // На единицу больше лимита — чтобы понять, есть ли ещё карточки для
+  // автоподгрузки по скроллу (см. FeedList.tsx), без отдельного count-запроса.
   const [rows, unreadCount] = await Promise.all([
     getFeed({
       category: activeCategory?.id,
       limit: PAGE_SIZE + 1,
       userId,
-      unreadOnly: tab === "new",
-      readOnly: tab === "read",
+      unreadOnly: isLoggedIn && tab === "new",
+      readOnly: isLoggedIn && tab === "read",
     }),
-    getUnreadCount(userId),
+    isLoggedIn ? getUnreadCount(userId) : Promise.resolve(0),
   ]);
   const hasMore = rows.length > PAGE_SIZE;
   const feed = rows.slice(0, PAGE_SIZE);
@@ -36,14 +40,16 @@ export default async function HomePage({
   return (
     <div className="shell">
       <div className="mobile-only">
-        <MobileChrome activeCategory={activeCategory?.id} />
+        <MobileChrome activeCategory={activeCategory?.id} isLoggedIn={isLoggedIn} />
       </div>
       <div className="desktop-only">
-        <Sidebar activeCategory={activeCategory?.id} />
+        <Sidebar activeCategory={activeCategory?.id} isLoggedIn={isLoggedIn} />
       </div>
 
       <main>
-        <FeedTabs tab={tab} category={activeCategory?.id} unreadCount={unreadCount} />
+        {isLoggedIn && (
+          <FeedTabs tab={tab} category={activeCategory?.id} unreadCount={unreadCount} />
+        )}
 
         {/* key заставляет React пересоздать компонент (и его внутренний стейт
             items/hasMore) при смене категории/таба — иначе при клике по
@@ -57,6 +63,7 @@ export default async function HomePage({
           initialHasMore={hasMore}
           category={activeCategory?.id}
           tab={tab}
+          trackReads={isLoggedIn}
         />
       </main>
     </div>

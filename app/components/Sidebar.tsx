@@ -3,7 +3,13 @@
 import CategoryNav from "./CategoryNav";
 import AuthMenuItem from "./AuthMenuItem";
 
-export default function Sidebar({ activeCategory }: { activeCategory?: string }) {
+export default function Sidebar({
+  activeCategory,
+  isLoggedIn,
+}: {
+  activeCategory?: string;
+  isLoggedIn: boolean;
+}) {
   return (
     <aside className="sidebar">
       {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
@@ -13,8 +19,9 @@ export default function Sidebar({ activeCategory }: { activeCategory?: string })
           <CategoryNav activeCategory={activeCategory} />
         </nav>
         <div className="account">
-          {/* Настройка ленты — заглушка, реализуем следующим шагом */}
-          <span className="disabled">Настройка ленты</span>
+          {/* Настройка ленты нужна авторизованному пользователю (это
+              настройки ЕГО ленты) — гостю попросту нечего настраивать. */}
+          {isLoggedIn && <span className="disabled">Настройка ленты</span>}
           <AuthMenuItem />
         </div>
       </div>
