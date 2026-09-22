@@ -16,10 +16,12 @@ async function postJson(url: string, body?: unknown) {
   return data;
 }
 
-// Общая passkey-логика входа/регистрации/выхода, используется текстовой
-// ссылкой "Войти"/"Выйти" в AuthMenuItem (сайдбар на десктопе, мобильное
-// меню) — общий хук вместо дублирования обработки NotAllowedError/
-// двухшагового флоу регистрации.
+// Общая логика входа/регистрации/выхода — passkey и email — используется
+// AuthMenuItem (текстовая ссылка "Войти"/"Выйти" в сайдбаре/мобильном меню) и
+// AuthModal (сама форма). Общий хук вместо дублирования обработки
+// NotAllowedError/двухшагового флоу passkey-регистрации и fetch-обвязки для
+// email — оба компонента держат свой независимый экземпляр состояния
+// (loading/error), так как одновременно активен только один из них.
 export function useAuth() {
   const [user, setUser] = useState<SessionUser>(null);
   const [loading, setLoading] = useState(false);
@@ -80,5 +82,21 @@ export function useAuth() {
     window.location.reload();
   }
 
-  return { user, loading, error, needsRegister, handleClick, handleLogout };
+  // Регистрация по email — без одноразового кода (см. коммент в
+  // app/api/auth/email/register/route.ts), поэтому в один шаг, в отличие от
+  // passkey-регистрации выше.
+  async function handleEmailRegister(email: string) {
+    setError(null);
+    setLoading(true);
+    try {
+      await postJson("/api/auth/email/register", { email });
+      window.location.reload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return { user, loading, error, needsRegister, handleClick, handleLogout, handleEmailRegister };
 }

@@ -1,19 +1,22 @@
 "use client";
 
+import { useState } from "react";
 import { useAuth } from "./useAuth";
+import AuthModal from "./AuthModal";
 
 // Текстовый вариант входа/выхода для меню (сайдбар на десктопе, оверлей на
 // мобилке) — единственный способ войти/выйти в текущем макете, иконки в
-// шапке больше нет (см. useAuth.ts).
+// шапке больше нет (см. useAuth.ts). Сам вход/регистрация — в отдельной
+// модалке (AuthModal), а не сразу по клику: с возвращением email-регистрации
+// нужен выбор между passkey и email, а не одно действие на кнопку.
 export default function AuthMenuItem() {
-  const { user, loading, error, needsRegister, handleClick, handleLogout } = useAuth();
+  const { user, handleLogout } = useAuth();
+  const [modalOpen, setModalOpen] = useState(false);
 
   return (
     <div className="item">
-      <button disabled={loading} onClick={user ? handleLogout : handleClick}>
-        {user ? "Выйти" : needsRegister ? "Создать passkey" : "Войти"}
-      </button>
-      {error && <span className="error">{error}</span>}
+      <button onClick={user ? handleLogout : () => setModalOpen(true)}>{user ? "Выйти" : "Войти"}</button>
+      <AuthModal open={modalOpen} onClose={() => setModalOpen(false)} />
       <style jsx>{`
         .item {
           position: relative;
@@ -30,17 +33,6 @@ export default function AuthMenuItem() {
           /* Направление текста (лево на десктоп-сайдбаре, право в мобильном
              оверлее) задаёт родитель через text-align на .account/.categories. */
           text-align: inherit;
-        }
-        button:disabled {
-          opacity: 0.6;
-          cursor: default;
-        }
-        .error {
-          display: block;
-          margin-top: 6px;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          font-size: 0.7rem;
-          color: #c0392b;
         }
       `}</style>
     </div>
