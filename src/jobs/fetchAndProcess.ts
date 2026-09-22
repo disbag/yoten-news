@@ -52,6 +52,16 @@ const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
 // забирали). FETCH_SINCE_DAYS=1 расширяет окно до "вчера и сегодня" — удобно
 // для разовой докатки после перерыва, без изменения дефолтного поведения.
 const FETCH_SINCE_DAYS = Number(process.env.FETCH_SINCE_DAYS ?? 0);
+// Ниже этой длины контекста (excerpt/og:description) подробную версию для
+// модалки вообще не запрашиваем — экономия квоты Gemini на источниках вроде
+// NYT/WSJ/Bloomberg, у которых страница платная/заблокирована для бота и
+// есть только короткий тизер (см. contentSelector-комментарии в
+// src/config/sources.ts). На таком тизере 5-8 предложений для подробной
+// версии всё равно почти всегда выходили с домысливанием (см. коммент ниже
+// про аудит NYT/Telegraph/FT/Bloomberg/WSJ) — сам текст короче итогового
+// саммари, разворачивать нечего. FeedCard на фронте по item.summaryLong===
+// null скрывает кнопку открытия модалки для таких статей — см. FeedCard.tsx.
+const MIN_DETAIL_CONTEXT_LENGTH = Number(process.env.MIN_DETAIL_CONTEXT_LENGTH ?? 300);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Свободный тариф Gemini ограничивает "-lite" модели 15 запросами в минуту
 // НА КЛЮЧ — 4 секунды между запросами держит нас точно на этой границе.
@@ -261,8 +271,12 @@ async function processSource(
     // текста (выдуманные цифры, статусы вроде "бывший президент", несуществующие
     // детали) — см. аудит статей NYT/Telegraph/FT/Bloomberg/WSJ. Без реального
     // текста просто оставляем null, а модалка откатывается на короткое summary.
+    // Дополнительно — если даже excerpt/fullDescription короче
+    // MIN_DETAIL_CONTEXT_LENGTH, запрос не делаем вовсе (см. коммент у
+    // константы): это тот же случай "домысливания", просто чуть менее явный.
+    const detailContext = excerpt ?? fullDescription;
     let aiSummaryLong: string | null = null;
-    if (excerpt || fullDescription) {
+    if (detailContext && detailContext.length >= MIN_DETAIL_CONTEXT_LENGTH) {
       try {
         ({ summary: aiSummaryLong } = await summarizeWithFallback(
           item.title,

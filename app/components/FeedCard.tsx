@@ -40,6 +40,12 @@ export default function FeedCard({
   const cardRef = useRef<HTMLElement>(null);
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
+  // Подробную версию для модалки не генерируем на бэкенде для источников с
+  // коротким тизером (NYT/WSJ/Bloomberg и т.п. — см. MIN_DETAIL_CONTEXT_LENGTH
+  // в fetchAndProcess.ts): там разворачивать нечего, вся статья и так
+  // целиком уже видна в ленте. Модалка в таком случае просто не нужна —
+  // не показываем ни клик по тексту, ни "Читать", ни саму ArticleModal.
+  const hasDetail = Boolean(item.summaryLong);
 
   function markRead() {
     setIsRead(true);
@@ -122,8 +128,11 @@ export default function FeedCard({
             </span>
           </div>
         </div>
-        <p className={isRead ? "summary read" : "summary"} onClick={() => setOpen(true)}>
-          {item.summary} <span className="read-more">Читать</span>
+        <p
+          className={`summary${isRead ? " read" : ""}${hasDetail ? "" : " no-detail"}`}
+          onClick={hasDetail ? () => setOpen(true) : undefined}
+        >
+          {item.summary} {hasDetail && <span className="read-more">Читать</span>}
         </p>
       </div>
       {item.imageUrls && item.imageUrls.length > 1 ? (
@@ -145,7 +154,7 @@ export default function FeedCard({
         )
       )}
 
-      <ArticleModal item={open ? item : null} onClose={() => setOpen(false)} />
+      {hasDetail && <ArticleModal item={open ? item : null} onClose={() => setOpen(false)} />}
 
       <style jsx>{`
         .card {
@@ -231,6 +240,9 @@ export default function FeedCard({
         }
         .summary.read {
           color: var(--text-dim);
+        }
+        .summary.no-detail {
+          cursor: default;
         }
         .read-more {
           color: #3186d1;
