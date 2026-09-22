@@ -11,11 +11,15 @@ export default function FeedList({
   initialHasMore,
   category,
   tab,
+  onNewlyRead,
 }: {
   initialItems: FeedItem[];
   initialHasMore: boolean;
   category?: string;
   tab: "new" | "read";
+  // Дёргается на каждую статью, ставшую прочитанной прямо сейчас (не на
+  // те, что уже пришли прочитанными с сервера) — см. счётчик в FeedShell.
+  onNewlyRead?: () => void;
 }) {
   const [items, setItems] = useState(initialItems);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -110,6 +114,7 @@ export default function FeedList({
   // (синхронно после коммита DOM, до отрисовки кадра) прибавляем разницу
   // высот обратно к scrollY — так браузеру никогда не приходится обрезать.
   function handleRead(clusterId: number) {
+    onNewlyRead?.();
     if (tab !== "new") return;
     pendingRemovals.current.add(clusterId);
     if (removalScheduled.current) return;

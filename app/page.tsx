@@ -1,8 +1,7 @@
 import { getFeed, getUnreadCount } from "../src/lib/feed";
 import { getSessionUserId } from "../src/lib/session";
 import { CATEGORIES } from "../src/config/categories";
-import FeedList from "./components/FeedList";
-import FeedTabs from "./components/FeedTabs";
+import FeedShell from "./components/FeedShell";
 import Sidebar from "./components/Sidebar";
 import MobileChrome from "./components/MobileChrome";
 
@@ -50,20 +49,18 @@ export default async function HomePage({
       </div>
 
       <main>
-        <FeedTabs tab={tab} category={activeCategory?.id} unreadCount={unreadCount} />
-
-        {/* key заставляет React пересоздать компонент (и его внутренний стейт
-            items/hasMore) при смене категории/таба — иначе при клике по
-            фильтру React переиспользует тот же экземпляр FeedList,
-            initialItems в пропсах меняется, а useState(initialItems) это
-            игнорирует (стейт инициализируется только при монтировании), и
-            лента визуально не обновляется без полной перезагрузки страницы. */}
-        <FeedList
+        {/* key пересоздаёт весь FeedShell (табы + лента + счётчик
+            непрочитанных) при смене категории/таба — иначе useState
+            внутри него не подхватит новые initial*-пропсы от сервера,
+            а старый (уменьшившийся по ходу скролла) счётчик и список
+            карточек останутся от предыдущего фильтра. */}
+        <FeedShell
           key={`${activeCategory?.id ?? "all"}:${tab}`}
+          tab={tab}
+          category={activeCategory?.id}
+          initialUnreadCount={unreadCount}
           initialItems={feed}
           initialHasMore={hasMore}
-          category={activeCategory?.id}
-          tab={tab}
         />
       </main>
     </div>
