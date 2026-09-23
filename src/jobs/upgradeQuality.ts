@@ -56,7 +56,6 @@ async function main() {
       `UPDATE articles
        SET ai_summary = $1,
            ai_summary_more = $2,
-           ai_summary_long = NULL,
            full_description = COALESCE($3, full_description),
            image_url = COALESCE($4, image_url),
            category = $5,

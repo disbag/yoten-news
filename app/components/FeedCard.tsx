@@ -44,13 +44,10 @@ export default function FeedCard({
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
   // "Читать" раскрывает карточку на месте, без модалки, и только в одну
-  // сторону — свернуть обратно нельзя намеренно. Для новых статей дописывает
-  // продолжение (summaryMore, не повторяет summary), для статей старого
-  // формата — заменяет текст подробной версией (summaryLong повторяет summary
-  // целиком, дописывать её нельзя). У тизеров (NYT/WSJ/Bloomberg — см.
+  // сторону — свернуть обратно нельзя намеренно: дописывает продолжение
+  // (summaryMore, не повторяет summary). У тизеров (NYT/WSJ/Bloomberg — см.
   // MIN_DETAIL_CONTEXT_LENGTH в summarizer.ts) раскрывать нечего — "Читать" нет.
-  const hasMoreText = Boolean(item.summaryMore || item.summaryLong);
-  const text = expanded && !item.summaryMore && item.summaryLong ? item.summaryLong : item.summary;
+  const hasMoreText = Boolean(item.summaryMore);
   // Раньше остальные издания кластера были видны только в модалке — теперь
   // они в раскрытой карточке, а раскрыть её можно и бейджем "+N источника"
   // (у поста без ката иначе до них было бы не добраться).
@@ -143,7 +140,7 @@ export default function FeedCard({
           className={`summary${isRead ? " read" : ""}${hasMoreText && !expanded ? " expandable" : ""}`}
           onClick={hasMoreText && !expanded ? () => setExpanded(true) : undefined}
         >
-          {text}
+          {item.summary}
           {hasMoreText && !expanded && (
             <>
               {" "}
