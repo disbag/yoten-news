@@ -30,6 +30,10 @@ export default function Gallery({ urls }: { urls: string[] }) {
   // исключаем из карусели по мере обнаружения, а не показываем битую иконку —
   // тот же принцип, что и для одиночной обложки в FeedCard.tsx.
   const [broken, setBroken] = useState<Set<string>>(new Set());
+  // Вертикальные (и квадратные) кадры в широкой рамке 1200×630 при cover
+  // теряли бо́льшую часть кадра — их вписываем целиком, поля по бокам чёрные.
+  // Ориентацию узнаём только после загрузки, по натуральным размерам.
+  const [upright, setUpright] = useState<Set<string>>(new Set());
   // Кадрам ставим src не сразу все (карусели далеко внизу ленты не должны
   // качать по 10 фото), а текущий и соседние — и только после того, как
   // загрузился первый: он грузится лениво (loading="lazy"), то есть когда
@@ -56,6 +60,7 @@ export default function Gallery({ urls }: { urls: string[] }) {
     const img = firstImgRef.current;
     if (!img?.complete) return;
     if (img.naturalWidth === 0) setBroken((prev) => new Set(prev).add(urls[0]));
+    else checkUpright(urls[0], img);
     setFirstLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- только проверка состояния на момент гидрации
   }, []);
@@ -101,6 +106,11 @@ export default function Gallery({ urls }: { urls: string[] }) {
 
   function markBroken(url: string) {
     setBroken((prev) => new Set(prev).add(url));
+  }
+
+  function checkUpright(url: string, img: HTMLImageElement) {
+    if (img.naturalWidth > img.naturalHeight) return;
+    setUpright((prev) => (prev.has(url) ? prev : new Set(prev).add(url)));
   }
 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
@@ -170,7 +180,7 @@ export default function Gallery({ urls }: { urls: string[] }) {
           {slides.map(({ key, url, real }) => {
             const isFirst = real && url === workingUrls[0];
             return (
-              <div className="slide" key={key}>
+              <div className={upright.has(url) ? "slide upright" : "slide"} key={key}>
                 {requested.has(url) && (
                   // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание), через /api/image-proxy как и одиночная обложка
                   <img
@@ -179,7 +189,10 @@ export default function Gallery({ urls }: { urls: string[] }) {
                     alt=""
                     draggable={false}
                     loading={isFirst ? "lazy" : "eager"}
-                    onLoad={isFirst ? () => setFirstLoaded(true) : undefined}
+                    onLoad={(e) => {
+                      checkUpright(url, e.currentTarget);
+                      if (isFirst) setFirstLoaded(true);
+                    }}
                     onError={() => {
                       markBroken(url);
                       // Иначе при битом первом кадре остальные не начали бы грузиться.
@@ -242,6 +255,12 @@ export default function Gallery({ urls }: { urls: string[] }) {
           height: 100%;
           object-fit: cover;
           -webkit-user-drag: none;
+        }
+        .slide.upright {
+          background: #000;
+        }
+        .slide.upright img {
+          object-fit: contain;
         }
         .arrow {
           position: absolute;
