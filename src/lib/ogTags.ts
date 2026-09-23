@@ -216,12 +216,25 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // (/photos/{id}/16:9/w_1280,c_limit/… в og:image, /master/w_1600…/ в теле).
 // "time" (TIME): фото статьи — <figure> внутри <main>; ссылки на другие
 // материалы там без <figure>. В теле src с width=3840 — приводим к 1280.
-type GallerySite = "hearst" | "wallpaper" | "condenast" | "time";
+// "motor1" (InsideEVs — сеть Motor1): виджет .msnt-photo-thumb-gallery с
+// превью фотогалереи, привязанной к статье (полная — на отдельной странице
+// /photos/{id}/…, там 20-40+ кадров; для карусели в ленте берём подборку из
+// виджета — главный кадр и 6 превью). Он есть примерно у трети статей;
+// обычные картинки в тексте InsideEVs — ссылки на другие статьи, их не берём.
+// У главного кадра в src заглушка /images/static/16x9-tr.png, настоящий URL —
+// в <source srcset>; превью — размер s5 (213px), поднимаем до s3 (1280x720).
+type GallerySite = "hearst" | "wallpaper" | "condenast" | "time" | "motor1";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
+const MOTOR1_IMAGE_PATH = /^\/images\/mgl\/([A-Za-z0-9]+)\/s\d+\/([^/]+?)\.(?:jpe?g|webp|png)$/i;
 
-const GALLERY_SITES: Record<GallerySite, { selector: string; normalize: (url: URL) => URL; leadWithCover: boolean }> = {
+// normalize возвращает null для картинок, которые не являются кадром
+// галереи (заглушки lazy-load и т.п.) — они просто пропускаются.
+const GALLERY_SITES: Record<
+  GallerySite,
+  { selector: string; normalize: (url: URL) => URL | null; leadWithCover: boolean }
+> = {
   hearst: {
     selector: 'a[href*="/photos"] img',
     // Убираем resize-параметры CDN из query (?w=...&format=webp).
@@ -261,21 +274,39 @@ const GALLERY_SITES: Record<GallerySite, { selector: string; normalize: (url: UR
     },
     leadWithCover: true,
   },
+  motor1: {
+    selector: ".msnt-photo-thumb-gallery img, .msnt-photo-thumb-gallery source",
+    normalize: (url) => {
+      const match = url.pathname.match(MOTOR1_IMAGE_PATH);
+      if (!match) return null;
+      url.search = "";
+      url.pathname = `/images/mgl/${match[1]}/s3/${match[2]}.jpg`;
+      return url;
+    },
+    leadWithCover: true,
+  },
 };
 
 function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
   const { selector, normalize, leadWithCover } = GALLERY_SITES[site];
   const urls = new Set<string>();
-  const add = (src: string | undefined) => {
-    if (!src) return;
+  const add = (src: string | undefined): boolean => {
+    if (!src) return false;
     try {
-      urls.add(normalize(new URL(src, baseUrl)).toString());
+      const normalized = normalize(new URL(src, baseUrl));
+      if (!normalized) return false;
+      urls.add(normalized.toString());
+      return true;
     } catch {
-      // невалидный/относительный мусор в src — пропускаем
+      return false; // невалидный/относительный мусор в src — пропускаем
     }
   };
   if (leadWithCover) add(cover);
-  $(selector).each((_, el) => add($(el).attr("src")));
+  $(selector).each((_, el) => {
+    // <source> и lazy-картинки с заглушкой в src держат настоящий URL в
+    // srcset — берём его первый вариант, только если src ничего не дал.
+    if (!add($(el).attr("src"))) add($(el).attr("srcset")?.trim().split(",")[0]?.trim().split(/\s+/)[0]);
+  });
   // Одна обложка без единого фото из тела — это не галерея.
   return urls.size > 1 ? Array.from(urls) : [];
 }

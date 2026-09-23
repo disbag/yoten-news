@@ -20,11 +20,11 @@ type SourceConfig = {
   // (Motor Trend, Car and Driver). "wallpaper" — фото-вставки в теле статьи
   // плюс виджет-слайдер .inline-gallery, если он есть. "condenast" (Wired,
   // New Yorker, Pitchfork, GQ, CN Traveler) и "time" — фото-вставки <figure>
-  // в теле статьи (см. GALLERY_SITES в src/lib/ogTags.ts). Другие сайты
-  // вёрстают галереи иначе (у InsideEVs, например, картинки в теле — это
-  // ссылки на другие статьи, а не фото сюжета), включать им
+  // в теле статьи. "motor1" (InsideEVs) — виджет превью фотогалереи статьи
+  // (см. GALLERY_SITES в src/lib/ogTags.ts). Другие сайты вёрстают галереи
+  // иначе, включать им
   // эти флаги нельзя без отдельной проверки их разметки.
-  gallery?: "hearst" | "wallpaper" | "condenast" | "time";
+  gallery?: "hearst" | "wallpaper" | "condenast" | "time" | "motor1";
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -173,6 +173,7 @@ export const SOURCES: SourceConfig[] = [
     name: "InsideEVs",
     rssUrl: "https://insideevs.com/rss/articles/all/",
     homepageUrl: "https://insideevs.com",
+    gallery: "motor1",
   },
   {
     // Старый feeds.a.dj.com оказался мёртвым (застыл на январе 2025) —
