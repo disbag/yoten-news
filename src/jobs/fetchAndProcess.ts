@@ -450,9 +450,25 @@ async function processSource(
   }
 }
 
+// Удаляем кластер целиком, когда устарела самая СВЕЖАЯ его статья, а не
+// каждую статью по отдельности: на первую статью кластера ссылаются
+// cluster_id приклеенных к ней (FK без каскада), и поштучное удаление падало
+// на внешнем ключе, как только первая статья старше RETENTION_DAYS, а
+// приклеенная ещё нет — весь прогон завершался ошибкой и старое не удалялось
+// вообще. В одном DELETE ключ проверяется в конце запроса, так что кластер
+// уходит целиком без ошибки. Кластер живёт не дольше чем на 12 часов сверх
+// срока — дольше статьи к нему не приклеиваются (см. windowHours выше).
+// Строки без кластера — след прерванного прогона между INSERT и
+// кластеризацией — удаляются по своей дате.
 async function cleanupOld() {
   const res = await pool.query(
-    `DELETE FROM articles WHERE created_at < now() - interval '${RETENTION_DAYS} days'`
+    `DELETE FROM articles
+     WHERE cluster_id IN (
+             SELECT cluster_id FROM articles
+             GROUP BY cluster_id
+             HAVING max(created_at) < now() - interval '${RETENTION_DAYS} days'
+           )
+        OR (cluster_id IS NULL AND created_at < now() - interval '${RETENTION_DAYS} days')`
   );
   if (res.rowCount) console.log(`Удалено старых записей: ${res.rowCount}`);
 }
