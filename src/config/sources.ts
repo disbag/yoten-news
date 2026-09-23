@@ -36,6 +36,11 @@ type SourceConfig = {
   // комментариев, которые иначе попадали в текст для модели и могли
   // просочиться в подробности под катом.
   preferFeedContent?: boolean;
+  // Заголовки рекламных постов со скидками (подборки Amazon-скидок, Prime Day,
+  // промо с кодом скидки) — такие статьи не берём в ленту вообще. Своё для
+  // каждого издания: общий фильтр по слову "deal" резал бы и новости вроде
+  // "Trump Revives Iran Deal Hopes" (Bloomberg).
+  adTitlePattern?: RegExp;
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -92,6 +97,8 @@ export const SOURCES: SourceConfig[] = [
     name: "9to5Mac",
     rssUrl: "https://9to5mac.com/feed/",
     homepageUrl: "https://9to5mac.com",
+    // "Deals: …", "Apple weekend deals: …", "… $450 off", "[Save 10%]".
+    adTitlePattern: /\bdeals:|\$\d+(?:\.\d+)?\+? off\b|\[save \d+%\]/i,
   },
   {
     // И RSS-описание, и страница статьи — не блокирует бота, минимум мусора
@@ -121,6 +128,10 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://www.creativebloq.com",
     gallery: "futureplc",
     preferFeedContent: true,
+    // "Prime Day deals", "save up to 53%", "could save you $20", "$50 off".
+    // "deals" — только во множественном: "a deal with …" бывает и новостью.
+    adTitlePattern:
+      /\b(?:deals|prime day|black friday|cyber monday|all-time low|lowest price|price drop)\b|\d+% off\b|\$\d+(?:\.\d+)? off\b|\bsave (?:you )?(?:up to )?\$?\d/i,
   },
   {
     // Полный чистый текст в стандартном content:encoded — используется тот
