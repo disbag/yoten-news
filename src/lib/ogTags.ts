@@ -200,32 +200,57 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // статьи) — проверено на реальных примерах: у Motor Trend ссылка "{путь
 // статьи}/photos", у Car and Driver — "/photos/{id}/…-gallery/", в обоих
 // случаях путь содержит "/photos".
-// "wallpaper" (Wallpaper): инлайн-виджет .inline-gallery прямо в теле
-// статьи, с явным счётчиком "Image N of M" в разметке — картинки в нём
-// дублируются (лежат в DOM дважды, вероятно под анимацию перехода между
-// слайдами), поэтому дедуп через Set обязателен, не просто оптимизация.
+// "wallpaper" (Wallpaper): фото статьи — обычные вставки
+// figure.van-image-figure в #article-body; виджет-слайдер .inline-gallery
+// есть лишь в части статей (раньше брали только его — и галерея была у 3 из
+// 61 статьи). Один кадр встречается под разными URL размеров ({id}.jpg в
+// теле, {id}-1280-80.jpg в слайдере, {id}-1415-80.jpg в og:image), слайдер
+// к тому же кладёт картинки в DOM дважды — поэтому нормализация к одному
+// размеру обязательна, иначе дедуп через Set не склеит дубли. 1280 —
+// размер, который CDN отдаёт для любого кадра, в 3-10 раз легче оригинала.
 type GallerySite = "hearst" | "wallpaper";
-const GALLERY_SELECTORS: Record<GallerySite, string> = {
-  hearst: 'a[href*="/photos"] img',
-  wallpaper: ".inline-gallery img",
+
+const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
+
+const GALLERY_SITES: Record<GallerySite, { selector: string; normalize: (url: URL) => URL; leadWithCover: boolean }> = {
+  hearst: {
+    selector: 'a[href*="/photos"] img',
+    // Убираем resize-параметры CDN из query (?w=...&format=webp).
+    normalize: (url) => {
+      url.search = "";
+      return url;
+    },
+    leadWithCover: false,
+  },
+  wallpaper: {
+    selector: "#article-body figure.van-image-figure img, .inline-gallery img",
+    normalize: (url) => {
+      url.search = "";
+      const match = url.pathname.match(WALLPAPER_IMAGE_PATH);
+      if (match) url.pathname = `/${match[1]}-1280-80.${match[2]}`;
+      return url;
+    },
+    // Фото в теле идут не с обложки — без этого первым кадром карточки
+    // вместо привычной обложки статьи стало бы случайное первое фото.
+    leadWithCover: true,
+  },
 };
 
-// Убираем resize-параметры CDN из query (?w=...&format=webp) — та же голая
-// ссылка на картинку, что уже хранится в image_url для остальных источников.
-function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite): string[] {
+function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
+  const { selector, normalize, leadWithCover } = GALLERY_SITES[site];
   const urls = new Set<string>();
-  $(GALLERY_SELECTORS[site]).each((_, el) => {
-    const src = $(el).attr("src");
+  const add = (src: string | undefined) => {
     if (!src) return;
     try {
-      const parsed = new URL(src, baseUrl);
-      parsed.search = "";
-      urls.add(parsed.toString());
+      urls.add(normalize(new URL(src, baseUrl)).toString());
     } catch {
       // невалидный/относительный мусор в src — пропускаем
     }
-  });
-  return Array.from(urls);
+  };
+  if (leadWithCover) add(cover);
+  $(selector).each((_, el) => add($(el).attr("src")));
+  // Одна обложка без единого фото из тела — это не галерея.
+  return urls.size > 1 ? Array.from(urls) : [];
 }
 
 export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[] };
@@ -235,12 +260,11 @@ export async function fetchOgTags(
   contentSelector?: string,
   gallery?: GallerySite
 ): Promise<OgTags> {
-  // Источники с галереей (см. GALLERY_SELECTORS) кладут её заметно дальше в
-  // разметке, чем обычно нужно для og-тегов/текста — у Wallpaper галерея
-  // встретилась на ~604КБ при обычном лимите 500КБ (см. коммент у
-  // fetchHtmlChunk про уже известную "тяжесть" страниц этого издания).
-  // Читаем вдвое больше именно для них, а не для всех подряд.
-  const html = await fetchHtmlChunk(url, gallery ? 1_000_000 : undefined);
+  // Источники с галереей (см. GALLERY_SITES) кладут её заметно дальше в
+  // разметке, чем обычно нужно для og-тегов/текста: у Wallpaper фото тела
+  // статьи идут с ~910КБ до ~1.01МБ при странице ~1.05-1.1МБ — прежний лимит
+  // 1МБ срезал последние кадры. Читаем с запасом именно для них.
+  const html = await fetchHtmlChunk(url, gallery ? 1_500_000 : undefined);
   const $ = cheerio.load(html);
   const articleScope = findLargestArticleScope($);
   // Порядок: ручной селектор источника (если задан и сработал) > JSON-LD
@@ -254,10 +278,11 @@ export async function fetchOgTags(
     extractArticleBodyFromJsonLd($)?.slice(0, 4000) ??
     (articleScope && extractParagraphs($, articleScope)) ??
     extractParagraphs($, undefined);
+  const image = extractMetaContent($, "og:image");
   return {
     description: extractMetaContent($, "og:description"),
-    image: extractMetaContent($, "og:image"),
+    image,
     excerpt,
-    gallery: gallery ? extractGallery($, url, gallery) : undefined,
+    gallery: gallery ? extractGallery($, url, gallery, image) : undefined,
   };
 }

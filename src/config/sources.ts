@@ -17,8 +17,8 @@ type SourceConfig = {
   homepageUrl: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
-  // (Motor Trend, Car and Driver). "wallpaper" — инлайн-виджет .inline-gallery
-  // прямо в теле статьи, с явным счётчиком "Image N of M" (см. extractGallery
+  // (Motor Trend, Car and Driver). "wallpaper" — фото-вставки в теле статьи
+  // плюс виджет-слайдер .inline-gallery, если он есть (см. GALLERY_SITES
   // в src/lib/ogTags.ts). Другие сайты вёрстают галереи иначе, включать им
   // эти флаги нельзя без отдельной проверки их разметки.
   gallery?: "hearst" | "wallpaper";
