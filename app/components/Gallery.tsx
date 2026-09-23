@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type TransitionEvent } from "react";
 
 // Мини-галерея для источников с несколькими кадрами на статью (см. gallery в
 // src/config/sources.ts). urls.length уже гарантированно >= 2 на уровне
@@ -9,14 +9,23 @@ import { useEffect, useRef, useState, type PointerEvent } from "react";
 // Листается как в Instagram: все кадры стоят в ленте друг за другом и лента
 // плавно сдвигается, а не подменяется src у одной картинки (тогда новый кадр
 // начинал грузиться только по клику, и перелистывание "залипало" до конца
-// загрузки). Свайп/перетаскивание ведёт ленту за пальцем. По кругу не
-// листается — анимация с последнего кадра на первый проехала бы через все.
+// загрузки). Свайп/перетаскивание ведёт ленту за пальцем.
+//
+// По кругу — бесшовно: по краям ленты стоят копии (перед первым кадром —
+// копия последнего, после последнего — копия первого). С последнего кадра
+// лента едет вперёд на копию первого, а когда анимация закончилась, без
+// анимации перескакивает на настоящий первый — со стороны это одно плавное
+// движение, а не откат назад через все кадры.
 const SWIPE_THRESHOLD = 0.2; // доля ширины, после которой отпускание листает
 const FLICK_MS = 250; // быстрый короткий взмах листает и без порога
 const FLICK_PX = 30;
 
 export default function Gallery({ urls }: { urls: string[] }) {
-  const [index, setIndex] = useState(0);
+  // Позиция в ленте с копиями: 0 — копия последнего, 1..n — настоящие кадры,
+  // n+1 — копия первого.
+  const [pos, setPos] = useState(1);
+  // Перескок с копии на настоящий кадр — без анимации.
+  const [instant, setInstant] = useState(false);
   // Сломанные (402/битые байты — см. app/api/image-proxy/route.ts) кадры
   // исключаем из карусели по мере обнаружения, а не показываем битую иконку —
   // тот же принцип, что и для одиночной обложки в FeedCard.tsx.
@@ -34,11 +43,10 @@ export default function Gallery({ urls }: { urls: string[] }) {
   const firstImgRef = useRef<HTMLImageElement>(null);
 
   const workingUrls = urls.filter((u) => !broken.has(u));
-  const last = workingUrls.length - 1;
-  const current = Math.min(index, Math.max(last, 0));
-  const neighbors = [current - 1, current, current + 1]
-    .filter((i) => i >= 0 && i <= last)
-    .map((i) => workingUrls[i]);
+  const n = workingUrls.length;
+  const safePos = Math.min(pos, n + 1);
+  const current = n ? (((safePos - 1) % n) + n) % n : 0;
+  const neighbors = n ? [workingUrls[(current - 1 + n) % n], workingUrls[current], workingUrls[(current + 1) % n]] : [];
   const neighborsKey = neighbors.join("|");
 
   // Первая картинка приходит уже в серверном HTML и у верхних карточек
@@ -63,7 +71,33 @@ export default function Gallery({ urls }: { urls: string[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- neighborsKey и есть содержимое neighbors
   }, [firstLoaded, neighborsKey]);
 
-  if (workingUrls.length === 0) return null;
+  // После перескока без анимации возвращаем анимацию — через два кадра, чтобы
+  // браузер успел применить новую позицию без transition.
+  useEffect(() => {
+    if (!instant) return;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setInstant(false)));
+    return () => cancelAnimationFrame(id);
+  }, [instant]);
+
+  if (n === 0) return null;
+
+  function go(delta: number) {
+    // Пока лента стоит на копии, дальше ехать некуда — ждём перескока на
+    // настоящий кадр (он случится в конце текущей анимации).
+    if (n < 2) return;
+    setPos((p) => (p === 0 || p === n + 1 ? p : p + delta));
+  }
+
+  function onTransitionEnd(e: TransitionEvent<HTMLDivElement>) {
+    if (e.target !== e.currentTarget || e.propertyName !== "transform") return;
+    if (safePos === n + 1) {
+      setInstant(true);
+      setPos(1);
+    } else if (safePos === 0) {
+      setInstant(true);
+      setPos(n);
+    }
+  }
 
   function markBroken(url: string) {
     setBroken((prev) => new Set(prev).add(url));
@@ -91,9 +125,7 @@ export default function Gallery({ urls }: { urls: string[] }) {
       viewportRef.current?.setPointerCapture(e.pointerId);
       setDragging(true);
     }
-    // За крайние кадры тянется с сопротивлением, как в Instagram.
-    const pastEdge = (dx > 0 && current === 0) || (dx < 0 && current === last);
-    setDragPx(pastEdge ? dx / 3 : dx);
+    setDragPx(dx);
   }
 
   function endDrag(e: PointerEvent<HTMLDivElement>, cancelled: boolean) {
@@ -106,9 +138,16 @@ export default function Gallery({ urls }: { urls: string[] }) {
     const dx = e.clientX - d.x;
     const width = viewportRef.current?.offsetWidth ?? 1;
     const flick = e.timeStamp - d.t < FLICK_MS && Math.abs(dx) > FLICK_PX;
-    if ((dx < -width * SWIPE_THRESHOLD || (flick && dx < 0)) && current < last) setIndex(current + 1);
-    else if ((dx > width * SWIPE_THRESHOLD || (flick && dx > 0)) && current > 0) setIndex(current - 1);
+    if (dx < -width * SWIPE_THRESHOLD || (flick && dx < 0)) go(1);
+    else if (dx > width * SWIPE_THRESHOLD || (flick && dx > 0)) go(-1);
   }
+
+  // Лента с копиями по краям — см. коммент вверху файла.
+  const slides = [
+    { key: "clone-last", url: workingUrls[n - 1], real: false },
+    ...workingUrls.map((url) => ({ key: url, url, real: true })),
+    { key: "clone-first", url: workingUrls[0], real: false },
+  ];
 
   return (
     <div className="gallery">
@@ -122,55 +161,58 @@ export default function Gallery({ urls }: { urls: string[] }) {
       >
         <div
           className="track"
+          onTransitionEnd={onTransitionEnd}
           style={{
-            transform: `translateX(calc(${-current * 100}% + ${dragPx}px))`,
-            transition: dragging ? "none" : undefined,
+            transform: `translateX(calc(${-safePos * 100}% + ${dragPx}px))`,
+            transition: dragging || instant ? "none" : undefined,
           }}
         >
-          {workingUrls.map((url, i) => (
-            <div className="slide" key={url}>
-              {requested.has(url) && (
-                // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание), через /api/image-proxy как и одиночная обложка
-                <img
-                  ref={i === 0 ? firstImgRef : undefined}
-                  src={`/api/image-proxy?url=${encodeURIComponent(url)}`}
-                  alt=""
-                  draggable={false}
-                  loading={i === 0 ? "lazy" : "eager"}
-                  onLoad={i === 0 ? () => setFirstLoaded(true) : undefined}
-                  onError={() => {
-                    markBroken(url);
-                    // Иначе при битом первом кадре остальные не начали бы грузиться.
-                    if (i === 0) setFirstLoaded(true);
-                  }}
-                />
-              )}
-            </div>
-          ))}
+          {slides.map(({ key, url, real }) => {
+            const isFirst = real && url === workingUrls[0];
+            return (
+              <div className="slide" key={key}>
+                {requested.has(url) && (
+                  // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание), через /api/image-proxy как и одиночная обложка
+                  <img
+                    ref={isFirst ? firstImgRef : undefined}
+                    src={`/api/image-proxy?url=${encodeURIComponent(url)}`}
+                    alt=""
+                    draggable={false}
+                    loading={isFirst ? "lazy" : "eager"}
+                    onLoad={isFirst ? () => setFirstLoaded(true) : undefined}
+                    onError={() => {
+                      markBroken(url);
+                      // Иначе при битом первом кадре остальные не начали бы грузиться.
+                      if (isFirst) setFirstLoaded(true);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {current > 0 && (
-        <button className="arrow left" aria-label="Предыдущее фото" onClick={() => setIndex(current - 1)}>
-          ‹
-        </button>
-      )}
-      {current < last && (
-        <button className="arrow right" aria-label="Следующее фото" onClick={() => setIndex(current + 1)}>
-          ›
-        </button>
-      )}
-      {last > 0 && (
-        <div className="dots">
-          {workingUrls.map((url, i) => (
-            <button
-              key={url}
-              className={i === current ? "dot active" : "dot"}
-              aria-label={`Фото ${i + 1}`}
-              onClick={() => setIndex(i)}
-            />
-          ))}
-        </div>
+      {/* После отсева битых кадров может остаться один — листать нечего. */}
+      {n > 1 && (
+        <>
+          <button className="arrow left" aria-label="Предыдущее фото" onClick={() => go(-1)}>
+            ‹
+          </button>
+          <button className="arrow right" aria-label="Следующее фото" onClick={() => go(1)}>
+            ›
+          </button>
+          <div className="dots">
+            {workingUrls.map((url, i) => (
+              <button
+                key={url}
+                className={i === current ? "dot active" : "dot"}
+                aria-label={`Фото ${i + 1}`}
+                onClick={() => setPos(i + 1)}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       <style jsx>{`
