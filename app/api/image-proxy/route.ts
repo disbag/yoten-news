@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { pool } from "../../../src/lib/db";
 
 // Некоторые издания (Rolling Stone, Variety, Hollywood Reporter — все три на
 // инфраструктуре Penske Media) отдают картинку нормально на серверный
@@ -47,6 +48,17 @@ export async function GET(request: NextRequest) {
     return new NextResponse("Invalid protocol", { status: 400 });
   }
 
+  // Проксируем только картинки, которые реально есть в ленте. Без этого
+  // прокси забирал ЛЮБОЙ URL и отдавал его с нашего домена с исходным
+  // Content-Type: ?url=<страница злоумышленника> превращался в HTML+JS,
+  // исполняемый в origin сайта (XSS/фишинг от имени Yoten), плюс открытый
+  // прокси для чужого трафика и запросов к внутренним адресам (SSRF).
+  const { rowCount } = await pool.query(
+    "SELECT 1 FROM articles WHERE image_url = $1 OR $1 = ANY(image_urls) LIMIT 1",
+    [url]
+  );
+  if (!rowCount) return new NextResponse("Unknown image", { status: 404 });
+
   let res: Response;
   try {
     res = await fetchImage(target.toString());
@@ -55,9 +67,19 @@ export async function GET(request: NextRequest) {
   }
   if (!res.ok || !res.body) return new NextResponse(null, { status: 502 });
 
+  // Даже с URL из базы издание может вернуть HTML-заглушку со статусом 200
+  // (анти-бот, пейволл) — такое не отдаём, <img onError> в FeedCard просто
+  // скроет картинку.
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.startsWith("image/")) return new NextResponse(null, { status: 502 });
+
   return new NextResponse(res.body, {
     headers: {
-      "Content-Type": res.headers.get("content-type") ?? "image/jpeg",
+      "Content-Type": contentType,
+      "X-Content-Type-Options": "nosniff",
+      // SVG — тоже image/*, но может содержать скрипты при открытии URL
+      // напрямую (не через <img>). sandbox запрещает их исполнение.
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       // Картинки статей не меняются задним числом — кешируем надолго и на
       // стороне браузера, и на CDN/edge, если он когда-нибудь появится.
       "Cache-Control": "public, max-age=86400, immutable",

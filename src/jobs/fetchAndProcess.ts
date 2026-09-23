@@ -194,6 +194,9 @@ async function processSource(
       return;
     }
     if (!item.link || !item.title) continue;
+    // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
+    // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
+    if (!/^https?:\/\//i.test(item.link)) continue;
     if (PROMO_TITLE_PATTERN.test(item.title)) continue; // партнёрский купон/промокод, не новость
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
     if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание

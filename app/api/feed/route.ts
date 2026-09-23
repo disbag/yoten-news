@@ -9,7 +9,10 @@ import { getSessionUserId } from "../../../src/lib/session";
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const category = searchParams.get("category") ?? undefined;
-  const limit = Number(searchParams.get("limit") ?? 30);
+  // Клиент всегда просит 30 (PAGE_SIZE в FeedList.tsx). Без потолка
+  // ?limit=5000 отдавал ~8 МБ за один запрос — дешёвый способ нагрузить базу.
+  const requested = Number(searchParams.get("limit") ?? 30);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 50) : 30;
   const beforePublishedAt = searchParams.get("beforePublishedAt");
   const beforeClusterId = searchParams.get("beforeClusterId");
   const before =

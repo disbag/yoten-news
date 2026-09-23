@@ -5,10 +5,10 @@ import { isValidEmail, normalizeEmail } from "../../../../../src/lib/emailCode";
 
 // Упрощённая регистрация по email — без одноразового кода (в отличие от
 // /api/auth/email/request + /verify, которые уже готовы для будущего входа
-// по почте). Пока это просто способ завести аккаунт по email вместо passkey,
-// без проверки владения адресом — тот же уровень доверия, что раньше был у
-// регистрации по имени. ON CONFLICT — повторная "регистрация" на уже
-// существующий email просто входит в тот же аккаунт, а не падает ошибкой.
+// по почте). Владение адресом здесь не проверяется, поэтому эндпоинт умеет
+// ТОЛЬКО создавать новый аккаунт: на уже занятый email — 409, а не вход.
+// Раньше тут был ON CONFLICT DO UPDATE + createSession, и знания чужого email
+// хватало, чтобы войти в чужой аккаунт.
 export async function POST(request: NextRequest) {
   const { email: rawEmail } = (await request.json()) as { email?: string };
   const email = normalizeEmail(rawEmail ?? "");
@@ -18,10 +18,17 @@ export async function POST(request: NextRequest) {
 
   const { rows } = await pool.query(
     `INSERT INTO users (email, display_name) VALUES ($1, $2)
-     ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+     ON CONFLICT (email) DO NOTHING
      RETURNING id, display_name`,
     [email, email.split("@")[0]]
   );
+  if (rows.length === 0) {
+    return NextResponse.json(
+      { error: "Этот email уже зарегистрирован — войдите через Face ID" },
+      { status: 409 }
+    );
+  }
+
   const user = rows[0];
   await createSession(user.id);
   return NextResponse.json({ id: user.id, displayName: user.display_name });

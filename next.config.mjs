@@ -14,6 +14,22 @@ const nextConfig = {
       dynamic: 0,
     },
   },
+  // Базовые защитные заголовки (HSTS Vercel уже добавляет сам). Полноценный
+  // CSP не ставим: styled-jsx и Next.js вставляют инлайн-стили/скрипты, и без
+  // nonce-инфраструктуры он бы сломал страницу.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+        ],
+      },
+    ];
+  },
   webpack(config) {
     // src/ пишется в стиле Node ESM (импорты с расширением .js на .ts-файлы),
     // как того требует связка tsx + moduleResolution "Bundler" для CLI-скриптов.
