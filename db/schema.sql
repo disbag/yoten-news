@@ -137,6 +137,17 @@ ALTER TABLE articles ADD COLUMN IF NOT EXISTS image_urls TEXT[];
 -- у статей без полного текста (тизеры) и у склеенных статей кластера.
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS ai_summary_more TEXT;
 
+-- Ссылки, отброшенные уже ПОСЛЕ загрузки страницы и запроса к Gemini (спорт,
+-- нет текста статьи — см. fetchAndProcess.ts). Строку в articles тогда
+-- удаляем, и без этой отметки каждый следующий прогон заново качал бы ту же
+-- страницу и тратил на неё запрос к Gemini (реальный случай — одни и те же
+-- две статьи NYT в каждом прогоне). Чистится вместе со старыми статьями.
+CREATE TABLE IF NOT EXISTS skipped_links (
+  link TEXT PRIMARY KEY,
+  reason TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- RLS без политик на всех таблицах: Supabase автоматически открывает схему
 -- public через REST API (PostgREST), и без RLS любой с anon-ключом проекта мог
 -- читать/удалять всё, включая users.email и passkeys. Само приложение ходит
@@ -149,3 +160,4 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE passkeys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE article_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_login_codes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE skipped_links ENABLE ROW LEVEL SECURITY;

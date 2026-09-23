@@ -193,8 +193,11 @@ async function processSource(
     if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
     if (!isWithinFetchWindow(item.isoDate)) continue; // вне окна FETCH_SINCE_DAYS — не берём в ленту
 
-    const exists = await pool.query("SELECT 1 FROM articles WHERE link = $1", [item.link]);
-    if (exists.rowCount) continue; // уже обработана раньше
+    const exists = await pool.query(
+      "SELECT 1 FROM articles WHERE link = $1 UNION ALL SELECT 1 FROM skipped_links WHERE link = $1",
+      [item.link]
+    );
+    if (exists.rowCount) continue; // уже обработана (или отброшена, см. markSkipped) раньше
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
     const feedFullHtml = item["dc:content"] ?? item["content:encoded"];
@@ -427,6 +430,7 @@ async function processSource(
     if (category?.includes("sport")) {
       console.log(`  – "${item.title.slice(0, 60)}..." → спорт, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
+      await markSkipped(item.link, "sport");
       continue;
     }
 
@@ -441,6 +445,7 @@ async function processSource(
     if (aiSummary === item.title) {
       console.log(`  – "${item.title.slice(0, 60)}..." → нет текста статьи, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
+      await markSkipped(item.link, "no_text");
       continue;
     }
 
@@ -475,6 +480,18 @@ async function cleanupOld() {
         OR (cluster_id IS NULL AND created_at < now() - interval '${RETENTION_DAYS} days')`
   );
   if (res.rowCount) console.log(`Удалено старых записей: ${res.rowCount}`);
+  await pool.query(`DELETE FROM skipped_links WHERE created_at < now() - interval '${RETENTION_DAYS} days'`);
+}
+
+// Отметка "уже смотрели и отбросили" — только для окончательных решений
+// (спорт, нет текста), чтобы следующие прогоны не качали страницу и не звали
+// Gemini заново. Ошибки саммаризации сюда не пишем: они обычно временные
+// (сеть, перегрузка модели), и в следующем прогоне статья должна пройти.
+async function markSkipped(link: string, reason: "sport" | "no_text") {
+  await pool.query("INSERT INTO skipped_links (link, reason) VALUES ($1, $2) ON CONFLICT (link) DO NOTHING", [
+    link,
+    reason,
+  ]);
 }
 
 async function main() {
