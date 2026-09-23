@@ -231,7 +231,14 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // обычные картинки в тексте InsideEVs — ссылки на другие статьи, их не берём.
 // У главного кадра в src заглушка /images/static/16x9-tr.png, настоящий URL —
 // в <source srcset>; превью — размер s5 (213px), поднимаем до s3 (1280x720).
-type GallerySite = "hearst" | "futureplc" | "condenast" | "time" | "motor1";
+// "polygon" (Polygon): фото статьи — div.body-img; карточки "читайте также"
+// (.display-card) и аватары комментариев лежат вне него. CDN режет по ?w=:
+// 1280 — ~45КБ вместо 4K-оригинала на ~750КБ.
+// "gamespot" (GameSpot) — единственная галерея из RSS, а не со страницы:
+// страница закрыта Cloudflare-проверкой от ботов (403), а RSS кладёт фото
+// статьи прямо в <description> (?w=636) и обложку в media:content (?w=300 —
+// мыльная в карточке). WordPress-CDN режет по ?w= — приводим всё к 1280.
+export type GallerySite = "hearst" | "futureplc" | "condenast" | "time" | "motor1" | "polygon" | "gamespot";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -239,9 +246,11 @@ const MOTOR1_IMAGE_PATH = /^\/images\/mgl\/([A-Za-z0-9]+)\/s\d+\/([^/]+?)\.(?:jp
 
 // normalize возвращает null для картинок, которые не являются кадром
 // галереи (заглушки lazy-load и т.п.) — они просто пропускаются.
+// from — откуда брать разметку с фото: со страницы статьи (fetchOgTags) или
+// из HTML самого RSS-элемента (extractFeedGallery).
 const GALLERY_SITES: Record<
   GallerySite,
-  { selector: string; normalize: (url: URL) => URL | null; leadWithCover: boolean }
+  { selector: string; normalize: (url: URL) => URL | null; leadWithCover: boolean; from?: "page" | "rss" }
 > = {
   hearst: {
     selector: 'a[href*="/photos"] img',
@@ -293,7 +302,46 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: true,
   },
+  polygon: {
+    selector: ".body-img img",
+    normalize: (url) => {
+      url.search = "?w=1280";
+      return url;
+    },
+    leadWithCover: true,
+  },
+  gamespot: {
+    selector: "img",
+    // В RSS встречаются и чужие картинки (встраивания соцсетей и т.п.) —
+    // берём только загрузки самого GameSpot.
+    normalize: (url) => {
+      if (!url.hostname.endsWith("gamespot.com") || !url.pathname.includes("/wp-content/uploads/")) return null;
+      url.search = "?w=1280";
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
 };
+
+export function galleryFromRss(site: GallerySite | undefined): boolean {
+  return site !== undefined && GALLERY_SITES[site].from === "rss";
+}
+
+// Галерея из HTML RSS-элемента (для сайтов с from: "rss", см. выше).
+export function extractFeedGallery(html: string, baseUrl: string, site: GallerySite, cover?: string): string[] {
+  return extractGallery(cheerio.load(html), baseUrl, site, cover);
+}
+
+// Та же нормализация к облегчённому размеру — для одиночной обложки статьи
+// без галереи (у GameSpot обложка в RSS всего 300px).
+export function normalizeCover(site: GallerySite, cover: string): string {
+  try {
+    return GALLERY_SITES[site].normalize(new URL(cover))?.toString() ?? cover;
+  } catch {
+    return cover;
+  }
+}
 
 function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
   const { selector, normalize, leadWithCover } = GALLERY_SITES[site];
@@ -330,7 +378,7 @@ export async function fetchOgTags(
   // разметке, чем обычно нужно для og-тегов/текста: у Wallpaper фото тела
   // статьи идут с ~910КБ до ~1.01МБ при странице ~1.05-1.1МБ — прежний лимит
   // 1МБ срезал последние кадры. Читаем с запасом именно для них.
-  const html = await fetchHtmlChunk(url, gallery ? 1_500_000 : undefined);
+  const html = await fetchHtmlChunk(url, gallery && !galleryFromRss(gallery) ? 1_500_000 : undefined);
   const $ = cheerio.load(html);
   const articleScope = findLargestArticleScope($);
   // Порядок: ручной селектор источника (если задан и сработал) > JSON-LD
@@ -349,6 +397,6 @@ export async function fetchOgTags(
     description: extractMetaContent($, "og:description"),
     image,
     excerpt,
-    gallery: gallery ? extractGallery($, url, gallery, image) : undefined,
+    gallery: gallery && !galleryFromRss(gallery) ? extractGallery($, url, gallery, image) : undefined,
   };
 }

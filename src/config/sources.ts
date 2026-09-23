@@ -1,3 +1,5 @@
+import type { GallerySite } from "../lib/ogTags.js";
+
 // Стартовый список источников. Проверь актуальность RSS-ссылок на сайтах изданий —
 // пути иногда меняются, National Geographic и Telegraph особенно любят их переносить.
 //
@@ -22,9 +24,11 @@ type SourceConfig = {
   // виджет-слайдер .inline-gallery, если он есть. "condenast" (Wired,
   // New Yorker, Pitchfork, GQ, CN Traveler) и "time" — фото-вставки <figure>
   // в теле статьи. "motor1" (InsideEVs) — виджет превью фотогалереи статьи
-  // (см. GALLERY_SITES в src/lib/ogTags.ts). Другие сайты вёрстают галереи
-  // иначе, включать им эти флаги нельзя без отдельной проверки их разметки.
-  gallery?: "hearst" | "futureplc" | "condenast" | "time" | "motor1";
+  // "polygon" — фото в теле статьи; "gamespot" — фото из самого RSS (страница
+  // закрыта от бота). См. GALLERY_SITES в src/lib/ogTags.ts. Другие сайты
+  // вёрстают галереи иначе, включать им эти флаги нельзя без отдельной
+  // проверки их разметки.
+  gallery?: GallerySite;
   // Текст статьи брать из RSS (dc:content/content:encoded), а не более
   // длинный из RSS и страницы. Для сайтов, где RSS отдаёт статью целиком и
   // чисто, а парсер страницы захватывает лишнее — у Future plc это дисклеймер
@@ -168,11 +172,13 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://www.ign.com",
   },
   {
-    // Страница статьи блокирует бота (403), но RSS-описание само по себе
-    // достаточно содержательное (как у NYT/Telegraph) — работает на нём.
+    // Страница статьи закрыта Cloudflare-проверкой от ботов (403), но RSS
+    // сам несёт текст статьи и её фото в <description> — и текст, и галерея
+    // берутся из него.
     name: "GameSpot",
     rssUrl: "https://www.gamespot.com/feeds/mashup/",
     homepageUrl: "https://www.gamespot.com",
+    gallery: "gamespot",
   },
   {
     // Hearst, не блокирует бота. Проверено на реальной статье.
@@ -237,6 +243,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Polygon",
     rssUrl: "https://www.polygon.com/feed/",
     homepageUrl: "https://www.polygon.com",
+    gallery: "polygon",
   },
   {
     // IGN Entertainment (как сам IGN), не блокирует бота. Заметный блок

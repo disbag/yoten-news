@@ -3,7 +3,7 @@ import Parser from "rss-parser";
 import { pool, toVectorLiteral } from "../lib/db.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
-import { fetchOgTags, MAX_ARTICLE_CHARS } from "../lib/ogTags.js";
+import { fetchOgTags, extractFeedGallery, galleryFromRss, normalizeCover, MAX_ARTICLE_CHARS } from "../lib/ogTags.js";
 import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
 import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
@@ -233,6 +233,16 @@ async function processSource(
       excerpt = feedContent;
     }
     imageUrl ??= extractFeedImage(item["media:content"]);
+
+    // Галерея из самого RSS — для сайтов, чья страница закрыта от бота, но
+    // RSS несёт фото статьи (GameSpot, см. GALLERY_SITES в src/lib/ogTags.ts).
+    const gallerySite = sourceConfig?.gallery;
+    if (gallerySite && galleryFromRss(gallerySite)) {
+      if (imageUrl) imageUrl = normalizeCover(gallerySite, imageUrl);
+      const feedHtml = feedFullHtml ?? item.content;
+      const feedGallery = feedHtml ? extractFeedGallery(feedHtml, item.link, gallerySite, imageUrl) : [];
+      gallery = feedGallery.length ? feedGallery : undefined;
+    }
 
     // Эмбеддим оригинальный текст статьи (excerpt/fullDescription/rawSummary
     // по убыванию качества) ДО саммаризации — раньше порядок был обратным
