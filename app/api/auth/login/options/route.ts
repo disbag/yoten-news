@@ -11,6 +11,6 @@ export async function POST() {
     userVerification: "preferred",
   });
 
-  setChallengeCookie({ challenge: options.challenge });
+  await setChallengeCookie({ challenge: options.challenge });
   return NextResponse.json(options);
 }

@@ -17,7 +17,7 @@ export async function createSession(userId: number): Promise<void> {
     .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
     .sign(getSecret());
 
-  cookies().set(SESSION_COOKIE, token, {
+  (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -26,14 +26,14 @@ export async function createSession(userId: number): Promise<void> {
   });
 }
 
-export function clearSession(): void {
-  cookies().delete(SESSION_COOKIE);
+export async function clearSession(): Promise<void> {
+  (await cookies()).delete(SESSION_COOKIE);
 }
 
 // Возвращает null и на отсутствующей, и на битой/просроченной куке — вызывающий
 // код везде трактует "не залогинен" одинаково, отдельная ошибка не нужна.
 export async function getSessionUserId(): Promise<number | null> {
-  const token = cookies().get(SESSION_COOKIE)?.value;
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecret());

@@ -32,6 +32,6 @@ export async function POST() {
     },
   });
 
-  setChallengeCookie({ challenge: options.challenge, displayName });
+  await setChallengeCookie({ challenge: options.challenge, displayName });
   return NextResponse.json(options);
 }

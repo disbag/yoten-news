@@ -5,7 +5,7 @@ import { createSession } from "../../../../../src/lib/session";
 import { RP_ID, RP_ORIGIN, getChallengeCookie, clearChallengeCookie } from "../../../../../src/lib/webauthn";
 
 export async function POST(request: NextRequest) {
-  const challengeData = getChallengeCookie();
+  const challengeData = await getChallengeCookie();
   if (!challengeData) {
     console.error("[login/verify] нет куки webauthn_challenge — cookie не дошла или истекла");
     return NextResponse.json({ error: "Сессия входа истекла, попробуйте снова" }, { status: 400 });
@@ -55,6 +55,6 @@ export async function POST(request: NextRequest) {
   ]);
 
   await createSession(passkey.user_id);
-  clearChallengeCookie();
+  await clearChallengeCookie();
   return NextResponse.json({ ok: true });
 }

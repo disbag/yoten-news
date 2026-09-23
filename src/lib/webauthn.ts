@@ -13,8 +13,8 @@ const CHALLENGE_COOKIE = "webauthn_challenge";
 // безопасен как источник для создания записи в users при verify.
 type ChallengeData = { challenge: string; displayName?: string };
 
-export function setChallengeCookie(data: ChallengeData): void {
-  cookies().set(CHALLENGE_COOKIE, JSON.stringify(data), {
+export async function setChallengeCookie(data: ChallengeData): Promise<void> {
+  (await cookies()).set(CHALLENGE_COOKIE, JSON.stringify(data), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -23,8 +23,8 @@ export function setChallengeCookie(data: ChallengeData): void {
   });
 }
 
-export function getChallengeCookie(): ChallengeData | null {
-  const raw = cookies().get(CHALLENGE_COOKIE)?.value;
+export async function getChallengeCookie(): Promise<ChallengeData | null> {
+  const raw = (await cookies()).get(CHALLENGE_COOKIE)?.value;
   if (!raw) return null;
   try {
     return JSON.parse(raw) as ChallengeData;
@@ -33,6 +33,6 @@ export function getChallengeCookie(): ChallengeData | null {
   }
 }
 
-export function clearChallengeCookie(): void {
-  cookies().delete(CHALLENGE_COOKIE);
+export async function clearChallengeCookie(): Promise<void> {
+  (await cookies()).delete(CHALLENGE_COOKIE);
 }

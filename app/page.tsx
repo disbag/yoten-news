@@ -9,11 +9,10 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 30;
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: { category?: string; tab?: string };
+export default async function HomePage(props: {
+  searchParams: Promise<{ category?: string; tab?: string }>;
 }) {
+  const searchParams = await props.searchParams;
   const activeCategory = CATEGORIES.find((c) => c.id === searchParams.category);
   const userId = await getSessionUserId();
   const isLoggedIn = userId !== null;
