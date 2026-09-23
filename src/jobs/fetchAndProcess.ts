@@ -188,6 +188,7 @@ async function processSource(
     if (!/^https?:\/\//i.test(item.link)) continue;
     if (PROMO_TITLE_PATTERN.test(item.title)) continue; // партнёрский купон/промокод, не новость
     if (sourceConfig?.adTitlePattern?.test(item.title)) continue; // рекламный пост со скидками, см. sources.ts
+    if (sourceConfig?.adLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // то же по адресу
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
     if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
     if (!isWithinFetchWindow(item.isoDate)) continue; // вне окна FETCH_SINCE_DAYS — не берём в ленту

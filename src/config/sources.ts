@@ -41,6 +41,10 @@ type SourceConfig = {
   // каждого издания: общий фильтр по слову "deal" резал бы и новости вроде
   // "Trump Revives Iran Deal Hopes" (Bloomberg).
   adTitlePattern?: RegExp;
+  // То же по пути ссылки (без query) — у многих изданий рекламные посты
+  // узнаются по адресу надёжнее, чем по заголовку: "…-deal-september-2026",
+  // "…-deal-sale", раздел /ad/. Тоже своё для каждого издания.
+  adLinkPattern?: RegExp;
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -69,6 +73,10 @@ export const SOURCES: SourceConfig[] = [
     name: "The Verge",
     rssUrl: "https://www.theverge.com/rss/index.xml",
     homepageUrl: "https://www.theverge.com",
+    // Рекламные посты всегда оканчиваются на "-deal-sale". Просто слово
+    // "deal" в адресе для The Verge не годится — он часто пишет о сделках
+    // компаний ("…-activision-deal-…").
+    adLinkPattern: /-deal-sale(?:\/|$)/i,
   },
   {
     name: "TIME",
@@ -140,6 +148,10 @@ export const SOURCES: SourceConfig[] = [
     name: "Lifehacker",
     rssUrl: "https://lifehacker.com/feed/rss",
     homepageUrl: "https://lifehacker.com",
+    // Около трети фида — "This … Is $180 Off Right Now" с адресом
+    // "…-sale-september-2026"/"…-deal-…", плюс оплаченный раздел /ad/.
+    // "deal-with" — это "how to deal with…", не реклама.
+    adLinkPattern: /(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|^\/ad\//i,
   },
   {
     // Condé Nast (как Wired/New Yorker/Verge) — JSON-LD с полным текстом,
@@ -181,6 +193,10 @@ export const SOURCES: SourceConfig[] = [
     name: "IGN",
     rssUrl: "https://feeds.ign.com/ign/all",
     homepageUrl: "https://www.ign.com",
+    // "…-deal-september-2026", "best-deals-for-…", "…-sale-…",
+    // "…-new-low-price-at-amazon". Проверено на неделе статей: ни одной
+    // обычной новости под шаблон не попало.
+    adLinkPattern: /(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|low-price/i,
   },
   {
     // Страница статьи закрыта Cloudflare-проверкой от ботов (403), но RSS
