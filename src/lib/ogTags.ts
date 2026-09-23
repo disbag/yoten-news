@@ -208,9 +208,18 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // к тому же кладёт картинки в DOM дважды — поэтому нормализация к одному
 // размеру обязательна, иначе дедуп через Set не склеит дубли. 1280 —
 // размер, который CDN отдаёт для любого кадра, в 3-10 раз легче оригинала.
-type GallerySite = "hearst" | "wallpaper";
+// "condenast" (Condé Nast Traveler, GQ, Wired, The New Yorker, Pitchfork —
+// общий движок): фото статьи — figure.AssetEmbedWrapper-*. Товары в
+// подборках ("best moisturizers") лежат в других блоках (UnifiedProductCard,
+// ProductSummaryAsset) и в селектор не попадают — подборки остаются с одной
+// обложкой. Один кадр встречается с разной обрезкой/шириной в пути
+// (/photos/{id}/16:9/w_1280,c_limit/… в og:image, /master/w_1600…/ в теле).
+// "time" (TIME): фото статьи — <figure> внутри <main>; ссылки на другие
+// материалы там без <figure>. В теле src с width=3840 — приводим к 1280.
+type GallerySite = "hearst" | "wallpaper" | "condenast" | "time";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
+const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
 
 const GALLERY_SITES: Record<GallerySite, { selector: string; normalize: (url: URL) => URL; leadWithCover: boolean }> = {
   hearst: {
@@ -232,6 +241,24 @@ const GALLERY_SITES: Record<GallerySite, { selector: string; normalize: (url: UR
     },
     // Фото в теле идут не с обложки — без этого первым кадром карточки
     // вместо привычной обложки статьи стало бы случайное первое фото.
+    leadWithCover: true,
+  },
+  condenast: {
+    selector: 'figure[class*="AssetEmbedWrapper"] img',
+    normalize: (url) => {
+      url.search = "";
+      const match = url.pathname.match(CONDENAST_IMAGE_PATH);
+      if (match) url.pathname = `/photos/${match[1]}/master/w_1280,c_limit/${match[2]}`;
+      return url;
+    },
+    leadWithCover: true,
+  },
+  time: {
+    selector: "main figure img",
+    normalize: (url) => {
+      url.search = url.hostname === "static.time.com" ? "?branch=production&width=1280&quality=75&auto=webp" : "";
+      return url;
+    },
     leadWithCover: true,
   },
 };

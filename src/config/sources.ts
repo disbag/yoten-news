@@ -18,10 +18,13 @@ type SourceConfig = {
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
   // (Motor Trend, Car and Driver). "wallpaper" — фото-вставки в теле статьи
-  // плюс виджет-слайдер .inline-gallery, если он есть (см. GALLERY_SITES
-  // в src/lib/ogTags.ts). Другие сайты вёрстают галереи иначе, включать им
+  // плюс виджет-слайдер .inline-gallery, если он есть. "condenast" (Wired,
+  // New Yorker, Pitchfork, GQ, CN Traveler) и "time" — фото-вставки <figure>
+  // в теле статьи (см. GALLERY_SITES в src/lib/ogTags.ts). Другие сайты
+  // вёрстают галереи иначе (у InsideEVs, например, картинки в теле — это
+  // ссылки на другие статьи, а не фото сюжета), включать им
   // эти флаги нельзя без отдельной проверки их разметки.
-  gallery?: "hearst" | "wallpaper";
+  gallery?: "hearst" | "wallpaper" | "condenast" | "time";
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -39,6 +42,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Wired",
     rssUrl: "https://www.wired.com/feed/rss",
     homepageUrl: "https://www.wired.com",
+    gallery: "condenast",
   },
   {
     name: "The Telegraph",
@@ -54,11 +58,13 @@ export const SOURCES: SourceConfig[] = [
     name: "TIME",
     rssUrl: "https://time.com/feed/",
     homepageUrl: "https://time.com",
+    gallery: "time",
   },
   {
     name: "The New Yorker",
     rssUrl: "https://www.newyorker.com/feed/everything",
     homepageUrl: "https://www.newyorker.com",
+    gallery: "condenast",
   },
   {
     // У nymag.com нет единого RSS на весь сайт — только по разделам.
@@ -107,6 +113,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Pitchfork",
     rssUrl: "https://pitchfork.com/feed/rss",
     homepageUrl: "https://pitchfork.com",
+    gallery: "condenast",
   },
   {
     // Тоже Condé Nast — та же схема, что у Pitchfork/Wired. Стиль, культура,
@@ -115,12 +122,14 @@ export const SOURCES: SourceConfig[] = [
     name: "GQ",
     rssUrl: "https://www.gq.com/feed/rss",
     homepageUrl: "https://www.gq.com",
+    gallery: "condenast",
   },
   {
     // Тоже Condé Nast. Путешествия, направления, отели.
     name: "Condé Nast Traveler",
     rssUrl: "https://www.cntraveler.com/feed/rss",
     homepageUrl: "https://www.cntraveler.com",
+    gallery: "condenast",
   },
   {
     // WordPress (PMC), не блокирует бота. Страница отдаёт много paywall-
