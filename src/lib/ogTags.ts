@@ -207,7 +207,8 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // статьи) — проверено на реальных примерах: у Motor Trend ссылка "{путь
 // статьи}/photos", у Car and Driver — "/photos/{id}/…-gallery/", в обоих
 // случаях путь содержит "/photos".
-// "wallpaper" (Wallpaper): фото статьи — обычные вставки
+// "futureplc" (Wallpaper, Creative Bloq — общий движок Future plc): фото
+// статьи — обычные вставки
 // figure.van-image-figure в #article-body; виджет-слайдер .inline-gallery
 // есть лишь в части статей (раньше брали только его — и галерея была у 3 из
 // 61 статьи). Один кадр встречается под разными URL размеров ({id}.jpg в
@@ -230,7 +231,7 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // обычные картинки в тексте InsideEVs — ссылки на другие статьи, их не берём.
 // У главного кадра в src заглушка /images/static/16x9-tr.png, настоящий URL —
 // в <source srcset>; превью — размер s5 (213px), поднимаем до s3 (1280x720).
-type GallerySite = "hearst" | "wallpaper" | "condenast" | "time" | "motor1";
+type GallerySite = "hearst" | "futureplc" | "condenast" | "time" | "motor1";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -251,7 +252,7 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: false,
   },
-  wallpaper: {
+  futureplc: {
     selector: "#article-body figure.van-image-figure img, .inline-gallery img",
     normalize: (url) => {
       url.search = "";

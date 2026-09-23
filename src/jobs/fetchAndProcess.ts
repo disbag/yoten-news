@@ -221,8 +221,13 @@ async function processSource(
       // резал эмбеддинг до общей фразы без единого специфичного факта — из-за
       // этого две статьи об одном и том же кроссовере Kingdom Hearts x
       // Fortnite (GameSpot и Polygon) не склеились, хотя должны были.
-      excerpt =
-        (feedContent?.length ?? 0) >= (og.excerpt?.length ?? 0) ? feedContent ?? og.excerpt : og.excerpt;
+      // Исключение — источники с preferFeedContent (Future plc): там RSS
+      // отдаёт статью целиком и чисто, а страница длиннее только за счёт
+      // мусора (биография автора, дисклеймер), см. src/config/sources.ts.
+      if (sourceConfig?.preferFeedContent && feedContent) excerpt = feedContent;
+      else
+        excerpt =
+          (feedContent?.length ?? 0) >= (og.excerpt?.length ?? 0) ? feedContent ?? og.excerpt : og.excerpt;
     } catch {
       // страница недоступна боту — это ожидаемо для части источников
       excerpt = feedContent;

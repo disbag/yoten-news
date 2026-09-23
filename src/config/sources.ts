@@ -17,14 +17,21 @@ type SourceConfig = {
   homepageUrl: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
-  // (Motor Trend, Car and Driver). "wallpaper" — фото-вставки в теле статьи
-  // плюс виджет-слайдер .inline-gallery, если он есть. "condenast" (Wired,
+  // (Motor Trend, Car and Driver). "futureplc" (Wallpaper, Creative Bloq —
+  // издатель Future plc, общий движок) — фото-вставки в теле статьи плюс
+  // виджет-слайдер .inline-gallery, если он есть. "condenast" (Wired,
   // New Yorker, Pitchfork, GQ, CN Traveler) и "time" — фото-вставки <figure>
   // в теле статьи. "motor1" (InsideEVs) — виджет превью фотогалереи статьи
   // (см. GALLERY_SITES в src/lib/ogTags.ts). Другие сайты вёрстают галереи
-  // иначе, включать им
-  // эти флаги нельзя без отдельной проверки их разметки.
-  gallery?: "hearst" | "wallpaper" | "condenast" | "time" | "motor1";
+  // иначе, включать им эти флаги нельзя без отдельной проверки их разметки.
+  gallery?: "hearst" | "futureplc" | "condenast" | "time" | "motor1";
+  // Текст статьи брать из RSS (dc:content/content:encoded), а не более
+  // длинный из RSS и страницы. Для сайтов, где RSS отдаёт статью целиком и
+  // чисто, а парсер страницы захватывает лишнее — у Future plc это дисклеймер
+  // о партнёрских ссылках, биография автора и служебное сообщение
+  // комментариев, которые иначе попадали в текст для модели и могли
+  // просочиться в подробности под катом.
+  preferFeedContent?: boolean;
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -90,14 +97,26 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://techcrunch.com",
   },
   {
-    // Страница статьи слишком тяжёлая (~1.6МБ инлайн-CSS) — реальный текст
-    // не попадает в 500КБ-лимит fetchHtmlChunk. Но сам RSS кладёт полный
-    // чистый текст статьи в нестандартный тег dc:content — используем его
-    // напрямую (см. feedContent в fetchAndProcess.ts), без похода на страницу.
+    // Future plc: RSS кладёт полный чистый текст статьи в нестандартный тег
+    // dc:content — берём его (preferFeedContent), со страницы — только
+    // картинки галереи (страница ~1-1.6МБ, фото в теле идут ближе к концу).
     name: "Wallpaper",
     rssUrl: "https://www.wallpaper.com/feeds.xml",
     homepageUrl: "https://www.wallpaper.com",
-    gallery: "wallpaper",
+    gallery: "futureplc",
+    preferFeedContent: true,
+  },
+  {
+    // Тот же движок Future plc, что у Wallpaper: полный текст в dc:content
+    // (проверено на 6 статьях — совпадает с телом статьи на странице, без
+    // меню и подписок), фото тела статьи — галерея; товарные виджеты в
+    // подборках лежат отдельными блоками и в галерею не попадают. Дизайн,
+    // реклама, иллюстрация, 3D, креативная техника.
+    name: "Creative Bloq",
+    rssUrl: "https://www.creativebloq.com/feeds.xml",
+    homepageUrl: "https://www.creativebloq.com",
+    gallery: "futureplc",
+    preferFeedContent: true,
   },
   {
     // Полный чистый текст в стандартном content:encoded — используется тот
