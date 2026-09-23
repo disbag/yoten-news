@@ -14,6 +14,13 @@ const MAX_RETRIES = 4;
 // — быстрее переключаемся на следующий ключ/модель (см. цикл ниже), где шанс
 // получить рабочий ответ выше, чем долбить уже недоступную.
 const MAX_RETRIES_5XX = 2;
+// AbortSignal.timeout — у fetch() в Node нет своего таймаута, и зависший
+// запрос держал весь прогон: реальный случай — запрос к Gemini висел 5 минут,
+// пока не упал с "fetch failed" (обычный ответ — секунды). Такой сбой, как и
+// обрыв сети, считаем недоступностью именно этой комбинации ключ+модель и
+// сразу переходим к следующей, без повторов: иначе худший случай — 3 × 60с
+// на одной комбинации.
+const REQUEST_TIMEOUT_MS = 60_000;
 
 // Специальный тип ошибки — весь перебор моделей и ключей (см. ниже) исчерпан
 // (либо квота, либо стабильный 5xx на каждой комбинации) — дальше пытаться
@@ -155,28 +162,40 @@ export async function summarize(
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKeys[keyIndex]}`;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      }).catch((err: Error) => err);
+      // Таймаут или сетевой сбой — ответа нет вовсе (см. REQUEST_TIMEOUT_MS).
+      const noResponse = res instanceof Error;
 
-      // 429 (квота) и стабильный 5xx (после MAX_RETRIES_5XX попыток именно
-      // этой комбинации) обрабатываются одинаково — эта комбинация ключ+модель
-      // сейчас нерабочая, переключаемся на следующую, а не бросаем всю статью
-      // как ошибку.
-      const quotaExceeded = res.status === 429;
-      const serviceDown = res.status >= 500 && attempt >= MAX_RETRIES_5XX;
+      // 429 (квота), стабильный 5xx (после MAX_RETRIES_5XX попыток именно
+      // этой комбинации) и отсутствие ответа обрабатываются одинаково — эта
+      // комбинация ключ+модель сейчас нерабочая, переключаемся на следующую, а
+      // не бросаем всю статью как ошибку.
+      const quotaExceeded = !noResponse && res.status === 429;
+      const serviceDown = noResponse || (res.status >= 500 && attempt >= MAX_RETRIES_5XX);
       if (quotaExceeded || serviceDown) {
         exhausted.push(
-          quotaExceeded ? describeQuotaError(model, await res.text()) : `модель "${model}" (${res.status})`
+          noResponse
+            ? `модель "${model}" (${res.name === "TimeoutError" ? "таймаут" : res.message})`
+            : quotaExceeded
+              ? describeQuotaError(model, await res.text())
+              : `модель "${model}" (${res.status})`
         );
         if (i === combos.length - 1) {
           throw new GeminiQuotaExhaustedError(
             quotaExceeded
               ? `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
-              : `Gemini: сервис недоступен (5xx) у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Похоже на временный сбой на стороне Google — попробуй позже.`
+              : `Gemini: сервис недоступен (5xx/таймаут) у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Похоже на временный сбой на стороне Google — попробуй позже.`
           );
         }
         const next = combos[i + 1];
-        const reason = quotaExceeded ? "исчерпана" : "недоступна (5xx)";
-        const reasonKey = quotaExceeded ? "исчерпан" : "недоступен (5xx)";
+        const why = noResponse ? (res.name === "TimeoutError" ? "таймаут" : "нет ответа") : "5xx";
+        const reason = quotaExceeded ? "исчерпана" : `недоступна (${why})`;
+        const reasonKey = quotaExceeded ? "исчерпан" : `недоступен (${why})`;
         console.log(
           next.model !== model
             ? `  Gemini: модель "${model}" ${reason} на всех ключах, переключаюсь на модель "${next.model}"`
@@ -184,6 +203,7 @@ export async function summarize(
         );
         break; // следующая комбинация в перебор
       }
+      if (noResponse) break; // недостижимо (обработано выше) — сужение типа для TypeScript
 
       if (res.status >= 500) {
         // ещё остались попытки для ЭТОЙ комбинации (attempt < MAX_RETRIES_5XX)
