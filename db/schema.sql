@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS articles (
   -- Более подробный пересказ своими словами (не перевод оригинала) для
   -- модального окна — раскрывает детали, которые короткая версия для ленты
   -- намеренно опускает. См. DETAILED_SUMMARY_PROMPT в src/lib/prompt.ts.
-  ai_summary_long TEXT,
   -- Темы новости для фильтра в шапке ленты — модель размечает их при
   -- саммаризации (см. CATEGORIES/CATEGORY_INSTRUCTIONS в src/lib/prompt.ts).
   -- Массив, а не одно значение: новость может относиться сразу к нескольким
@@ -136,8 +135,6 @@ ALTER TABLE articles ADD COLUMN IF NOT EXISTS image_urls TEXT[];
 -- в том же месте карточки, и не повторяет его (см. LEAD_AND_MORE_PROMPT в
 -- src/lib/prompt.ts). Генерируется одним запросом вместе с ai_summary. NULL —
 -- у статей без полного текста (тизеры) и у склеенных статей кластера.
--- ai_summary_long выше — прежний формат (подробный пересказ для модалки,
--- повторявший короткий): больше не заполняется и не показывается.
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS ai_summary_more TEXT;
 
 -- RLS без политик на всех таблицах: Supabase автоматически открывает схему
