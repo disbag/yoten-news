@@ -2,9 +2,8 @@ import "dotenv/config";
 import Parser from "rss-parser";
 import { pool, toVectorLiteral } from "../lib/db.js";
 import { embed } from "../lib/embeddings.js";
-import { summarizeWithFallback } from "../lib/summarizer.js";
-import { DETAILED_SUMMARY_PROMPT } from "../lib/prompt.js";
-import { fetchOgTags } from "../lib/ogTags.js";
+import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
+import { fetchOgTags, MAX_ARTICLE_CHARS } from "../lib/ogTags.js";
 import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
 import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
@@ -52,16 +51,6 @@ const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
 // забирали). FETCH_SINCE_DAYS=1 расширяет окно до "вчера и сегодня" — удобно
 // для разовой докатки после перерыва, без изменения дефолтного поведения.
 const FETCH_SINCE_DAYS = Number(process.env.FETCH_SINCE_DAYS ?? 0);
-// Ниже этой длины контекста (excerpt/og:description) подробную версию для
-// модалки вообще не запрашиваем — экономия квоты Gemini на источниках вроде
-// NYT/WSJ/Bloomberg, у которых страница платная/заблокирована для бота и
-// есть только короткий тизер (см. contentSelector-комментарии в
-// src/config/sources.ts). На таком тизере 5-8 предложений для подробной
-// версии всё равно почти всегда выходили с домысливанием (см. коммент ниже
-// про аудит NYT/Telegraph/FT/Bloomberg/WSJ) — сам текст короче итогового
-// саммари, разворачивать нечего. FeedCard на фронте по item.summaryLong===
-// null скрывает кнопку открытия модалки для таких статей — см. FeedCard.tsx.
-const MIN_DETAIL_CONTEXT_LENGTH = Number(process.env.MIN_DETAIL_CONTEXT_LENGTH ?? 300);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Свободный тариф Gemini ограничивает "-lite" модели 15 запросами в минуту
 // НА КЛЮЧ — 4 секунды между запросами держит нас точно на этой границе.
@@ -207,7 +196,7 @@ async function processSource(
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
     const feedFullHtml = item["dc:content"] ?? item["content:encoded"];
-    const feedContent = feedFullHtml ? stripHtml(feedFullHtml).slice(0, 4000) : undefined;
+    const feedContent = feedFullHtml ? stripHtml(feedFullHtml).slice(0, MAX_ARTICLE_CHARS) : undefined;
 
     // Best-effort: некоторые издания (NYT, Telegraph) блокируют такие запросы
     // (Cloudflare-челлендж / собственная anti-bot защита) — тогда просто
@@ -244,9 +233,8 @@ async function processSource(
     // по убыванию качества) ДО саммаризации — раньше порядок был обратным
     // (сначала саммаризация каждой статьи, потом кластеризация), из-за чего
     // на КАЖДУЮ статью кластера тратился отдельный вызов Gemini, хотя
-    // getFeed.ts показывает только одно summary на кластер (у самой первой
-    // статьи) и одно любое непустое summary_long — остальные вызовы были
-    // чистой тратой квоты. Эмбеддинг — единственное, что нужно знать, чтобы
+    // getFeed.ts показывает только одно саммари на кластер — остальные
+    // вызовы были чистой тратой квоты. Эмбеддинг — единственное, что нужно знать, чтобы
     // определить это ДО похода к Gemini, и он считается локально (см.
     // src/lib/embeddings.ts), без API и без затрат.
     //
@@ -261,7 +249,7 @@ async function processSource(
     const vectorLiteral = toVectorLiteral(embedding);
     const titleVectorLiteral = toVectorLiteral(await embed(item.title));
 
-    // Вставляем строку сразу, ДО саммаризации — ai_summary/ai_summary_long/
+    // Вставляем строку сразу, ДО саммаризации — ai_summary/ai_summary_more/
     // category (все NULLable, см. db/schema.sql) заполняются позже через
     // UPDATE, после того как ниже станет известно, новый это кластер или
     // статья приклеивается к существующему. Если саммаризация решит, что
@@ -329,72 +317,67 @@ async function processSource(
       }
     );
 
-    const detailContext = excerpt ?? fullDescription;
-
     if (clusterMatched) {
       // Статья приклеилась к уже существующему инфоповоду — getFeed.ts
-      // показывает только ОДНО summary на кластер, у самой первой статьи
-      // (которая уже существует и уже засаммаризирована к этому моменту, см.
-      // выше), так что короткое саммари для этой статьи никогда не попадёт в
-      // ленту — звать Gemini бессмысленно. category наследуем от кластера
-      // напрямую (без Gemini), а не оставляем NULL — иначе эта строка
-      // выпадала бы из ленты при фильтре по конкретной категории (см.
-      // categoryClause в getFeed.ts, фильтрует ДО группировки по cluster_id).
+      // показывает одно саммари на кластер (главное + продолжение берутся
+      // парой с одной статьи), а у кластера оно уже есть, так что обычно звать
+      // Gemini бессмысленно. category наследуем от кластера напрямую (без
+      // Gemini), а не оставляем NULL — иначе эта строка выпадала бы из ленты
+      // при фильтре по конкретной категории (см. categoryClause в getFeed.ts,
+      // фильтрует ДО группировки по cluster_id).
       const {
-        rows: [{ category: inheritedCategory, needsLong }],
+        rows: [{ category: inheritedCategory, needsMore }],
       } = await pool.query(
         `SELECT
            (SELECT category FROM articles WHERE cluster_id = $1 AND category IS NOT NULL ORDER BY created_at ASC LIMIT 1) AS category,
-           NOT EXISTS(SELECT 1 FROM articles WHERE cluster_id = $1 AND ai_summary_long IS NOT NULL) AS "needsLong"`,
+           NOT EXISTS(SELECT 1 FROM articles WHERE cluster_id = $1 AND ai_summary_more IS NOT NULL) AS "needsMore"`,
         [clusterId]
       );
 
-      // Подробную версию всё же может быть смысл сгенерировать — если ни у
-      // одной статьи кластера её ещё нет (summary_long в getFeed.ts берёт
-      // любую непустую), а у этой статьи контекста достаточно (тот же порог
-      // MIN_DETAIL_CONTEXT_LENGTH, что и для нового кластера ниже) — иначе
-      // кластер так и остался бы без подробной версии для модалки.
-      let aiSummaryLong: string | null = null;
-      if (needsLong && detailContext && detailContext.length >= MIN_DETAIL_CONTEXT_LENGTH) {
+      // Исключение: у кластера нет продолжения под кат (первым был тизер
+      // вроде NYT/Bloomberg), а у этой статьи есть полный текст — тогда
+      // саммари для неё всё же генерируем, и getFeed.ts покажет в карточке
+      // именно эту пару главное+продолжение.
+      let aiSummary: string | null = null;
+      let aiSummaryMore: string | null = null;
+      const detailContext = excerpt ?? fullDescription;
+      if (needsMore && detailContext && detailContext.length >= MIN_DETAIL_CONTEXT_LENGTH) {
         try {
-          ({ summary: aiSummaryLong } = await summarizeWithFallback(
-            item.title,
-            { excerpt, description: fullDescription, rawSummary },
-            DETAILED_SUMMARY_PROMPT
-          ));
-          if (aiSummaryLong === item.title) aiSummaryLong = null;
+          const result = await summarizeArticle(item.title, { excerpt, description: fullDescription, rawSummary });
+          if (result.more) ({ summary: aiSummary, more: aiSummaryMore } = result);
           await sleep(REQUEST_INTERVAL_MS);
         } catch (err) {
           if (err instanceof GeminiQuotaExhaustedError) {
             await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
             throw err;
           }
-          console.error(`  ошибка подробной саммаризации: ${(err as Error).message}`);
+          console.error(`  ошибка саммаризации: ${(err as Error).message}`);
         }
       }
 
-      await pool.query(`UPDATE articles SET category = $1, ai_summary_long = $2 WHERE id = $3`, [
-        inheritedCategory,
-        aiSummaryLong,
-        newId,
-      ]);
+      await pool.query(
+        `UPDATE articles SET category = $1, ai_summary = $2, ai_summary_more = $3 WHERE id = $4`,
+        [inheritedCategory, aiSummary, aiSummaryMore, newId]
+      );
 
       console.log(`  + "${item.title.slice(0, 60)}..." → склеена с кластером #${clusterId}`);
       remaining.count -= 1;
       continue;
     }
 
-    // Новый инфоповод (кластер = сама эта статья) — именно эта версия и будет
-    // показана в ленте, генерируем короткое саммари как обычно. Приоритет
-    // контекста: реальные абзацы статьи > og:description (часто просто тизер
-    // без фактов) > сниппет из RSS — с автоматическим откатом на более
-    // простой источник, если модель сигналит NO_CONTENT (см.
-    // summarizeWithFallback). excerpt нигде не хранится — только временный
+    // Новый инфоповод (кластер = сама эта статья) — именно это саммари и
+    // будет показано в ленте. Один запрос к Gemini: для полного текста сразу
+    // главное + продолжение под кат, для тизера — только короткое (см.
+    // summarizeArticle). Приоритет контекста: реальные абзацы статьи >
+    // og:description (часто просто тизер без фактов) > сниппет из RSS — с
+    // автоматическим откатом на более простой источник, если модель
+    // сигналит NO_CONTENT. excerpt нигде не хранится — только временный
     // контекст для генерации, не для показа пользователю.
     let aiSummary: string;
+    let aiSummaryMore: string | null;
     let category: string[] | null;
     try {
-      ({ summary: aiSummary, category } = await summarizeWithFallback(item.title, {
+      ({ summary: aiSummary, more: aiSummaryMore, category } = await summarizeArticle(item.title, {
         excerpt,
         description: fullDescription,
         rawSummary,
@@ -415,6 +398,9 @@ async function processSource(
       continue;
     }
 
+    // Пауза между вызовами под лимит Gemini — см. REQUEST_INTERVAL_MS.
+    await sleep(REQUEST_INTERVAL_MS);
+
     // Спортивные новости решили не показывать в ленте вообще — определить
     // это заранее по одному заголовку ненадёжно (в отличие от промокодов),
     // поэтому проверяем уже после того, как модель разметила тему в рамках
@@ -425,7 +411,7 @@ async function processSource(
       continue;
     }
 
-    // summarizeWithFallback возвращает title как есть только в одном случае —
+    // summarizeArticle возвращает title как есть только в одном случае —
     // когда ни один источник контекста (текст статьи, og:description, RSS-
     // сниппет) не дал ни одного факта (см. return title в src/lib/summarizer.ts).
     // На практике это не столько ошибка саммаризации, сколько признак, что
@@ -439,52 +425,9 @@ async function processSource(
       continue;
     }
 
-    // Пауза между вызовами под лимит Gemini — см. REQUEST_INTERVAL_MS.
-    await sleep(REQUEST_INTERVAL_MS);
-
-    // Подробная версия для модального окна — своими словами, но заметно
-    // подробнее короткой. Best-effort: если не получилось, лента всё равно
-    // работает на короткой версии. Требует реального текста статьи (excerpt
-    // или fullDescription) — на одном тизере из RSS (rawSummary) модель
-    // регулярно "дописывала" 5-8 предложений за счёт общих знаний вместо
-    // текста (выдуманные цифры, статусы вроде "бывший президент", несуществующие
-    // детали) — см. аудит статей NYT/Telegraph/FT/Bloomberg/WSJ. Без реального
-    // текста просто оставляем null, а модалка откатывается на короткое summary.
-    // Дополнительно — если даже excerpt/fullDescription короче
-    // MIN_DETAIL_CONTEXT_LENGTH, запрос не делаем вовсе (см. коммент у
-    // константы): это тот же случай "домысливания", просто чуть менее явный.
-    let aiSummaryLong: string | null = null;
-    if (detailContext && detailContext.length >= MIN_DETAIL_CONTEXT_LENGTH) {
-      try {
-        ({ summary: aiSummaryLong } = await summarizeWithFallback(
-          item.title,
-          { excerpt, description: fullDescription, rawSummary },
-          DETAILED_SUMMARY_PROMPT
-        ));
-        // summarizeWithFallback возвращает title как есть, если ВСЕ источники
-        // контекста дали NO_CONTENT (см. коммент у этого случая для aiSummary
-        // выше) — для подробной версии это происходит чаще, чем для короткой:
-        // тот же контекст, которого хватает на 2-3 честных предложения, может
-        // быть недостаточен для 5-8 без домысливания, и модель (следуя
-        // NO_FABRICATION_INSTRUCTIONS) вместо этого сдаётся. Без этой проверки
-        // необработанный английский заголовок сохранялся в базу как будто это
-        // и есть подробное саммари (реальный случай — сразу 5 из 10 статей
-        // Polygon). Просто оставляем null — модалка и так корректно
-        // откатывается на короткую версию.
-        if (aiSummaryLong === item.title) aiSummaryLong = null;
-        await sleep(REQUEST_INTERVAL_MS);
-      } catch (err) {
-        if (err instanceof GeminiQuotaExhaustedError) {
-          await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
-          throw err;
-        }
-        console.error(`  ошибка подробной саммаризации: ${(err as Error).message}`);
-      }
-    }
-
     await pool.query(
-      `UPDATE articles SET ai_summary = $1, ai_summary_long = $2, category = $3 WHERE id = $4`,
-      [aiSummary, aiSummaryLong, category, newId]
+      `UPDATE articles SET ai_summary = $1, ai_summary_more = $2, category = $3 WHERE id = $4`,
+      [aiSummary, aiSummaryMore, category, newId]
     );
 
     console.log(`  + "${item.title.slice(0, 60)}..." → новый кластер #${clusterId}`);

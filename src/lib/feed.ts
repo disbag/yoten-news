@@ -4,7 +4,7 @@ export type FeedSource = { name: string; homepage: string | null; link: string }
 
 // Одна карточка ленты = один инфоповод (cluster_id). Если его освещали
 // несколько изданий (или одно и то же издание несколько раз), sources.length
-// > 1 и все они перечислены в модалке — без отдельного "треда" из нескольких
+// > 1 и все они перечислены в раскрытой карточке — без отдельного "треда" из нескольких
 // похожих, но разных статей (убрали: слишком часто склеивал реально разные
 // новости в одну карточку, см. историю в README).
 export type FeedItem = {
@@ -15,8 +15,14 @@ export type FeedItem = {
   // каруселью в FeedCard.tsx. null/пусто у обычных статей с одной картинкой.
   imageUrls: string[] | null;
   summary: string;
+  // Продолжение под кат "Читать" — дописывается сразу после summary, не
+  // повторяя его. null — у тизеров без полного текста.
+  summaryMore: string | null;
+  // Прежний формат (до перехода на summaryMore): самостоятельный подробный
+  // пересказ, повторяющий summary, — поэтому "Читать" для него ЗАМЕНЯЕТ текст,
+  // а не дописывает. Есть только у статей, собранных до перехода, уходит
+  // вместе с ними по RETENTION_DAYS.
   summaryLong: string | null;
-  description: string | null;
   publishedAt: string | null;
   primarySource: string;
   primaryHomepage: string | null;
@@ -84,14 +90,15 @@ export async function getFeed(
     `
     SELECT
       a.cluster_id,
-      (array_agg(a.ai_summary ORDER BY a.created_at ASC))[1] AS summary,
-      -- Любое непустое подробное саммари в кластере, не обязательно у самой
-      -- ранней статьи — старые статьи могли быть собраны до появления этого
-      -- поля и не имеют его, тогда как более новая в том же кластере уже да.
+      -- Главное и продолжение — ПАРОЙ с одной статьи: продолжение написано
+      -- как дополнение именно к своему главному, с чужим оно бы повторялось.
+      -- Предпочитаем статью с продолжением (кластер мог начаться с тизера, а
+      -- полный текст пришёл позже, см. fetchAndProcess.ts), иначе — первую.
+      (array_agg(a.ai_summary ORDER BY a.ai_summary_more IS NULL, a.created_at ASC))[1] AS summary,
+      (array_agg(a.ai_summary_more ORDER BY a.ai_summary_more IS NULL, a.created_at ASC))[1] AS summary_more,
       (array_agg(a.ai_summary_long ORDER BY a.ai_summary_long NULLS LAST))[1] AS summary_long,
-      -- картинку/описание/дату/издание берём с первой статьи в кластере
+      -- картинку/дату/издание берём с первой статьи в кластере
       -- (не все источники отдают og-теги — см. src/lib/ogTags.ts)
-      (array_agg(a.full_description ORDER BY a.full_description NULLS LAST))[1] AS description,
       (array_agg(a.image_url ORDER BY a.image_url NULLS LAST))[1] AS image_url,
       -- Дата карточки = дата САМОЙ СВЕЖЕЙ статьи в кластере — то же значение,
       -- по которому идёт сортировка ленты (см. ORDER BY ниже). Раньше дата
@@ -151,8 +158,8 @@ export async function getFeed(
       imageUrl: row.image_url,
       imageUrls: row.image_urls,
       summary: row.summary,
+      summaryMore: row.summary_more,
       summaryLong: row.summary_long,
-      description: row.description,
       publishedAt: toIso(row.published_at),
       primarySource: row.primary_source,
       primaryHomepage: row.primary_homepage,

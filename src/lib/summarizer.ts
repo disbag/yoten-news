@@ -1,14 +1,27 @@
 import "dotenv/config";
 import { summarize as summarizeWithGemini } from "./gemini.js";
-import { isNoContentSignal, extractCategory, SUMMARY_PROMPT, type Category } from "./prompt.js";
+import {
+  isNoContentSignal,
+  extractCategory,
+  splitLeadAndMore,
+  SUMMARY_PROMPT,
+  LEAD_AND_MORE_PROMPT,
+  type Category,
+} from "./prompt.js";
 
 export type SummaryResult = { summary: string; category: Category[] | null };
 
+// Ниже этой длины исходного текста — только короткое саммари без ката "Читать":
+// у NYT/WSJ/Bloomberg и т.п. страница платная/заблокирована для бота и есть
+// лишь тизер короче итогового саммари — продолжение на нём всегда выходило бы
+// домысливанием. Экономит и квоту: такой запрос короче.
+export const MIN_DETAIL_CONTEXT_LENGTH = Number(process.env.MIN_DETAIL_CONTEXT_LENGTH ?? 300);
+
 // Единая точка, через которую проходит любой сырой ответ модели — поэтому
 // разбор темы (см. extractCategory) делается здесь один раз, а не в каждом
-// вызывающем коде. Для промптов без разметки темы (DETAILED_SUMMARY_PROMPT,
-// CATEGORY_ONLY_PROMPT) extractCategory просто вернёт text как есть с
-// category: null — вызывающий код сам решает, что делать с полем summary.
+// вызывающем коде. Для промптов без разметки темы (CATEGORY_ONLY_PROMPT)
+// extractCategory просто вернёт text как есть с category: null — вызывающий
+// код сам решает, что делать с полем summary.
 export async function summarize(
   title: string,
   rawSummary: string,
@@ -18,30 +31,33 @@ export async function summarize(
   return extractCategory(raw);
 }
 
-// Пробует несколько источников контекста по убыванию качества (обычно:
-// вытащенный текст статьи > og:description > сниппет из RSS). Если модель
-// сигналит NO_CONTENT (см. src/lib/prompt.ts — контекст оказался мусором,
-// например навигацией сайта или заглушкой без текста), пробует следующий,
-// более простой источник, вместо того чтобы сохранить отказ модели как
-// саммари. systemPrompt позволяет переиспользовать ту же логику отката для
-// подробной версии (DETAILED_SUMMARY_PROMPT) в модальном окне.
-export async function summarizeWithFallback(
+export type ArticleSummary = { summary: string; more: string | null; category: Category[] | null };
+
+// Саммари статьи для ленты — ОДНИМ запросом к модели: для полного текста
+// (>= MIN_DETAIL_CONTEXT_LENGTH) сразу главное + продолжение под кат, для
+// тизера — только короткое саммари. Пробует источники контекста по убыванию
+// качества (текст статьи > og:description > сниппет из RSS): если модель
+// сигналит NO_CONTENT (контекст оказался мусором — навигацией сайта или
+// заглушкой), берёт следующий. Формат выбирается по длине именно того
+// источника, на котором сработало: откат с полного текста на короткий
+// og:description не должен давать продолжение из ничего.
+// summary === title — тот же сигнал "у статьи нет текста", что и раньше.
+export async function summarizeArticle(
   title: string,
-  sources: { excerpt?: string; description?: string; rawSummary: string },
-  systemPrompt: string = SUMMARY_PROMPT
-): Promise<SummaryResult> {
+  sources: { excerpt?: string; description?: string; rawSummary: string }
+): Promise<ArticleSummary> {
   const candidates = [sources.excerpt, sources.description, sources.rawSummary].filter(
     (s): s is string => Boolean(s && s.trim())
   );
 
   for (const input of candidates) {
-    const result = await summarize(title, input, systemPrompt);
-    if (!isNoContentSignal(result.summary)) return result;
+    const withMore = input.length >= MIN_DETAIL_CONTEXT_LENGTH;
+    const result = await summarize(title, input, withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT);
+    if (isNoContentSignal(result.summary)) continue;
+    if (!withMore) return { summary: result.summary, more: null, category: result.category };
+    const { lead, more } = splitLeadAndMore(result.summary);
+    return { summary: lead, more, category: result.category };
   }
 
-  // Ни один источник контекста не дал реального текста (например, RSS-фид
-  // отдал только заголовок, а страница статьи — навигационный мусор или
-  // вовсе не текстовый контент вроде карикатуры). Возвращаем заголовок как
-  // есть — это лучше, чем сохранить сигнал NO_CONTENT как видимое саммари.
-  return { summary: title, category: null };
+  return { summary: title, more: null, category: null };
 }

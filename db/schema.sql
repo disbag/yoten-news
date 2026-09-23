@@ -132,6 +132,15 @@ CREATE SEQUENCE IF NOT EXISTS passkey_user_seq;
 -- через image_url, без карусели в FeedCard.tsx.
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS image_urls TEXT[];
 
+-- Продолжение саммари под кат "Читать" — показывается сразу ПОСЛЕ ai_summary,
+-- в том же месте карточки, и не повторяет его (см. LEAD_AND_MORE_PROMPT в
+-- src/lib/prompt.ts). Генерируется одним запросом вместе с ai_summary. NULL —
+-- у статей без полного текста (тизеры) и у склеенных статей кластера.
+-- ai_summary_long выше — прежний формат (самостоятельный подробный пересказ
+-- для модалки, повторяющий короткий): новые статьи его не заполняют, старые
+-- уходят по RETENTION_DAYS.
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS ai_summary_more TEXT;
+
 -- RLS без политик на всех таблицах: Supabase автоматически открывает схему
 -- public через REST API (PostgREST), и без RLS любой с anon-ключом проекта мог
 -- читать/удалять всё, включая users.email и passkeys. Само приложение ходит

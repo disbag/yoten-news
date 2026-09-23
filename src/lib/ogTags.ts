@@ -161,11 +161,18 @@ function findLargestArticleScope($: CheerioAPI): Cheerio<AnyNode> | undefined {
 // проверенных сайтов — а лимит при этом резал настоящие длинные абзацы (TIME
 // — 1245 символов, Polygon — 952), из-за чего для части статей терялся весь
 // реальный текст.
-function extractParagraphs(
-  $: CheerioAPI,
-  scope: Cheerio<AnyNode> | undefined,
-  maxParagraphs = 10
-): string | undefined {
+// Сколько текста статьи отдаём модели. Саммари строится по статье целиком
+// (главное + продолжение под кат "Читать"), поэтому берём её полностью, а не
+// начало: 12 000 символов покрывают почти любую новость, это ~3-4 тыс.
+// токенов — далеко от лимитов Gemini. На эмбеддинг не влияет: MiniLM всё
+// равно читает только первые ~256 токенов.
+export const MAX_ARTICLE_CHARS = 12_000;
+
+// Абзацев — с запасом, но только внутри найденного блока статьи: в запасном
+// режиме (абзацы по всей странице) дальше первых абзацев начинаются
+// комментарии и анонсы соседних материалов, и они утекали бы в подробности.
+function extractParagraphs($: CheerioAPI, scope: Cheerio<AnyNode> | undefined): string | undefined {
+  const maxParagraphs = scope ? 40 : 10;
   const paragraphs = (scope ? scope.find("p") : $("p"))
     .toArray()
     .map((el) => $(el).text().replace(/\s+/g, " ").trim())
@@ -177,7 +184,7 @@ function extractParagraphs(
     .slice(0, maxParagraphs);
 
   if (paragraphs.length === 0) return undefined;
-  return paragraphs.join(" ").slice(0, 4000);
+  return paragraphs.join(" ").slice(0, MAX_ARTICLE_CHARS);
 }
 
 // Ручной override на конкретное издание (см. contentSelector в
@@ -187,7 +194,7 @@ function extractParagraphs(
 function extractBySelector($: CheerioAPI, selector: string): string | undefined {
   try {
     const text = $(selector).first().text().replace(/\s+/g, " ").trim();
-    return text.length >= 80 ? text.slice(0, 4000) : undefined;
+    return text.length >= 80 ? text.slice(0, MAX_ARTICLE_CHARS) : undefined;
   } catch {
     return undefined;
   }
@@ -333,7 +340,7 @@ export async function fetchOgTags(
   // findLargestArticleScope).
   const excerpt =
     (contentSelector && extractBySelector($, contentSelector)) ??
-    extractArticleBodyFromJsonLd($)?.slice(0, 4000) ??
+    extractArticleBodyFromJsonLd($)?.slice(0, MAX_ARTICLE_CHARS) ??
     (articleScope && extractParagraphs($, articleScope)) ??
     extractParagraphs($, undefined);
   const image = extractMetaContent($, "og:image");

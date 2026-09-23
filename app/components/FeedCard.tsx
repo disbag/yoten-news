@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { FeedItem } from "../../src/lib/feed";
 import { categoryLabels } from "../../src/config/categories";
-import ArticleModal from "./ArticleModal";
 import Gallery from "./Gallery";
 
 function timeAgo(iso: string | null): string {
@@ -35,7 +34,7 @@ export default function FeedCard({
   item: FeedItem;
   onRead?: (clusterId: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
   // Некоторые издания (Telegraph — известный случай) отдают 402/битые байты
   // даже через прокси (см. коммент в app/api/image-proxy/route.ts) — вместо
@@ -44,12 +43,18 @@ export default function FeedCard({
   const cardRef = useRef<HTMLElement>(null);
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
-  // Подробную версию для модалки не генерируем на бэкенде для источников с
-  // коротким тизером (NYT/WSJ/Bloomberg и т.п. — см. MIN_DETAIL_CONTEXT_LENGTH
-  // в fetchAndProcess.ts): там разворачивать нечего, вся статья и так
-  // целиком уже видна в ленте. Модалка в таком случае просто не нужна —
-  // не показываем ни клик по тексту, ни "Читать", ни саму ArticleModal.
-  const hasDetail = Boolean(item.summaryLong);
+  // "Читать" раскрывает карточку на месте, без модалки, и только в одну
+  // сторону — свернуть обратно нельзя намеренно. Для новых статей дописывает
+  // продолжение (summaryMore, не повторяет summary), для статей старого
+  // формата — заменяет текст подробной версией (summaryLong повторяет summary
+  // целиком, дописывать её нельзя). У тизеров (NYT/WSJ/Bloomberg — см.
+  // MIN_DETAIL_CONTEXT_LENGTH в summarizer.ts) раскрывать нечего — "Читать" нет.
+  const hasMoreText = Boolean(item.summaryMore || item.summaryLong);
+  const text = expanded && !item.summaryMore && item.summaryLong ? item.summaryLong : item.summary;
+  // Раньше остальные издания кластера были видны только в модалке — теперь
+  // они в раскрытой карточке, а раскрыть её можно и бейджем "+N источника"
+  // (у поста без ката иначе до них было бы не добраться).
+  const otherSources = item.sources.filter((s) => s.link !== item.primaryLink);
 
   function markRead() {
     setIsRead(true);
@@ -122,8 +127,10 @@ export default function FeedCard({
               >
                 {item.primarySource}
               </a>
-              {item.sources.length > 1 && (
-                <span className="badge">+{item.sources.length - 1} источника</span>
+              {otherSources.length > 0 && (
+                <button type="button" className="badge" onClick={() => setExpanded(true)}>
+                  +{otherSources.length} источника
+                </button>
               )}
             </div>
             <span className="date">
@@ -133,11 +140,31 @@ export default function FeedCard({
           </div>
         </div>
         <p
-          className={`summary${isRead ? " read" : ""}${hasDetail ? "" : " no-detail"}`}
-          onClick={hasDetail ? () => setOpen(true) : undefined}
+          className={`summary${isRead ? " read" : ""}${hasMoreText && !expanded ? " expandable" : ""}`}
+          onClick={hasMoreText && !expanded ? () => setExpanded(true) : undefined}
         >
-          {item.summary} {hasDetail && <span className="read-more">Читать</span>}
+          {text}
+          {hasMoreText && !expanded && (
+            <>
+              {" "}
+              <span className="read-more">Читать</span>
+            </>
+          )}
         </p>
+        {expanded && item.summaryMore && <p className={`summary${isRead ? " read" : ""}`}>{item.summaryMore}</p>}
+        {expanded && otherSources.length > 0 && (
+          <p className="sources">
+            Также пишут:{" "}
+            {otherSources.map((s, i) => (
+              <Fragment key={s.link}>
+                {i > 0 && ", "}
+                <a href={s.link} target="_blank" rel="noopener noreferrer">
+                  {s.name}
+                </a>
+              </Fragment>
+            ))}
+          </p>
+        )}
       </div>
       {item.imageUrls && item.imageUrls.length > 1 ? (
         <Gallery urls={item.imageUrls} />
@@ -159,8 +186,6 @@ export default function FeedCard({
           />
         )
       )}
-
-      {hasDetail && <ArticleModal item={open ? item : null} onClose={() => setOpen(false)} />}
 
       <style jsx>{`
         .card {
@@ -225,8 +250,26 @@ export default function FeedCard({
           color: var(--accent);
         }
         .badge {
+          font-family: inherit;
           font-size: 0.72rem;
           font-style: italic;
+          color: var(--accent);
+          background: none;
+          border: none;
+          padding: 0;
+          cursor: pointer;
+        }
+        .sources {
+          margin: 0;
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 13px;
+          line-height: 18px;
+          color: var(--text-dim);
+        }
+        .sources a {
+          color: inherit;
+        }
+        .sources a:hover {
           color: var(--accent);
         }
         .date {
@@ -242,13 +285,12 @@ export default function FeedCard({
           font-size: 15px;
           line-height: 20px;
           color: var(--text);
+        }
+        .summary.expandable {
           cursor: pointer;
         }
         .summary.read {
           color: var(--text-dim);
-        }
-        .summary.no-detail {
-          cursor: default;
         }
         .read-more {
           color: #3186d1;

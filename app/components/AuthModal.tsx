@@ -15,10 +15,8 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
   const [email, setEmail] = useState("");
   const { loading, error, needsRegister, handleClick, handleEmailRegister } = useAuth();
 
-  // Тот же паттерн анимации выезда, что и в ArticleModal.tsx: mounted
-  // переживает закрытие на время transition, иначе sheet исчезнет мгновенно
-  // вместо того чтобы уехать вниз. open — просто boolean (а не nullable item,
-  // как в ArticleModal), потому что у модалки нет собственных данных.
+  // Анимация выезда: mounted переживает закрытие на время transition, иначе
+  // sheet исчезнет мгновенно вместо того чтобы уехать вниз.
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
 
@@ -67,8 +65,9 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
   return createPortal(
     <div
       onClick={onClose}
-      // Инлайн, не styled-jsx — тот же баг SWC, что описан в ArticleModal.tsx:
-      // scope-класс styled-jsx не попадает на корневой DOM-узел компонента.
+      // Инлайн, не styled-jsx: у styled-jsx (в SWC-варианте Next.js) scope-класс
+      // не попадает на корневой DOM-узел компонента — правило .overlay просто
+      // не совпадало бы с элементом, и position: fixed не применялся.
       style={{
         position: "fixed",
         inset: 0,
