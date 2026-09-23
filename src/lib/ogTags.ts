@@ -90,6 +90,20 @@ function extractMetaContent($: CheerioAPI, name: string): string | undefined {
 // останавливал каскад раньше, чем до этих <p> вообще доходило дело.
 const MIN_JSONLD_BODY_LENGTH = 200;
 
+// Блок "похожих материалов", вшитый прямо в articleBody (Motor1, InsideEVs —
+// "More From BMW:", "Related Articles", "More EV News" и т.п.): заголовки
+// чужих статей склеены в одну строку через длинные серии пробелов. Модель
+// принимала их за подробности текущей новости. В обычном тексте 8+ пробелов
+// подряд не бывает — проверено на JSON-LD всех изданий: строки убираются
+// только у Motor1/InsideEVs.
+const LINK_LIST_LINE = /\S\s{8,}\S/;
+function stripLinkListLines(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !LINK_LIST_LINE.test(line))
+    .join("\n");
+}
+
 function extractArticleBodyFromJsonLd($: CheerioAPI): string | undefined {
   const scripts = $('script[type="application/ld+json"]').toArray();
   for (const el of scripts) {
@@ -102,7 +116,7 @@ function extractArticleBodyFromJsonLd($: CheerioAPI): string | undefined {
           typeof node?.articleBody === "string" &&
           node.articleBody.trim().length >= MIN_JSONLD_BODY_LENGTH
         ) {
-          return node.articleBody;
+          return stripLinkListLines(node.articleBody);
         }
       }
     } catch {
@@ -224,7 +238,7 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // (/photos/{id}/16:9/w_1280,c_limit/… в og:image, /master/w_1600…/ в теле).
 // "time" (TIME): фото статьи — <figure> внутри <main>; ссылки на другие
 // материалы там без <figure>. В теле src с width=3840 — приводим к 1280.
-// "motor1" (InsideEVs — сеть Motor1): виджет .msnt-photo-thumb-gallery с
+// "motor1" (InsideEVs и сам Motor1 — одна сеть): виджет .msnt-photo-thumb-gallery с
 // превью фотогалереи, привязанной к статье (полная — на отдельной странице
 // /photos/{id}/…, там 20-40+ кадров; для карусели в ленте берём подборку из
 // виджета — главный кадр и 6 превью). Он есть примерно у трети статей;

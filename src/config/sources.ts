@@ -23,7 +23,7 @@ type SourceConfig = {
   // издатель Future plc, общий движок) — фото-вставки в теле статьи плюс
   // виджет-слайдер .inline-gallery, если он есть. "condenast" (Wired,
   // New Yorker, Pitchfork, GQ, CN Traveler) и "time" — фото-вставки <figure>
-  // в теле статьи. "motor1" (InsideEVs) — виджет превью фотогалереи статьи
+  // в теле статьи. "motor1" (InsideEVs, Motor1) — виджет превью фотогалереи статьи
   // "polygon" — фото в теле статьи; "gamespot" — фото из самого RSS (страница
   // закрыта от бота). См. GALLERY_SITES в src/lib/ogTags.ts. Другие сайты
   // вёрстают галереи иначе, включать им эти флаги нельзя без отдельной
@@ -198,6 +198,16 @@ export const SOURCES: SourceConfig[] = [
     name: "InsideEVs",
     rssUrl: "https://insideevs.com/rss/articles/all/",
     homepageUrl: "https://insideevs.com",
+    gallery: "motor1",
+  },
+  {
+    // Та же сеть, что InsideEVs: RSS отдаёт только короткий анонс, полный
+    // текст — в JSON-LD страницы (не блокирует бота; блок "More From …" с
+    // чужими заголовками вырезается, см. stripLinkListLines в ogTags.ts).
+    // Галерея — виджет превью фотогалереи статьи, есть у большинства новостей.
+    name: "Motor1",
+    rssUrl: "https://www.motor1.com/rss/articles/all/",
+    homepageUrl: "https://www.motor1.com",
     gallery: "motor1",
   },
   {
