@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "../../../../../src/lib/db";
 import { createSession } from "../../../../../src/lib/session";
-import { isValidEmail, normalizeEmail } from "../../../../../src/lib/emailCode";
+import { isValidEmail, normalizeEmail } from "../../../../../src/lib/email";
 
-// Упрощённая регистрация по email — без одноразового кода (в отличие от
-// /api/auth/email/request + /verify, которые уже готовы для будущего входа
-// по почте). Владение адресом здесь не проверяется, поэтому эндпоинт умеет
+// Упрощённая регистрация по email — без одноразового кода. Владение адресом
+// здесь не проверяется, поэтому эндпоинт умеет
 // ТОЛЬКО создавать новый аккаунт: на уже занятый email — 409, а не вход.
 // Раньше тут был ON CONFLICT DO UPDATE + createSession, и знания чужого email
 // хватало, чтобы войти в чужой аккаунт.

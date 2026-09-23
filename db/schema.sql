@@ -95,15 +95,16 @@ CREATE TABLE IF NOT EXISTS article_reads (
   PRIMARY KEY (user_id, cluster_id)
 );
 
--- Вход по одноразовому коду на email (без пароля). Аккаунт создаётся при
--- первом успешном подтверждении кода. email — нижним регистром (см.
--- normalizeEmail в src/lib/emailCode.ts), NULL у пользователей, которые
--- зарегистрировались только через passkey.
+-- email — нижним регистром (см. normalizeEmail в src/lib/email.ts), NULL у
+-- пользователей, которые зарегистрировались только через passkey.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE;
 
--- Не более одного активного кода на адрес (PRIMARY KEY по email): повторный
--- запрос перезаписывает предыдущий код. В базе только хэш кода, не сам код.
--- attempts ограничивает подбор шестизначного кода (см. verify-роут).
+-- Задел под вход по одноразовому коду на email. Сейчас не используется:
+-- эндпоинты /api/auth/email/request и /verify удалены, пока вход по почте
+-- не появится в интерфейсе (живой эндпоинт позволял любому заставить нас
+-- слать письма на произвольные адреса) — их код есть в истории git.
+-- Не более одного активного кода на адрес (PRIMARY KEY по email), в базе
+-- только хэш кода, attempts ограничивает подбор шестизначного кода.
 CREATE TABLE IF NOT EXISTS email_login_codes (
   email TEXT PRIMARY KEY,
   code_hash TEXT NOT NULL,
