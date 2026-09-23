@@ -331,6 +331,8 @@ async function processSource(
         titleThreshold: TITLE_DEDUPE_THRESHOLD,
         titleAssistThreshold: TITLE_ASSIST_THRESHOLD,
         titleAssistBodyThreshold: TITLE_ASSIST_BODY_THRESHOLD,
+        title: item.title,
+        sourceId: source.id,
       }
     );
 
