@@ -130,3 +130,16 @@ CREATE SEQUENCE IF NOT EXISTS passkey_user_seq;
 -- см. extractGallery в src/lib/ogTags.ts). NULL/пусто — обычная одна картинка
 -- через image_url, без карусели в FeedCard.tsx.
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS image_urls TEXT[];
+
+-- RLS без политик на всех таблицах: Supabase автоматически открывает схему
+-- public через REST API (PostgREST), и без RLS любой с anon-ключом проекта мог
+-- читать/удалять всё, включая users.email и passkeys. Само приложение ходит
+-- напрямую под ролью postgres (владелец таблиц, rolbypassrls) — на него RLS не
+-- действует, а anon/authenticated без единой политики не видят ни строки.
+-- Новую таблицу добавлять сюда же.
+ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE articles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE passkeys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE article_reads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_login_codes ENABLE ROW LEVEL SECURITY;
