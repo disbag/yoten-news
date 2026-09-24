@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { summarize as summarizeWithGemini } from "./gemini.js";
+import { summarize as summarizeWithGemini, GeminiQuotaExhaustedError } from "./gemini.js";
+import { summarize as summarizeWithGroq, GroqLimitError, hasGroqKey } from "./groq.js";
 import {
   isNoContentSignal,
   extractCategory,
@@ -30,8 +31,39 @@ export async function summarize(
   rawSummary: string,
   systemPrompt: string = SUMMARY_PROMPT
 ): Promise<SummaryResult> {
-  const raw = await summarizeWithGemini(title, rawSummary, systemPrompt);
+  const raw = await generate(title, rawSummary, systemPrompt);
   return extractCategory(raw);
+}
+
+// Groq — запасной вариант, когда Gemini не отвечает целиком (все модели и
+// ключи: перегрузка или квота, см. GeminiQuotaExhaustedError). После такого
+// сбоя следующие GEMINI_PAUSE_MS идём сразу в Groq — иначе каждая статья
+// сначала тратила бы минуту на перебор заведомо лежащих моделей, — а потом
+// снова пробуем Gemini: к тому времени он часто уже оживает. Новый прогон
+// (новый процесс) в любом случае начинает с Gemini. Исчерпан и суточный
+// лимит Groq — бросаем GeminiQuotaExhaustedError без unavailable, и
+// fetchAndProcess.ts останавливает прогон сразу: дальше генерировать нечем.
+const GEMINI_PAUSE_MS = 10 * 60_000;
+let geminiPausedUntil = 0;
+
+async function generate(title: string, rawSummary: string, systemPrompt: string): Promise<string> {
+  if (Date.now() >= geminiPausedUntil) {
+    try {
+      return await summarizeWithGemini(title, rawSummary, systemPrompt);
+    } catch (err) {
+      if (!(err instanceof GeminiQuotaExhaustedError) || !hasGroqKey()) throw err;
+      geminiPausedUntil = Date.now() + GEMINI_PAUSE_MS;
+      console.log(`  ${err.message.slice(0, 120)}… — переключаюсь на Groq на ${GEMINI_PAUSE_MS / 60_000} мин`);
+    }
+  }
+  try {
+    return await summarizeWithGroq(title, rawSummary, systemPrompt);
+  } catch (err) {
+    if (err instanceof GroqLimitError) {
+      throw new GeminiQuotaExhaustedError(`Gemini недоступен, а у запасного Groq ${err.message}. Останавливаю прогон.`);
+    }
+    throw err;
+  }
 }
 
 export type ArticleSummary = { summary: string; more: string | null; category: Category[] | null };
