@@ -43,6 +43,8 @@ export async function findAndAssignGroup(
     // Для запасного правила по общему имени в заголовках (см. matchByNamePair).
     title: string;
     sourceId: number;
+    // Для запасного правила по одной и той же обложке (см. matchBySameImage).
+    imageUrl: string | null;
   }
 ): Promise<{ groupId: number; matched: boolean }> {
   // Важно: id < $1, а не просто != $1. В реальном инкрементальном пайплайне
@@ -103,7 +105,9 @@ export async function findAndAssignGroup(
       options.titleAssistBodyThreshold,
     ]
   );
-  const fallback = match.rowCount ? null : await matchByNamePair(newId, vectorLiteral, options);
+  const fallback = match.rowCount
+    ? null
+    : (await matchByNamePair(newId, vectorLiteral, options)) ?? (await matchBySameImage(newId, vectorLiteral, options));
   const groupId = match.rowCount ? match.rows[0][column] ?? match.rows[0].id : fallback ?? newId;
   await pool.query(`UPDATE articles SET ${column} = $1 WHERE id = $2`, [groupId, newId]);
   return { groupId, matched: !!match.rowCount || fallback !== null };
@@ -208,4 +212,69 @@ async function matchByNamePair(
   if (!match.rowCount) return null;
   console.log(`  Склейка по общему имени в заголовке: кластер #${match.rows[0].id}`);
   return match.rows[0].id;
+}
+
+// Ещё одно запасное правило: у статьи другого издания та же обложка —
+// один и тот же пресс-кадр (реальный случай — рецензии Variety и THR на
+// "A Different World" с одним кадром Netflix ADW_102_260414_DD_00631_R*:
+// тела 0.61, заголовки 0.59, мимо всех правил выше). Издания кладут кадр под
+// своим именем с разными хвостами размера/версии, поэтому сравниваем имена
+// файлов по общему началу, а не целиком. За неделю из 18 таких пар 14 уже
+// были в одном кластере; из остальных ложными были только пары с
+// обезличенными именами вроде "resident-evil-1" при телах 0.29–0.41 — их
+// отсекают требование кода из 3+ цифр в имени и SAME_IMAGE_BODY.
+const SAME_IMAGE_BODY = 0.5;
+
+// Имя файла картинки без расширения и типовых хвостов размера — или null,
+// если имя слишком общее, чтобы по нему судить (нет кода из цифр).
+function imageKey(url: string): string | null {
+  let path: string;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return null;
+  }
+  let name: string;
+  try {
+    name = decodeURIComponent(path.split("/").pop() ?? "");
+  } catch {
+    return null;
+  }
+  name = name
+    .toLowerCase()
+    .replace(/\.(jpe?g|png|webp|gif|avif)$/, "")
+    .replace(/-\d{2,4}x\d{2,4}$/, "")
+    .replace(/-scaled$/, "");
+  return name.length >= 12 && /\d{3}/.test(name) ? name : null;
+}
+
+function sameImage(a: string, b: string): boolean {
+  let common = 0;
+  while (common < a.length && common < b.length && a[common] === b[common]) common++;
+  return common >= 12 && common >= 0.8 * Math.min(a.length, b.length);
+}
+
+async function matchBySameImage(
+  newId: number,
+  vectorLiteral: string,
+  options: { imageUrl: string | null; sourceId: number; windowHours: number }
+): Promise<number | null> {
+  const key = options.imageUrl ? imageKey(options.imageUrl) : null;
+  if (!key) return null;
+
+  const recent = await pool.query<{ cluster_id: number; image_url: string; body: number }>(
+    `SELECT cluster_id, image_url, 1 - (embedding <=> $2::vector) AS body
+     FROM articles
+     WHERE id <> $1 AND cluster_id IS NOT NULL AND image_url IS NOT NULL AND source_id <> $3
+       AND created_at > now() - interval '${options.windowHours} hours'
+     ORDER BY body DESC`,
+    [newId, vectorLiteral, options.sourceId]
+  );
+  const hit = recent.rows.find((r) => {
+    const other = imageKey(r.image_url);
+    return other !== null && sameImage(key, other) && r.body >= SAME_IMAGE_BODY;
+  });
+  if (!hit) return null;
+  console.log(`  Склейка по одинаковой обложке: кластер #${hit.cluster_id}`);
+  return hit.cluster_id;
 }

@@ -336,6 +336,7 @@ async function processSource(
         titleAssistBodyThreshold: TITLE_ASSIST_BODY_THRESHOLD,
         title: item.title,
         sourceId: source.id,
+        imageUrl: imageUrl ?? null,
       }
     );
 
