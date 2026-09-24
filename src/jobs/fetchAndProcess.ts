@@ -62,6 +62,23 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // жжём дневную квоту retry'ями быстрее, чем нужно.
 const REQUEST_INTERVAL_MS = 4000;
 
+// Перегрузка моделей у Google (503 на всех ключах и моделях при целых
+// лимитах, см. GeminiQuotaExhaustedError.unavailable) обычно точечная:
+// следующая статья через минуту часто проходит. Раньше весь прогон падал на
+// первой же такой статье — реальный случай, 4 прогона подряд с "лимиты
+// исчерпаны", хотя квота в AI Studio почти не тронута. Теперь пропускаем
+// статью (её подхватит следующий прогон) и останавливаемся, только если
+// перегружено несколько статей подряд — тогда это уже не точечный сбой.
+// Исчерпанная квота по-прежнему останавливает сразу.
+const MAX_OVERLOADED_IN_ROW = 3;
+let overloadedInRow = 0;
+
+function toleratesOverload(err: GeminiQuotaExhaustedError): boolean {
+  if (!err.unavailable) return false;
+  overloadedInRow += 1;
+  return overloadedInRow < MAX_OVERLOADED_IN_ROW;
+}
+
 // Wired (и потенциально другие издания) подмешивают в общий RSS свою
 // партнёрскую рубрику купонов/промокодов — это не редакционный контент, а
 // affiliate-листинги ("50% Off DoorDash Promo Code"), не новости. Отсекаем по
@@ -368,9 +385,11 @@ async function processSource(
         try {
           const result = await summarizeArticle(item.title, { excerpt, description: fullDescription, rawSummary });
           if (result.more) ({ summary: aiSummary, more: aiSummaryMore } = result);
+          overloadedInRow = 0;
           await sleep(REQUEST_INTERVAL_MS);
         } catch (err) {
-          if (err instanceof GeminiQuotaExhaustedError) {
+          // Перегрузка — статья и так уже в кластере, просто без продолжения.
+          if (err instanceof GeminiQuotaExhaustedError && !toleratesOverload(err)) {
             await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
             throw err;
           }
@@ -411,16 +430,20 @@ async function processSource(
       // же стену. Останавливаем весь пайплайн, а не долбим исчерпанный лимит
       // до конца списка источников. Строку удаляем — иначе при следующем
       // прогоне проверка exists по link нашла бы её и молча пропустила бы
-      // статью навсегда без summary.
+      // статью навсегда без summary. Исключение — перегрузка моделей при целых
+      // лимитах (см. toleratesOverload): тогда пропускаем только эту статью.
       if (err instanceof GeminiQuotaExhaustedError) {
         await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
-        throw err;
+        if (!toleratesOverload(err)) throw err;
+        console.error(`  Gemini перегружен, статья пропущена до следующего прогона`);
+        continue;
       }
       console.error(`  ошибка саммаризации: ${(err as Error).message}`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
       continue;
     }
 
+    overloadedInRow = 0;
     // Пауза между вызовами под лимит Gemini — см. REQUEST_INTERVAL_MS.
     await sleep(REQUEST_INTERVAL_MS);
 

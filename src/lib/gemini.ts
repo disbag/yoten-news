@@ -30,7 +30,20 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // пойти дальше, а здесь единственный осмысленный вариант — полностью
 // остановить пайплайн, а не долбить ту же стену на каждой следующей статье до
 // конца списка источников.
-export class GeminiQuotaExhaustedError extends Error {}
+//
+// unavailable — перебор закончился на 5xx/таймаутах, а не на квоте: это
+// перегрузка моделей у Google, лимиты при этом целы (реальный случай — 503
+// UNAVAILABLE у всех "-lite" моделей на всех ключах, хотя в AI Studio квота
+// почти не тронута). Такой сбой обычно временный и точечный, поэтому
+// fetchAndProcess.ts на нём не останавливается сразу (см. там).
+export class GeminiQuotaExhaustedError extends Error {
+  constructor(
+    message: string,
+    readonly unavailable = false
+  ) {
+    super(message);
+  }
+}
 
 // Список ключей через запятую (GEMINI_API_KEYS) — у бесплатного тарифа квота
 // per-project-per-model, так что каждый ключ от отдельного проекта Google AI
@@ -189,7 +202,8 @@ export async function summarize(
           throw new GeminiQuotaExhaustedError(
             quotaExceeded
               ? `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
-              : `Gemini: сервис недоступен (5xx/таймаут) у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Похоже на временный сбой на стороне Google — попробуй позже.`
+              : `Gemini: модели перегружены (5xx/таймаут, лимиты не исчерпаны) у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Временный сбой на стороне Google.`,
+            !quotaExceeded
           );
         }
         const next = combos[i + 1];
