@@ -161,3 +161,16 @@ ALTER TABLE passkeys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE article_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_login_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE skipped_links ENABLE ROW LEVEL SECURITY;
+
+-- Второй слой к RLS: у публичных ролей Data API нет вообще никаких прав на
+-- наши таблицы — даже если на какой-то таблице RLS случайно выключат, anon-
+-- ключ получит permission denied, а не данные. Приложение Data API не
+-- использует (прямое подключение под postgres, см. src/lib/db.ts), так что
+-- ничего не ломается. DEFAULT PRIVILEGES — то же для таблиц, созданных
+-- позже: по умолчанию Supabase выдавал anon/authenticated всё на новые.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
