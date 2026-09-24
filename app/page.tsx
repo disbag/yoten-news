@@ -16,13 +16,12 @@ export default async function HomePage(props: {
   const activeCategory = CATEGORIES.find((c) => c.id === searchParams.category);
   const userId = await getSessionUserId();
   const isLoggedIn = userId !== null;
-  // Табы и read-tracking включены и для гостя тоже: /api/reads на бэкенде
-  // для userId=null тихо no-op'ается (см. app/api/reads/route.ts), а
-  // unreadOnly/readOnly с userId=null математически эквивалентны "без
-  // фильтра"/"всегда пусто" — гость может листать "Новые" как весь фид и
-  // видеть локальную (непостоянную) отметку прочитанного при скролле, не
-  // создавая аккаунт. Это и позволяет проверять поведение ленты без входа.
-  const tab: "new" | "read" = searchParams.tab === "read" ? "read" : "new";
+  // Табы "Новые/Прочитанные" и отметка прочитанного — только для вошедших:
+  // гостю прочитанное всё равно негде хранить (/api/reads для userId=null —
+  // no-op), и раньше оно лишь локально гасло при скролле и возвращалось после
+  // перезагрузки. Гость видит просто всю ленту; ?tab=read ему не показываем
+  // (для userId=null это всегда пустой список).
+  const tab: "new" | "read" = isLoggedIn && searchParams.tab === "read" ? "read" : "new";
   // На единицу больше лимита — чтобы понять, есть ли ещё карточки для
   // автоподгрузки по скроллу (см. FeedList.tsx), без отдельного count-запроса.
   const [rows, unreadCount] = await Promise.all([
@@ -33,7 +32,7 @@ export default async function HomePage(props: {
       unreadOnly: tab === "new",
       readOnly: tab === "read",
     }),
-    getUnreadCount(userId),
+    isLoggedIn ? getUnreadCount(userId) : 0,
   ]);
   const hasMore = rows.length > PAGE_SIZE;
   const feed = rows.slice(0, PAGE_SIZE);
@@ -56,6 +55,7 @@ export default async function HomePage(props: {
         <FeedShell
           key={`${activeCategory?.id ?? "all"}:${tab}`}
           tab={tab}
+          trackReads={isLoggedIn}
           category={activeCategory?.id}
           initialUnreadCount={unreadCount}
           initialItems={feed}

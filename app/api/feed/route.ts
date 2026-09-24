@@ -21,8 +21,9 @@ export async function GET(request: NextRequest) {
       : undefined;
   // tab=read -> вкладка "Прочитанные", иначе (в т.ч. по умолчанию) -> "Новые"
   // (непрочитанные) — см. FeedTabs.tsx, заменили режим "показать всё".
-  const readOnly = searchParams.get("tab") === "read";
   const userId = await getSessionUserId();
+  // У гостя вкладки "Прочитанные" нет (см. app/page.tsx) — всегда вся лента.
+  const readOnly = userId !== null && searchParams.get("tab") === "read";
 
   const rows = await getFeed({
     category,

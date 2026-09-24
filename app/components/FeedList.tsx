@@ -11,12 +11,14 @@ export default function FeedList({
   initialHasMore,
   category,
   tab,
+  trackReads,
   onNewlyRead,
 }: {
   initialItems: FeedItem[];
   initialHasMore: boolean;
   category?: string;
   tab: "new" | "read";
+  trackReads: boolean;
   // Дёргается на каждую статью, ставшую прочитанной прямо сейчас (не на
   // те, что уже пришли прочитанными с сервера) — см. счётчик в FeedShell.
   onNewlyRead?: () => void;
@@ -177,7 +179,7 @@ export default function FeedList({
     <>
       <div className="card-list">
         {items.map((item) => (
-          <FeedCard key={item.clusterId} item={item} onRead={handleRead} />
+          <FeedCard key={item.clusterId} item={item} onRead={trackReads ? handleRead : undefined} />
         ))}
       </div>
 

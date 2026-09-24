@@ -32,8 +32,11 @@ export default function FeedCard({
   onRead,
 }: {
   item: FeedItem;
+  // Нет onRead — у гостя: прочитанное не отслеживается и не показывается
+  // (ни точки "новое", ни приглушённого текста, см. app/page.tsx).
   onRead?: (clusterId: number) => void;
 }) {
+  const trackReads = Boolean(onRead);
   const [expanded, setExpanded] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
   // Некоторые издания (Telegraph — известный случай) отдают 402/битые байты
@@ -56,10 +59,8 @@ export default function FeedCard({
   function markRead() {
     setIsRead(true);
     onRead?.(item.clusterId);
-    // Fire-and-forget: у гостя (без аккаунта) это тихо no-op'ается на
-    // бэкенде ({ok:false}, см. app/api/reads/route.ts) — карточка всё
-    // равно уже выглядит прочитанной локально, просто не переживёт
-    // перезагрузку страницы без аккаунта.
+    // Fire-and-forget: ошибка сети не должна мешать ленте — в худшем случае
+    // статья снова придёт непрочитанной при следующей загрузке.
     fetch("/api/reads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -74,7 +75,7 @@ export default function FeedCard({
   // boundingClientRect: top < 0 при !isIntersecting означает "ушла наверх"
   // (пользователь проскроллил мимо), а не "ещё не долистали" (там top > 0).
   useEffect(() => {
-    if (isRead) return;
+    if (isRead || !trackReads) return;
     const el = cardRef.current;
     if (!el) return;
 
@@ -114,7 +115,7 @@ export default function FeedCard({
           )}
           <div className="meta">
             <div className="source-row">
-              {!isRead && <span className="unread-dot" />}
+              {trackReads && !isRead && <span className="unread-dot" />}
               <a
                 href={item.primaryLink}
                 target="_blank"

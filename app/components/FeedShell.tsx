@@ -13,12 +13,15 @@ import FeedList from "./FeedList";
 // через которое можно было бы прокинуть живое обновление счётчика.
 export default function FeedShell({
   tab,
+  trackReads,
   category,
   initialUnreadCount,
   initialItems,
   initialHasMore,
 }: {
   tab: "new" | "read";
+  // false у гостя — без табов и отметки прочитанного (см. app/page.tsx).
+  trackReads: boolean;
   category?: string;
   initialUnreadCount: number;
   initialItems: FeedItem[];
@@ -36,7 +39,7 @@ export default function FeedShell({
 
   return (
     <>
-      <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />
+      {trackReads && <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />}
 
       {/* Пересоздание при смене категории/таба обеспечивает key на самом
           FeedShell (см. app/page.tsx) — он размонтирует и этот FeedList
@@ -46,6 +49,7 @@ export default function FeedShell({
         initialHasMore={initialHasMore}
         category={category}
         tab={tab}
+        trackReads={trackReads}
         onNewlyRead={handleNewlyRead}
       />
     </>
