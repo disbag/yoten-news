@@ -104,7 +104,7 @@ export default function FeedCard({
   }, [item.publishedAt]);
 
   return (
-    <article className="card" ref={cardRef}>
+    <article className="card" ref={cardRef} data-cluster-id={item.clusterId}>
       <div className="content">
         <div className="header">
           {favicon ? (

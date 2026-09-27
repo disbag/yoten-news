@@ -32,11 +32,15 @@ export default function FeedList({
   // событие, так что реально срабатывает только через IDLE_MS после того, как
   // пользователь перестал прокручивать.
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Снимок высоты/скролла ПЕРЕД пакетным удалением карточек — см.
-  // компенсацию в useLayoutEffect ниже. null значит "последнее изменение
-  // items было не удалением" (например, догрузка по скроллу), тогда
-  // компенсировать нечего.
-  const removalSnapshot = useRef<{ height: number; scrollY: number } | null>(null);
+  // Опорная карточка ПЕРЕД пакетным удалением — первая видимая из тех, что
+  // остаются, и её положение на экране. См. компенсацию в useLayoutEffect
+  // ниже. null значит "последнее изменение items было не удалением"
+  // (например, догрузка по скроллу), тогда компенсировать нечего.
+  const removalSnapshot = useRef<{ anchorId: string; viewTop: number } | null>(null);
+  // Палец на экране. Пока он есть, удалять нельзя: iOS Safari игнорирует
+  // программный window.scrollTo во время касания, компенсация не срабатывала,
+  // и лента съезжала вверх на высоту удалённых карточек (см. flushRemovals).
+  const touching = useRef(false);
   // Не React-state — сентинел-observer ниже создаётся один раз на
   // [hasMore] и замыкает loadMore той же итерации навсегда, поэтому
   // проверка на обычном useState(loading) внутри loadMore видела бы
@@ -73,6 +77,8 @@ export default function FeedList({
       setHasMore(data.hasMore);
     } finally {
       loadingRef.current = false;
+      // Удаление, отложенное на время загрузки (см. flushRemovals).
+      if (pendingRemovals.current.size > 0) scheduleFlush();
     }
   }
 
@@ -123,26 +129,48 @@ export default function FeedList({
   // последнего скролл-события, компенсация никогда не попадает в момент
   // активного жеста — только в паузу между ними, где её в любом случае
   // никто не почувствует.
+  //
+  // Ещё два случая, когда удалять нельзя, — оба у точки догрузки ленты, где
+  // пользователь обычно держит палец внизу, ожидая новых карточек:
+  //  - палец на экране (touching): scroll-событий нет, таймер считал это
+  //    паузой, а iOS Safari игнорирует window.scrollTo во время касания и
+  //    не умеет scroll anchoring — лента съезжала вверх на высоту удалённого,
+  //    видимые карточки улетали за верх экрана, отмечались прочитанными, и
+  //    через 200мс всё повторялось ("всё улетает");
+  //  - идёт догрузка (loadingRef): её карточки могли попасть в тот же
+  //    рендер, что и удаление.
+  // Компенсация — по положению опорной карточки, а не по изменению высоты
+  // документа: высота меняется и от догруженных снизу карточек.
   function flushRemovals() {
     flushTimer.current = null;
     if (pendingRemovals.current.size === 0) return;
+    if (touching.current || loadingRef.current) return scheduleFlush();
     const toRemove = pendingRemovals.current;
     pendingRemovals.current = new Set();
-    removalSnapshot.current = {
-      height: document.documentElement.scrollHeight,
-      scrollY: window.scrollY,
-    };
+    removalSnapshot.current = null;
+    for (const el of document.querySelectorAll<HTMLElement>("[data-cluster-id]")) {
+      const id = el.dataset.clusterId!;
+      if (toRemove.has(Number(id))) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom <= 0) continue;
+      removalSnapshot.current = { anchorId: id, viewTop: rect.top };
+      break;
+    }
     setItems((prev) => prev.filter((item) => !toRemove.has(item.clusterId)));
   }
 
   const IDLE_MS = 200;
 
+  function scheduleFlush() {
+    if (flushTimer.current) clearTimeout(flushTimer.current);
+    flushTimer.current = setTimeout(flushRemovals, IDLE_MS);
+  }
+
   function handleRead(clusterId: number) {
     onNewlyRead?.();
     if (tab !== "new") return;
     pendingRemovals.current.add(clusterId);
-    if (flushTimer.current) clearTimeout(flushTimer.current);
-    flushTimer.current = setTimeout(flushRemovals, IDLE_MS);
+    scheduleFlush();
   }
 
   // Подстраховка на случай, если между двумя срабатываниями handleRead
@@ -153,26 +181,44 @@ export default function FeedList({
   // происходит только после реальной остановки.
   useEffect(() => {
     function onScroll() {
-      if (pendingRemovals.current.size === 0) return;
-      if (flushTimer.current) clearTimeout(flushTimer.current);
-      flushTimer.current = setTimeout(flushRemovals, IDLE_MS);
+      if (pendingRemovals.current.size > 0) scheduleFlush();
+    }
+    function onTouchStart() {
+      touching.current = true;
+    }
+    // После отпускания пальца ещё идёт инерция — её scroll-события сами
+    // отодвинут flush дальше (см. onScroll).
+    function onTouchEnd() {
+      touching.current = false;
+      if (pendingRemovals.current.size > 0) scheduleFlush();
     }
     window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
     return () => {
       window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
       if (flushTimer.current) clearTimeout(flushTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- flushRemovals читает актуальные pendingRemovals/items через замыкание/рефы, пересоздавать листенер не нужно
   }, []);
 
+  // Удалённые карточки стояли выше опорной — без компенсации она уехала бы
+  // вверх ровно на их высоту. Возвращаем её на прежнее место на экране.
+  // Именно "на прежнее место", а не "на высоту удалённого": Chrome успевает
+  // сам сдвинуть скролл (scroll anchoring), и вычитание высоты ещё раз
+  // сдвинуло бы дважды; если браузер уже всё сделал, здесь выйдет ноль.
   useLayoutEffect(() => {
     const snapshot = removalSnapshot.current;
     if (!snapshot) return;
     removalSnapshot.current = null;
-    const shrink = snapshot.height - document.documentElement.scrollHeight;
-    if (shrink > 0) {
-      window.scrollTo(0, Math.max(0, snapshot.scrollY - shrink));
-    }
+    const anchor = document.querySelector<HTMLElement>(`[data-cluster-id="${snapshot.anchorId}"]`);
+    if (!anchor) return;
+    const drift = anchor.getBoundingClientRect().top - snapshot.viewTop;
+    if (Math.abs(drift) >= 1) window.scrollTo(0, Math.max(0, window.scrollY + drift));
   }, [items]);
 
   return (
