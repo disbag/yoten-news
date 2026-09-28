@@ -45,6 +45,15 @@ export async function summarize(
 // fetchAndProcess.ts останавливает прогон сразу: дальше генерировать нечем.
 const GEMINI_PAUSE_MS = 10 * 60_000;
 let geminiPausedUntil = 0;
+// Почему ушли в Groq — для понятного сообщения при остановке.
+let geminiDownReason = "";
+
+// Без подробностей по каждой комбинации ключ+модель — они уже в логе выше.
+function describeGeminiDown(err: GeminiQuotaExhaustedError): string {
+  return err.unavailable
+    ? "серверы Google перегружены (503/таймауты на всех моделях и ключах), ваши лимиты целы"
+    : "лимиты исчерпаны на всех ключах и моделях";
+}
 
 async function generate(title: string, rawSummary: string, systemPrompt: string): Promise<string> {
   if (Date.now() >= geminiPausedUntil) {
@@ -53,14 +62,17 @@ async function generate(title: string, rawSummary: string, systemPrompt: string)
     } catch (err) {
       if (!(err instanceof GeminiQuotaExhaustedError) || !hasGroqKey()) throw err;
       geminiPausedUntil = Date.now() + GEMINI_PAUSE_MS;
-      console.log(`  ${err.message.slice(0, 120)}… — переключаюсь на Groq на ${GEMINI_PAUSE_MS / 60_000} мин`);
+      geminiDownReason = describeGeminiDown(err);
+      console.log(`  Gemini: ${geminiDownReason} — переключаюсь на Groq на ${GEMINI_PAUSE_MS / 60_000} мин`);
     }
   }
   try {
     return await summarizeWithGroq(title, rawSummary, systemPrompt);
   } catch (err) {
     if (err instanceof GroqLimitError) {
-      throw new GeminiQuotaExhaustedError(`Gemini недоступен, а у запасного Groq ${err.message}. Останавливаю прогон.`);
+      throw new GeminiQuotaExhaustedError(
+        `Останавливаю прогон. Gemini: ${geminiDownReason}. Запасной Groq: ${err.message}. Следующий прогон снова начнёт с Gemini.`
+      );
     }
     throw err;
   }

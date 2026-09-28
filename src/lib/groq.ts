@@ -16,8 +16,36 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_MINUTE_WAITS = 3;
 const MAX_WAIT_MS = 65_000;
 const MAX_RETRIES_5XX = 2;
+// Текст статьи для Groq режем вдвое против Gemini (MAX_ARTICLE_CHARS = 12000
+// в ogTags.ts): у бесплатного Groq суточный лимит — 200 тыс. токенов, и
+// полная статья с промптом (~4 тыс. токенов) исчерпывала его примерно за 50
+// статей (реальный случай — прогон остановился посреди дня затяжной
+// перегрузки Gemini). С 6000 символов — ~2.5 тыс. токенов, то есть около
+// 80 статей в сутки. Главное и продолжение под кат почти всегда
+// собираются из первой половины статьи. Gemini получает текст целиком.
+const MAX_INPUT_CHARS = 6000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Обрезка по границе предложения (или хотя бы слова), чтобы модель не
+// получала оборванную на полуслове фразу.
+function truncate(text: string): string {
+  if (text.length <= MAX_INPUT_CHARS) return text;
+  const cut = text.slice(0, MAX_INPUT_CHARS);
+  const sentenceEnd = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  if (sentenceEnd > MAX_INPUT_CHARS * 0.8) return cut.slice(0, sentenceEnd + 1);
+  const space = cut.lastIndexOf(" ");
+  return space > 0 ? cut.slice(0, space) : cut;
+}
+
+// "Limit 200000" + тип лимита из текста 429 — для понятного сообщения.
+function describeDailyLimit(message: string): string {
+  const limit = message.match(/Limit (\d+)/)?.[1];
+  const amount = limit ? Number(limit).toLocaleString("ru-RU") + " " : "";
+  if (/\(TPD\)|tokens per day/i.test(message)) return `суточный лимит ${amount}токенов израсходован`;
+  if (/\(RPD\)|requests per day/i.test(message)) return `суточный лимит ${amount}запросов израсходован`;
+  return `суточный лимит израсходован (${message.slice(0, 120)})`;
+}
 
 export class GroqLimitError extends Error {}
 
@@ -44,7 +72,7 @@ export async function summarize(
     model: GROQ_MODEL,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: `Заголовок: ${title}\n\nТекст: ${rawSummary}` },
+      { role: "user", content: `Заголовок: ${title}\n\nТекст: ${truncate(rawSummary)}` },
     ],
     temperature: 0.3,
     // Тот же запас, что у Gemini (см. maxOutputTokens в gemini.ts).
@@ -65,7 +93,7 @@ export async function summarize(
       const message: string = (await res.json().catch(() => ({})))?.error?.message ?? "";
       const wait = waitMs(res, message);
       if (/per day|\((?:RPD|TPD)\)/i.test(message) || wait > MAX_WAIT_MS) {
-        throw new GroqLimitError(`исчерпан суточный лимит (${message.slice(0, 160)})`);
+        throw new GroqLimitError(describeDailyLimit(message));
       }
       if (minuteWaits >= MAX_MINUTE_WAITS) throw new Error(`Groq: минутный лимит не освободился (${message.slice(0, 160)})`);
       minuteWaits += 1;
