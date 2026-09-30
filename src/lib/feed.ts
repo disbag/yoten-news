@@ -75,7 +75,12 @@ export async function getFeed(
   // берём с любой статьи кластера: у приклеенных статей своего саммари нет
   // (см. fetchAndProcess.ts), и выключенное издание не должно оставлять
   // карточку без текста.
-  const havingClauses: string[] = ["bool_or(h.user_id IS NULL)"];
+  //
+  // Кластер без единого саммари не показываем: карточка вышла бы без текста.
+  // Так бывает, пока фетч обрабатывает статью (строка вставляется в базу до
+  // саммаризации, см. fetchAndProcess.ts), и если прогон оборвался посередине
+  // (реальный случай — пустая карточка Polygon от 24 сентября).
+  const havingClauses: string[] = ["bool_or(h.user_id IS NULL)", "bool_or(a.ai_summary IS NOT NULL)"];
   if (before) {
     havingClauses.push(
       `(max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})`
@@ -176,7 +181,8 @@ export async function getFeed(
 // Счётчик для бейджа рядом с табом "Новые" (см. FeedTabs.tsx) — общий по
 // всей ленте, без учёта текущего фильтра по категории (в макете бейдж один
 // на всю ленту, а не пересчитывается под конкретную категорию). Кластеры
-// только из выключенных изданий не считаются — их в ленте нет (см. getFeed).
+// только из выключенных изданий и кластеры без саммари не считаются — их в
+// ленте нет (см. getFeed).
 export async function getUnreadCount(userId: number | null): Promise<number> {
   const { rows } = await pool.query(
     `
@@ -186,7 +192,7 @@ export async function getUnreadCount(userId: number | null): Promise<number> {
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
       GROUP BY a.cluster_id
-      HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL)
+      HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
     ) unread
     `,
     [userId]
