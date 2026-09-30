@@ -107,10 +107,66 @@ export async function findAndAssignGroup(
   );
   const fallback = match.rowCount
     ? null
-    : (await matchByNamePair(newId, vectorLiteral, options)) ?? (await matchBySameImage(newId, vectorLiteral, options));
+    : (await matchByMember(newId, vectorLiteral, options)) ??
+      (await matchByNamePair(newId, vectorLiteral, options)) ??
+      (await matchBySameImage(newId, vectorLiteral, options));
   const groupId = match.rowCount ? match.rows[0][column] ?? match.rows[0].id : fallback ?? newId;
   await pool.query(`UPDATE articles SET ${column} = $1 WHERE id = $2`, [groupId, newId]);
   return { groupId, matched: !!match.rowCount || fallback !== null };
+}
+
+// Запасное правило: новая статья почти дословно совпадает по заголовку не с
+// якорем, а с другим участником кластера. Основной запрос выше сравнивает
+// только с якорями (защита от цепочек, см. коммент там), и из-за этого мимо
+// проходили очевидные дубли: MotorTrend "2027 BMW 3 Series First Look" с
+// якорем Motor1 — тела 0.64, заголовки 0.61, а с Car and Driver "2027 BMW
+// 3-Series Revealed!" из того же кластера — 0.69 и 0.77. Цепочки держит
+// двойное условие: с участником — строгое правило по заголовкам (то же, что
+// выше), и с якорем тело всё равно должно быть заметно похоже
+// (MEMBER_ANCHOR_BODY). Подобрано на неделе данных: с порогом 0.60 все 22
+// склейки — настоящие дубли; ниже начинаются ошибки (переговоры США и Ирана
+// с якорем 0.39 — разные новости).
+const MEMBER_ANCHOR_BODY = 0.6;
+
+async function matchByMember(
+  newId: number,
+  vectorLiteral: string,
+  options: {
+    windowHours: number;
+    titleVector: string;
+    titleThreshold: number;
+    titleAssistThreshold: number;
+    titleAssistBodyThreshold: number;
+  }
+): Promise<number | null> {
+  const match = await pool.query<{ cluster_id: number }>(
+    `SELECT m.cluster_id
+     FROM articles m
+     JOIN articles anchor ON anchor.id = m.cluster_id
+     WHERE m.id < $1
+       AND m.cluster_id <> m.id
+       AND m.title_embedding IS NOT NULL
+       AND m.created_at > now() - interval '${options.windowHours} hours'
+       AND 1 - (anchor.embedding <=> $2::vector) >= $7
+       AND (
+         1 - (m.title_embedding <=> $3::vector) >= $4
+         OR (1 - (m.title_embedding <=> $3::vector) >= $5 AND 1 - (m.embedding <=> $2::vector) >= $6)
+       )
+     ORDER BY 1 - (m.title_embedding <=> $3::vector) DESC
+     LIMIT 1`,
+    [
+      newId,
+      vectorLiteral,
+      options.titleVector,
+      options.titleThreshold,
+      options.titleAssistThreshold,
+      options.titleAssistBodyThreshold,
+      MEMBER_ANCHOR_BODY,
+    ]
+  );
+  if (!match.rowCount) return null;
+  console.log(`  Склейка через участника кластера: кластер #${match.rows[0].cluster_id}`);
+  return match.rows[0].cluster_id;
 }
 
 // Запасное правило: в заголовках двух разных изданий одно и то же редкое
