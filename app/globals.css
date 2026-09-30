@@ -19,6 +19,21 @@
   --danger: #c0392b;
   --accent: #c94f3d;
   --accent-soft: rgba(201, 79, 61, 0.1);
+  /* Масштаб текста новостей в карточках (DIS-19) — "Настройки →
+     Отображение → Размер текста", см. data-font-size ниже. */
+  --font-scale: 1;
+}
+
+:root[data-font-size="s"] {
+  --font-scale: 0.9;
+}
+
+:root[data-font-size="l"] {
+  --font-scale: 1.15;
+}
+
+:root[data-font-size="xl"] {
+  --font-scale: 1.3;
 }
 
 /* Тёмная тема (DIS-18) — выбирается на странице "Настройки → Отображение".

@@ -265,8 +265,8 @@ export default function FeedCard({
         .sources {
           margin: 0;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          font-size: 13px;
-          line-height: 18px;
+          font-size: calc(13px * var(--font-scale));
+          line-height: calc(18px * var(--font-scale));
           color: var(--text-dim);
         }
         .sources a {
@@ -285,8 +285,10 @@ export default function FeedCard({
           margin: 0;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           font-weight: 400;
-          font-size: 15px;
-          line-height: 20px;
+          /* Масштаб — из настройки "Размер текста" (DIS-19, --font-scale в
+             globals.css); на обычном размере — ровно 15/20 по макету. */
+          font-size: calc(15px * var(--font-scale));
+          line-height: calc(20px * var(--font-scale));
           color: var(--text);
         }
         .summary.expandable {
@@ -301,7 +303,7 @@ export default function FeedCard({
         }
         @media (max-width: 899px) {
           .summary {
-            font-size: 1rem;
+            font-size: calc(1rem * var(--font-scale));
           }
         }
       `}</style>
