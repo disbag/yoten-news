@@ -46,6 +46,9 @@ const TITLE_DEDUPE_THRESHOLD = Number(process.env.TITLE_DEDUPE_THRESHOLD ?? 0.8)
 const TITLE_ASSIST_THRESHOLD = Number(process.env.TITLE_ASSIST_THRESHOLD ?? 0.7);
 const TITLE_ASSIST_BODY_THRESHOLD = Number(process.env.TITLE_ASSIST_BODY_THRESHOLD ?? 0.58);
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
+// Через сколько часов статья без саммари считается следом оборванного прогона
+// и удаляется (см. cleanupOld).
+const ORPHAN_HOURS = 3;
 // По умолчанию лента показывает только сегодняшние новости — RSS-фиды изданий
 // часто отдают материалы за последние несколько дней (особенно если давно не
 // забирали). FETCH_SINCE_DAYS=1 расширяет окно до "вчера и сегодня" — удобно
@@ -505,6 +508,26 @@ async function cleanupOld() {
   );
   if (res.rowCount) console.log(`Удалено старых записей: ${res.rowCount}`);
   await pool.query(`DELETE FROM skipped_links WHERE created_at < now() - interval '${RETENTION_DAYS} days'`);
+
+  // Следы оборванных прогонов: строка статьи вставляется до саммаризации, и
+  // если прогон прервался посередине, кластер так и остаётся без единого
+  // саммари (реальный случай — пустая карточка Polygon от 24 сентября). В
+  // ленте такие не показываются (см. getFeed), здесь — удаляем. Через
+  // ORPHAN_HOURS, а не сразу: моложе — это, скорее всего, статья, которую
+  // прямо сейчас обрабатывает текущий прогон (он идёт меньше часа). Удалённая
+  // статья, если она ещё в RSS и в окне FETCH_SINCE_DAYS, обработается
+  // следующим прогоном заново.
+  const orphans = await pool.query(
+    `DELETE FROM articles
+     WHERE cluster_id IN (
+             SELECT cluster_id FROM articles
+             WHERE cluster_id IS NOT NULL
+             GROUP BY cluster_id
+             HAVING bool_and(ai_summary IS NULL) AND max(created_at) < now() - interval '${ORPHAN_HOURS} hours'
+           )
+        OR (cluster_id IS NULL AND ai_summary IS NULL AND created_at < now() - interval '${ORPHAN_HOURS} hours')`
+  );
+  if (orphans.rowCount) console.log(`Удалено статей без саммари от оборванных прогонов: ${orphans.rowCount}`);
 }
 
 // Отметка "уже смотрели и отбросили" — только для окончательных решений
