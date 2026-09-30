@@ -9,8 +9,88 @@
   --border: #dedfd9;
   --text: #000000;
   --text-dim: rgba(0, 0, 0, 0.5);
+  /* Мягкий тёмно-серый текст меню, настроек и модалки входа (#3d3d3d в
+     макете) и приглушённые подписи — заголовки групп, неактивные табы. */
+  --text-soft: #3d3d3d;
+  --text-muted: rgba(38, 41, 48, 0.5);
+  --icon: #4c515e;
+  --link: #3186d1;
+  --input-bg: #f8f8f8;
+  --danger: #c0392b;
   --accent: #c94f3d;
   --accent-soft: rgba(201, 79, 61, 0.1);
+}
+
+/* Тёмная тема (DIS-18) — выбирается на странице "Настройки → Отображение".
+   Выбор хранится в браузере (localStorage), и скрипт в <head> (см.
+   app/layout.tsx) ставит data-theme на <html> ещё до первой отрисовки:
+   "light"/"dark" — явный выбор, атрибута нет — "Системная", тогда работает
+   media query ниже и тема сама меняется вслед за настройкой системы. Набор
+   переменных у двух блоков один и тот же — в чистом CSS их не объединить. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121315;
+  --card: #1b1c1f;
+  --card-hover: #25272b;
+  --border: #2e3035;
+  --text: #ececea;
+  --text-dim: rgba(236, 236, 234, 0.55);
+  --text-soft: #d6d6d2;
+  --text-muted: rgba(236, 236, 234, 0.45);
+  --icon: #b9bcc4;
+  --link: #6cb0ec;
+  --input-bg: #25272b;
+  --danger: #ff6b5b;
+  /* Терракота чуть светлее — исходная на тёмном фоне слишком тусклая. */
+  --accent: #e2735f;
+  --accent-soft: rgba(226, 115, 95, 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121315;
+    --card: #1b1c1f;
+    --card-hover: #25272b;
+    --border: #2e3035;
+    --text: #ececea;
+    --text-dim: rgba(236, 236, 234, 0.55);
+    --text-soft: #d6d6d2;
+    --text-muted: rgba(236, 236, 234, 0.45);
+    --icon: #b9bcc4;
+    --link: #6cb0ec;
+    --input-bg: #25272b;
+    --danger: #ff6b5b;
+    --accent: #e2735f;
+    --accent-soft: rgba(226, 115, 95, 0.15);
+  }
+}
+
+/* Логотип и иконки из макета — SVG-файлы с тёмной заливкой: в тёмной теме
+   инвертируем яркость, а hue-rotate возвращает исходный оттенок (красная
+   черта в логотипе остаётся красной, зелёный переключатель — зелёным). */
+:root[data-theme="dark"] .theme-invert {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-invert {
+    filter: invert(1) hue-rotate(180deg);
+  }
+}
+
+/* Переключатели из макета: у простой инверсии зелёная "включено" темнела
+   почти до фона (rgb(0,82,34)), а "выключено" наоборот светлело — выключенный
+   выглядел ярче включённого. brightness/saturate возвращают зелёному
+   яркость, близкую к исходной #6ee7b7, контур при этом светлый. */
+:root[data-theme="dark"] .theme-invert-toggle {
+  filter: invert(1) hue-rotate(180deg) brightness(3) saturate(0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-invert-toggle {
+    filter: invert(1) hue-rotate(180deg) brightness(3) saturate(0.45);
+  }
 }
 
 * {

@@ -68,7 +68,7 @@ export default function FeedTabs({
           font-weight: 300;
           font-size: 13px;
           line-height: 20px;
-          color: rgba(38, 41, 48, 0.5);
+          color: var(--text-muted);
           border-bottom: 1px solid transparent;
           margin-bottom: -1px;
         }
@@ -83,7 +83,7 @@ export default function FeedTabs({
         }
         .count {
           font-size: 8.4px;
-          color: rgba(0, 0, 0, 0.5);
+          color: var(--text-dim);
         }
       `}</style>
     </div>

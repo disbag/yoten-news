@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Lora, Onest } from "next/font/google";
 import "./globals.css";
+import { THEME_INIT_SCRIPT } from "./components/theme";
 
 // Lora — тёплая книжная антиква с поддержкой кириллицы, в духе редакторских
 // изданий вроде Kinfolk (в отличие от многих серифов на Google Fonts, не
@@ -28,7 +29,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru" className={`${lora.variable} ${onest.variable}`}>
+    // suppressHydrationWarning — скрипт темы ставит data-theme на <html> до
+    // гидратации, и серверная разметка (без атрибута) с ней не совпадёт.
+    <html lang="ru" className={`${lora.variable} ${onest.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Тема из браузера — до первой отрисовки, иначе тёмная тема мигала
+            бы светлой при каждой загрузке (см. app/components/theme.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>{children}</body>
     </html>
   );

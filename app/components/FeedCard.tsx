@@ -291,7 +291,7 @@ export default function FeedCard({
           color: var(--text-dim);
         }
         .read-more {
-          color: #3186d1;
+          color: var(--link);
           text-decoration: underline;
         }
         @media (max-width: 899px) {

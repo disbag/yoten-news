@@ -40,11 +40,11 @@ export default function MobileChrome({
       <div className="header">
         <button className="icon-button" aria-label="Меню" onClick={() => setOpen(true)}>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-            <path d="M2.75 8.25H21.25M2.75 15.75H21.25" stroke="#4C515E" strokeLinecap="round" />
+            <path d="M2.75 8.25H21.25M2.75 15.75H21.25" stroke="currentColor" strokeLinecap="round" />
           </svg>
         </button>
         {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-        <img src="/logo-outlined.svg" alt="Yoten" className="logo" />
+        <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
         {/* Пустой спейсер вместо иконки авторизации — в макете справа в
             шапке ленты ничего нет (вход/выход — только через меню), спейсер
             лишь держит логотип по центру симметрично левой кнопке меню. */}
@@ -56,11 +56,11 @@ export default function MobileChrome({
           <div className="header">
             <button className="icon-button" aria-label="Закрыть" onClick={() => setOpen(false)}>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-                <path d="M6.25 6.25L17.75 17.75M17.75 6.25L6.25 17.75" stroke="#4C515E" strokeLinecap="round" />
+                <path d="M6.25 6.25L17.75 17.75M17.75 6.25L6.25 17.75" stroke="currentColor" strokeLinecap="round" />
               </svg>
             </button>
             {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-            <img src="/logo-outlined.svg" alt="Yoten" className="logo" />
+            <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
             {/* Пустой спейсер вместо иконки — держит логотип по центру
                 симметрично левой кнопке закрытия, как в макете. */}
             <span className="spacer" />
@@ -71,9 +71,12 @@ export default function MobileChrome({
             </nav>
             <div className="divider" />
             <div className="account">
-              {/* Настройка ленты нужна авторизованному пользователю (это
-                  настройки ЕГО ленты) — гостю попросту нечего настраивать. */}
-              {isLoggedIn && <Link href="/settings">Настройка ленты</Link>}
+              {/* Настройки есть и у гостя — тема хранится в браузере (DIS-18), —
+                  но выбор изданий только у вошедшего: гостя ведём сразу в
+                  "Отображение". */}
+              <Link href={isLoggedIn ? "/settings" : "/settings/display"} onClick={() => setOpen(false)}>
+                Настройки
+              </Link>
               <AuthMenuItem />
             </div>
           </div>
@@ -90,6 +93,7 @@ export default function MobileChrome({
         }
         .icon-button {
           display: flex;
+          color: var(--icon);
           background: none;
           border: none;
           padding: 0;

@@ -156,7 +156,7 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
             height: 24px;
             border: none;
             background: none;
-            color: #3d3d3d;
+            color: var(--text-soft);
             font-size: 1.4rem;
             line-height: 1;
             padding: 0;
@@ -173,7 +173,7 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
             font-weight: 300;
             font-size: 16px;
             line-height: 24px;
-            color: #3d3d3d;
+            color: var(--text-soft);
           }
           .description {
             margin: 0;
@@ -181,7 +181,7 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
             font-weight: 300;
             font-size: 14px;
             line-height: 18px;
-            color: #4c515e;
+            color: var(--icon);
           }
           .form {
             display: flex;
@@ -192,15 +192,15 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
             font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-weight: 300;
             font-size: 14px;
-            color: #3d3d3d;
-            background: #f8f8f8;
+            color: var(--text-soft);
+            background: var(--input-bg);
             border: none;
             border-radius: 30px;
             padding: 14px 20px;
             width: 100%;
           }
           .input::placeholder {
-            color: #4c515e;
+            color: var(--icon);
           }
           .primary {
             font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -224,7 +224,7 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: 0.8rem;
-            color: #c0392b;
+            color: var(--danger);
           }
           .switch {
             margin: 0;
@@ -232,7 +232,7 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
             font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-weight: 400;
             font-size: 14px;
-            color: #3d3d3d;
+            color: var(--text-soft);
           }
           .link {
             font: inherit;

@@ -14,15 +14,16 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-      <img src="/logo-desktop.svg" alt="Yoten" className="logo" />
+      <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
       <div className="menu">
         <nav className="categories">
           <CategoryNav activeCategory={activeCategory} />
         </nav>
         <div className="account">
-          {/* Настройка ленты нужна авторизованному пользователю (это
-              настройки ЕГО ленты) — гостю попросту нечего настраивать. */}
-          {isLoggedIn && <Link href="/settings">Настройка ленты</Link>}
+          {/* Настройки есть и у гостя — тема хранится в браузере (DIS-18), —
+              но выбор изданий только у вошедшего: гостя ведём сразу в
+              "Отображение". */}
+          <Link href={isLoggedIn ? "/settings" : "/settings/display"}>Настройки</Link>
           <AuthMenuItem />
         </div>
       </div>
