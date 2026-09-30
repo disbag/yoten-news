@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import CategoryNav from "./CategoryNav";
 import AuthMenuItem from "./AuthMenuItem";
 
@@ -72,7 +73,7 @@ export default function MobileChrome({
             <div className="account">
               {/* Настройка ленты нужна авторизованному пользователю (это
                   настройки ЕГО ленты) — гостю попросту нечего настраивать. */}
-              {isLoggedIn && <span className="disabled">Настройка ленты</span>}
+              {isLoggedIn && <Link href="/settings">Настройка ленты</Link>}
               <AuthMenuItem />
             </div>
           </div>
@@ -161,8 +162,12 @@ export default function MobileChrome({
           font-size: 20px;
           color: var(--text);
         }
-        .disabled {
-          color: var(--text-dim);
+        .account :global(a) {
+          color: inherit;
+          text-decoration: none;
+        }
+        .account :global(a:hover) {
+          color: var(--accent);
         }
       `}</style>
     </>

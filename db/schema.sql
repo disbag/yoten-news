@@ -148,6 +148,18 @@ CREATE TABLE IF NOT EXISTS skipped_links (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Настройки ленты пользователя (страница /settings): какие издания он
+-- выключил. Храним именно выключенные, а не включённые — новое издание,
+-- добавленное в sources позже, у всех появляется в ленте само, без миграции
+-- настроек. Лента прячет карточку, только если ВСЕ её издания выключены
+-- (см. getFeed в src/lib/feed.ts).
+CREATE TABLE IF NOT EXISTS user_hidden_sources (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, source_id)
+);
+
 -- RLS без политик на всех таблицах: Supabase автоматически открывает схему
 -- public через REST API (PostgREST), и без RLS любой с anon-ключом проекта мог
 -- читать/удалять всё, включая users.email и passkeys. Само приложение ходит
@@ -161,6 +173,7 @@ ALTER TABLE passkeys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE article_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_login_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE skipped_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_hidden_sources ENABLE ROW LEVEL SECURITY;
 
 -- Второй слой к RLS: у публичных ролей Data API нет вообще никаких прав на
 -- наши таблицы — даже если на какой-то таблице RLS случайно выключат, anon-

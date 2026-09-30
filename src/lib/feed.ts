@@ -68,7 +68,14 @@ export async function getFeed(
     categoryClause = `WHERE $${params.length} = ANY(a.category)`;
   }
 
-  const havingClauses: string[] = [];
+  // Издания, выключенные пользователем на странице настроек (см.
+  // user_hidden_sources в схеме): карточка остаётся, пока в кластере есть
+  // хоть одна статья из включённого издания, — и главным источником, и в
+  // "Также пишут" тогда показываются только включённые. Саммари при этом
+  // берём с любой статьи кластера: у приклеенных статей своего саммари нет
+  // (см. fetchAndProcess.ts), и выключенное издание не должно оставлять
+  // карточку без текста.
+  const havingClauses: string[] = ["bool_or(h.user_id IS NULL)"];
   if (before) {
     havingClauses.push(
       `(max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})`
@@ -101,10 +108,11 @@ export async function getFeed(
       -- из-за нового источника, но показывать дату многодневной давности —
       -- выглядело как "лента отсортирована неправильно".
       max(a.published_at) AS published_at,
-      (array_agg(s.name ORDER BY a.created_at ASC))[1] AS primary_source,
-      (array_agg(s.homepage_url ORDER BY a.created_at ASC))[1] AS primary_homepage,
-      (array_agg(a.link ORDER BY a.created_at ASC))[1] AS primary_link,
-      jsonb_agg(DISTINCT jsonb_build_object('name', s.name, 'homepage', s.homepage_url, 'link', a.link)) AS source_list,
+      (array_agg(s.name ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_source,
+      (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_homepage,
+      (array_agg(a.link ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_link,
+      jsonb_agg(DISTINCT jsonb_build_object('name', s.name, 'homepage', s.homepage_url, 'link', a.link))
+        FILTER (WHERE h.user_id IS NULL) AS source_list,
       -- category — TEXT[] на статью (см. схему), поэтому паттерн
       -- "array_agg(...)[1]", как для остальных полей выше, здесь не
       -- работает: array_agg по колонке-массиву даёт 2D-массив, а
@@ -132,9 +140,10 @@ export async function getFeed(
     FROM articles a
     JOIN sources s ON s.id = a.source_id
     LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
+    LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $2
     ${categoryClause}
     GROUP BY a.cluster_id
-    ${havingClauses.length ? `HAVING ${havingClauses.join(" AND ")}` : ""}
+    HAVING ${havingClauses.join(" AND ")}
     ORDER BY published_at DESC, a.cluster_id DESC
     LIMIT $1
     `,
@@ -166,7 +175,8 @@ export async function getFeed(
 
 // Счётчик для бейджа рядом с табом "Новые" (см. FeedTabs.tsx) — общий по
 // всей ленте, без учёта текущего фильтра по категории (в макете бейдж один
-// на всю ленту, а не пересчитывается под конкретную категорию).
+// на всю ленту, а не пересчитывается под конкретную категорию). Кластеры
+// только из выключенных изданий не считаются — их в ленте нет (см. getFeed).
 export async function getUnreadCount(userId: number | null): Promise<number> {
   const { rows } = await pool.query(
     `
@@ -174,8 +184,9 @@ export async function getUnreadCount(userId: number | null): Promise<number> {
       SELECT a.cluster_id
       FROM articles a
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
+      LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
       GROUP BY a.cluster_id
-      HAVING NOT bool_or(ar.user_id IS NOT NULL)
+      HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL)
     ) unread
     `,
     [userId]
