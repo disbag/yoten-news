@@ -79,6 +79,21 @@
   }
 }
 
+/* Фавиконки изданий с тёмным знаком на прозрачном фоне (список — в
+   src/config/faviconBacking.ts) в тёмной теме теряются — подкладываем белый
+   круг с отступом 2px, чтобы знак не обрезался краем круга. */
+:root[data-theme="dark"] .favicon-backing {
+  background: #fff;
+  padding: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .favicon-backing {
+    background: #fff;
+    padding: 2px;
+  }
+}
+
 /* Переключатели из макета: у простой инверсии зелёная "включено" темнела
    почти до фона (rgb(0,82,34)), а "выключено" наоборот светлело — выключенный
    выглядел ярче включённого. brightness/saturate возвращают зелёному

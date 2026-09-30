@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { FeedItem } from "../../src/lib/feed";
 import { categoryLabels } from "../../src/config/categories";
+import { FAVICON_LIGHT_BACKING } from "../../src/config/faviconBacking";
 import Gallery from "./Gallery";
 
 function timeAgo(iso: string | null): string {
@@ -109,7 +110,11 @@ export default function FeedCard({
         <div className="header">
           {favicon ? (
             // eslint-disable-next-line @next/next/no-img-element -- фавиконки с произвольных доменов изданий
-            <img src={favicon} alt="" className="favicon" />
+            <img
+              src={favicon}
+              alt=""
+              className={FAVICON_LIGHT_BACKING.has(item.primarySource) ? "favicon favicon-backing" : "favicon"}
+            />
           ) : (
             <span className="favicon favicon-placeholder" />
           )}
