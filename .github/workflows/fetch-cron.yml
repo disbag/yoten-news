@@ -33,6 +33,19 @@ jobs:
           path: .cache
           key: xenova-all-MiniLM-L6-v2
 
+      # Последняя сработавшая комбинация ключ+модель Gemini (STATE_PATH в
+      # src/lib/gemini.ts) — переносим между прогонами, иначе каждый прогон
+      # начинал перебор с ключа #1 и, когда его суточная квота кончалась
+      # (к ночи по UTC), первым делом ловил 429. Ключ кеша уникален для
+      # прогона, чтобы каждый прогон сохранял свежее состояние, а
+      # restore-keys подтягивает самое последнее сохранённое.
+      - name: Cache Gemini key state
+        uses: actions/cache@v4
+        with:
+          path: .gemini-state.json
+          key: gemini-state-${{ github.run_id }}
+          restore-keys: gemini-state-
+
       - run: npm ci
 
       - run: npm run fetch
