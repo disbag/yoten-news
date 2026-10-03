@@ -31,8 +31,42 @@ export async function summarize(
   rawSummary: string,
   systemPrompt: string = SUMMARY_PROMPT
 ): Promise<SummaryResult> {
-  const raw = await generate(title, rawSummary, systemPrompt);
-  return extractCategory(raw);
+  for (let attempt = 0; attempt < MAX_LANGUAGE_ATTEMPTS; attempt++) {
+    // Повтор — с напоминанием и в системном промпте, и в конце текста статьи,
+    // а последняя попытка — другой моделью (Groq): на некоторых статьях
+    // gemini-3.5-flash-lite отвечала по-украински даже с напоминанием
+    // примерно два раза из трёх.
+    const remind = attempt > 0;
+    const prompt = remind ? systemPrompt + LANGUAGE_REMINDER : systemPrompt;
+    const text = remind ? rawSummary + LANGUAGE_REMINDER : rawSummary;
+    const lastTry = attempt === MAX_LANGUAGE_ATTEMPTS - 1;
+    const raw =
+      lastTry && hasGroqKey()
+        ? await summarizeWithGroq(title, text, prompt).catch((err: Error) => {
+            throw new Error(`модель отвечала не на русском, запасной Groq недоступен: ${err.message}`);
+          })
+        : await generate(title, text, prompt);
+    if (!looksNonRussian(raw)) return extractCategory(raw);
+    console.log(`  модель ответила не на русском (попытка ${attempt + 1}) — переспрашиваю`);
+  }
+  throw new Error(`модель ${MAX_LANGUAGE_ATTEMPTS} раза подряд ответила не на русском`);
+}
+
+// Изредка модель (реально — gemini-3.5-flash-lite) пишет пересказ на соседнем
+// кириллическом языке вместо русского, несмотря на "Пиши на русском" в
+// промпте: за месяц нашлись три такие карточки — одна на казахском, две на
+// украинском. Отличаем по буквам, которых в русском нет; порог 3, чтобы
+// одиночная буква в чужом имени собственном не считалась ошибкой. Такой ответ
+// не принимаем — переспрашиваем с явным напоминанием о языке (последний раз —
+// у Groq), а после MAX_LANGUAGE_ATTEMPTS неудач бросаем ошибку: статья
+// пропускается и обработается следующим прогоном (см. fetchAndProcess.ts).
+const NON_RUSSIAN_LETTERS = /[әғқңөұүһіїєґўӘҒҚҢӨҰҮҺІЇЄҐЎ]/g;
+const MAX_LANGUAGE_ATTEMPTS = 4;
+const LANGUAGE_REMINDER =
+  "\n\nВАЖНО: весь ответ — строго на русском языке, не на казахском, украинском или любом другом.";
+
+function looksNonRussian(text: string): boolean {
+  return (text.match(NON_RUSSIAN_LETTERS)?.length ?? 0) >= 3;
 }
 
 // Groq — запасной вариант, когда Gemini не отвечает целиком (все модели и
