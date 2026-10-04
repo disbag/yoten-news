@@ -100,7 +100,12 @@ ${NOISE_HANDLING_INSTRUCTIONS}`;
 const MORE_MAX_WORDS = 200;
 export function splitLeadAndMore(text: string): { lead: string; more: string | null } {
   const [leadRaw, ...rest] = text.split(/\n\s*===\s*(?:\n|$)/);
-  const strip = (t: string) => t.replace(/^\s*(главное|подробности|часть\s*\d)\s*[:—-]\s*/iu, "").trim();
+  // Строку темы модель иногда повторяет и в начале второй части.
+  const strip = (t: string) =>
+    t
+      .replace(/^\s*ТЕМА\s*:[^\n]*\n*/iu, "")
+      .replace(/^\s*(главное|подробности|часть\s*\d)\s*[:—-]\s*/iu, "")
+      .trim();
   const lead = ensureCompleteSentence(strip(leadRaw));
   let more = strip(rest.join("\n"));
   if (!more) return { lead, more: null };
@@ -125,17 +130,33 @@ export const CATEGORY_ONLY_PROMPT = `Классифицируй новость �
 // (например, это ответ на CATEGORY_ONLY_PROMPT, который вместо этого
 // возвращает голый тег без разметки)
 // — просто возвращаем текст как есть с category: null.
+//
+// Строк с темой в начале может быть несколько: модель раз-два в день пишет её
+// дважды (одинаковую, или второй тег отдельной строкой) — раньше снималась
+// только первая, и вторая уходила читателю началом саммари ("ТЕМА: science
+// В канадской шахте…"). Снимаем все подряд, теги собираем со всех.
+const TOPIC_LINE = /^\s*ТЕМА\s*:[^\S\n]*([^\n]*)(?:\n+|$)/iu;
 export function extractCategory(text: string): { category: Category[] | null; summary: string } {
-  const match = text.match(/^\s*ТЕМА\s*:\s*([^\n]+)\n+([\s\S]*)$/iu);
+  let rest = text;
+  const tags: Category[] = [];
+  let match = rest.match(TOPIC_LINE);
   if (!match) return { category: null, summary: text };
-  const tags = match[1]
-    .split(/[,;/]+/)
-    // теги всегда простые латинские слова — срезаем случайную пунктуацию
-    // по краям (точку, кавычки и т.п.), которую модель иногда добавляет.
-    .map((t) => normalizeTag(t.trim().replace(/[^a-z]/gi, "")))
-    .filter((t): t is Category => t !== null);
+  for (; match; match = rest.match(TOPIC_LINE)) {
+    // Отказ, оформленный как тема ("ТЕМА: NO_CONTENT"), — тот же сигнал, что
+    // и голое NO_CONTENT: иначе эта строка сохранялась как текст саммари.
+    if (isNoContentSignal(match[1])) return { category: null, summary: "NO_CONTENT" };
+    for (const raw of match[1].split(/[,;/]+/)) {
+      // теги всегда простые латинские слова — срезаем случайную пунктуацию
+      // по краям (точку, кавычки и т.п.), которую модель иногда добавляет.
+      const tag = normalizeTag(raw.trim().replace(/[^a-z]/gi, ""));
+      if (tag) tags.push(tag);
+    }
+    rest = rest.slice(match[0].length);
+  }
   const unique = Array.from(new Set(tags)).slice(0, 2);
-  return { category: unique.length ? unique : null, summary: match[2].trim() };
+  // После темы ничего нет (ответ оборвался) — это не саммари, а его
+  // отсутствие: пусть вызывающий код возьмёт другой источник контекста.
+  return { category: unique.length ? unique : null, summary: rest.trim() || "NO_CONTENT" };
 }
 
 // Модель просит показать другой источник контекста вместо навигационного
