@@ -8,9 +8,16 @@
 // fetchAndProcess.ts и обработку "sport" в backfillCategories.ts) — модель
 // всё ещё распознаёт эту тему, чтобы можно было отличить и отфильтровать
 // спорт от реального "other".
+// "art" подписан "Культура": тег остался со времён рубрики "Искусство", из
+// которой выделили кино, музыку и дизайн (см. коммент у CATEGORIES в
+// src/lib/prompt.ts).
 export const CATEGORIES = [
   { id: "technology", label: "Технологии" },
-  { id: "art", label: "Искусство" },
+  { id: "science", label: "Наука" },
+  { id: "art", label: "Культура" },
+  { id: "film", label: "Кино и сериалы" },
+  { id: "music", label: "Музыка" },
+  { id: "design", label: "Дизайн" },
   { id: "games", label: "Игры" },
   { id: "auto", label: "Авто" },
   { id: "travel", label: "Путешествия" },

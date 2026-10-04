@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { pool } from "../lib/db.js";
 import { summarize } from "../lib/summarizer.js";
-import { CATEGORY_ONLY_PROMPT, ALL_TAGS } from "../lib/prompt.js";
+import { CATEGORY_ONLY_PROMPT, ALL_TAGS, PROMPT_TAG_ALIASES, normalizeTag } from "../lib/prompt.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -9,10 +9,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // ответить одним словом — вместо этого отдают цепочку рассуждений и называют
 // тег где-то внутри (часто несколько раз, включая перебор вариантов). Берём
 // ПОСЛЕДНЕЕ упоминание тега в ответе — это и есть итоговый вывод модели.
-const TAG_PATTERN = new RegExp(`\\b(${ALL_TAGS.join("|")})\\b`, "gi");
+const TAG_PATTERN = new RegExp(`\\b(${[...ALL_TAGS, ...Object.keys(PROMPT_TAG_ALIASES)].join("|")})\\b`, "gi");
 function lastCategoryTag(raw: string): string | null {
   const matches = [...raw.matchAll(TAG_PATTERN)];
-  return matches.length ? matches[matches.length - 1][1].toLowerCase() : null;
+  return matches.length ? normalizeTag(matches[matches.length - 1][1]) : null;
 }
 
 // Одноразовый докат category для статей, собранных до появления этой фичи.
