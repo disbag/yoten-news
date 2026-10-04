@@ -25,6 +25,10 @@ const onest = Onest({
 export const metadata: Metadata = {
   title: "Yoten — новостная лента",
   description: "Свежие новости без повторов, в двух предложениях",
+  // Подпись под иконкой при добавлении сайта на главный экран iPhone — без
+  // неё iOS подставит начало title и обрежет его. Сами иконки — файлы
+  // app/icon.png и app/apple-icon.png, Next подключает их сам.
+  appleWebApp: { title: "Yoten" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
