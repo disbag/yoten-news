@@ -172,7 +172,11 @@ export default function Gallery({
         drag.current = null;
         return;
       }
-      viewportRef.current?.setPointerCapture(e.pointerId);
+      // Захват бросает NotFoundError, если указатель уже не активен (палец
+      // отпущен между событиями) — без захвата жест просто закончится раньше.
+      try {
+        viewportRef.current?.setPointerCapture(e.pointerId);
+      } catch {}
       setDragging(true);
     }
     if (d.horizontal) setDragPx(dx);
