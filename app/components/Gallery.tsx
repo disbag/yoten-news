@@ -16,14 +16,34 @@ import { useEffect, useRef, useState, type PointerEvent, type TransitionEvent } 
 // лента едет вперёд на копию первого, а когда анимация закончилась, без
 // анимации перескакивает на настоящий первый — со стороны это одно плавное
 // движение, а не откат назад через все кадры.
+//
+// Тот же компонент — и просмотр на весь экран (fullscreen, см. Lightbox.tsx):
+// листание должно быть ровно таким же, как в ленте, поэтому это не отдельная
+// карусель, а другой размер кадра и пара отличий — кадры вписаны целиком,
+// стрелки клавиатуры листают, взмах вниз или вверх закрывает.
 const SWIPE_THRESHOLD = 0.2; // доля ширины, после которой отпускание листает
 const FLICK_MS = 250; // быстрый короткий взмах листает и без порога
 const FLICK_PX = 30;
+const DISMISS_PX = 90; // на сколько увести фото по вертикали, чтобы закрыть просмотр
 
-export default function Gallery({ urls }: { urls: string[] }) {
+export default function Gallery({
+  urls,
+  fullscreen = false,
+  startIndex = 0,
+  onTap,
+  onClose,
+}: {
+  urls: string[];
+  fullscreen?: boolean;
+  // С какого кадра открыть (для просмотра на весь экран).
+  startIndex?: number;
+  // Нажатие без перетаскивания: номер кадра и то, по чему попали.
+  onTap?: (index: number, target: EventTarget) => void;
+  onClose?: () => void;
+}) {
   // Позиция в ленте с копиями: 0 — копия последнего, 1..n — настоящие кадры,
   // n+1 — копия первого.
-  const [pos, setPos] = useState(1);
+  const [pos, setPos] = useState(startIndex + 1);
   // Перескок с копии на настоящий кадр — без анимации.
   const [instant, setInstant] = useState(false);
   // Сломанные (402/битые байты — см. app/api/image-proxy/route.ts) кадры
@@ -38,11 +58,16 @@ export default function Gallery({ urls }: { urls: string[] }) {
   // качать по 10 фото), а текущий и соседние — и только после того, как
   // загрузился первый: он грузится лениво (loading="lazy"), то есть когда
   // карточка подъехала к экрану. Однажды загруженный кадр src не теряет.
-  const [firstLoaded, setFirstLoaded] = useState(false);
-  const [requested, setRequested] = useState<Set<string>>(() => new Set([urls[0]]));
+  // На весь экран кадр открывают нажатием, он нужен сразу — без ожидания.
+  const [firstLoaded, setFirstLoaded] = useState(fullscreen);
+  const [requested, setRequested] = useState<Set<string>>(() => new Set([urls[fullscreen ? startIndex : 0]]));
   const [dragPx, setDragPx] = useState(0);
+  // Вертикальное смещение — только на весь экран: фото тянется за пальцем.
+  const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{ id: number; x: number; y: number; t: number; horizontal: boolean | null } | null>(null);
+  // Жест был перетаскиванием — следующий за ним click не считаем нажатием.
+  const moved = useRef(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const firstImgRef = useRef<HTMLImageElement>(null);
 
@@ -84,6 +109,17 @@ export default function Gallery({ urls }: { urls: string[] }) {
     return () => cancelAnimationFrame(id);
   }, [instant]);
 
+  useEffect(() => {
+    if (!fullscreen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "ArrowLeft") go(-1);
+      else if (e.key === "ArrowRight") go(1);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- go читает только n, он в зависимостях
+  }, [fullscreen, n]);
+
   if (n === 0) return null;
 
   function go(delta: number) {
@@ -115,6 +151,7 @@ export default function Gallery({ urls }: { urls: string[] }) {
 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    moved.current = false;
     drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, horizontal: null };
   }
 
@@ -128,22 +165,31 @@ export default function Gallery({ urls }: { urls: string[] }) {
       // Вертикальный жест — это прокрутка ленты, не наш (touch-action: pan-y
       // отдаёт её браузеру), горизонтальный — забираем себе.
       d.horizontal = Math.abs(dx) > Math.abs(dy);
-      if (!d.horizontal) {
+      moved.current = true;
+      // В ленте вертикальный жест — прокрутка страницы; на весь экран
+      // прокручивать нечего, им закрывают просмотр.
+      if (!d.horizontal && !fullscreen) {
         drag.current = null;
         return;
       }
       viewportRef.current?.setPointerCapture(e.pointerId);
       setDragging(true);
     }
-    setDragPx(dx);
+    if (d.horizontal) setDragPx(dx);
+    else setDragY(dy);
   }
 
   function endDrag(e: PointerEvent<HTMLDivElement>, cancelled: boolean) {
     const d = drag.current;
     drag.current = null;
-    if (!d?.horizontal) return;
+    if (!d || d.horizontal === null) return;
     setDragging(false);
     setDragPx(0);
+    setDragY(0);
+    if (!d.horizontal) {
+      if (!cancelled && Math.abs(e.clientY - d.y) > DISMISS_PX) onClose?.();
+      return;
+    }
     if (cancelled) return;
     const dx = e.clientX - d.x;
     const width = viewportRef.current?.offsetWidth ?? 1;
@@ -160,7 +206,7 @@ export default function Gallery({ urls }: { urls: string[] }) {
   ];
 
   return (
-    <div className="gallery">
+    <div className={fullscreen ? "gallery fullscreen" : "gallery"}>
       <div
         ref={viewportRef}
         className="viewport"
@@ -168,17 +214,24 @@ export default function Gallery({ urls }: { urls: string[] }) {
         onPointerMove={onPointerMove}
         onPointerUp={(e) => endDrag(e, false)}
         onPointerCancel={(e) => endDrag(e, true)}
+        onClick={(e) => {
+          // click приходит и после перетаскивания — это не нажатие.
+          if (moved.current) moved.current = false;
+          else onTap?.(current, e.target);
+        }}
       >
         <div
           className="track"
           onTransitionEnd={onTransitionEnd}
           style={{
-            transform: `translateX(calc(${-safePos * 100}% + ${dragPx}px))`,
+            transform: `translate(calc(${-safePos * 100}% + ${dragPx}px), ${dragY}px)`,
             transition: dragging || instant ? "none" : undefined,
+            opacity: dragY ? Math.max(0.3, 1 - Math.abs(dragY) / 400) : undefined,
           }}
         >
           {slides.map(({ key, url, real }) => {
-            const isFirst = real && url === workingUrls[0];
+            // Ленивая загрузка — только для первого кадра карусели в ленте.
+            const isFirst = !fullscreen && real && url === workingUrls[0];
             return (
               <div className={upright.has(url) ? "slide upright" : "slide"} key={key}>
                 {requested.has(url) && (
@@ -241,7 +294,9 @@ export default function Gallery({ urls }: { urls: string[] }) {
         }
         .track {
           display: flex;
-          transition: transform 0.32s cubic-bezier(0.25, 0.8, 0.25, 1);
+          transition:
+            transform 0.32s cubic-bezier(0.25, 0.8, 0.25, 1),
+            opacity 0.2s ease;
           will-change: transform;
         }
         .slide {
@@ -311,6 +366,58 @@ export default function Gallery({ urls }: { urls: string[] }) {
         }
         .dot.active {
           background: #fff;
+        }
+        .gallery:not(.fullscreen) .viewport {
+          cursor: zoom-in;
+        }
+        /* Просмотр на весь экран: кадр занимает всё окно и вписан целиком. */
+        .fullscreen {
+          position: absolute;
+          inset: 0;
+        }
+        .fullscreen .viewport {
+          height: 100%;
+          border-radius: 0;
+          touch-action: none;
+        }
+        .fullscreen .track {
+          height: 100%;
+        }
+        .fullscreen .slide,
+        .fullscreen .slide.upright {
+          aspect-ratio: auto;
+          height: 100%;
+          background: transparent;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .fullscreen .slide img {
+          width: auto;
+          height: auto;
+          max-width: 100%;
+          max-height: 100%;
+          object-fit: contain;
+        }
+        .fullscreen .arrow {
+          width: 44px;
+          height: 44px;
+          font-size: 1.7rem;
+        }
+        .fullscreen .arrow.left {
+          left: 16px;
+        }
+        .fullscreen .arrow.right {
+          right: 16px;
+        }
+        .fullscreen .dots {
+          bottom: calc(18px + env(safe-area-inset-bottom));
+        }
+        @media (max-width: 899px) {
+          /* На телефоне листают пальцем — стрелки только закрывали бы фото. */
+          .fullscreen .arrow {
+            display: none;
+          }
         }
       `}</style>
     </div>

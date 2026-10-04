@@ -5,6 +5,7 @@ import type { FeedItem } from "../../src/lib/feed";
 import { categoryLabels } from "../../src/config/categories";
 import { FAVICON_LIGHT_BACKING } from "../../src/config/faviconBacking";
 import Gallery from "./Gallery";
+import Lightbox from "./Lightbox";
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "";
@@ -44,6 +45,8 @@ export default function FeedCard({
   // даже через прокси (см. коммент в app/api/image-proxy/route.ts) — вместо
   // сломанной иконки картинки в ленте просто скрываем блок с ней целиком.
   const [imageBroken, setImageBroken] = useState(false);
+  // Просмотр фото на весь экран: номер кадра, с которого открыли, или null.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
@@ -170,7 +173,7 @@ export default function FeedCard({
         )}
       </div>
       {item.imageUrls && item.imageUrls.length > 1 ? (
-        <Gallery urls={item.imageUrls} />
+        <Gallery urls={item.imageUrls} onTap={(index) => setLightboxIndex(index)} />
       ) : (
         item.imageUrl &&
         !imageBroken && (
@@ -186,8 +189,16 @@ export default function FeedCard({
             className="cover"
             loading="lazy"
             onError={() => setImageBroken(true)}
+            onClick={() => setLightboxIndex(0)}
           />
         )
+      )}
+      {lightboxIndex !== null && (
+        <Lightbox
+          urls={item.imageUrls && item.imageUrls.length > 1 ? item.imageUrls : item.imageUrl ? [item.imageUrl] : []}
+          startIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
       )}
 
       <style jsx>{`
@@ -207,6 +218,7 @@ export default function FeedCard({
           aspect-ratio: 1200 / 630;
           object-fit: cover;
           border-radius: 14px;
+          cursor: zoom-in;
         }
         .header {
           display: flex;
