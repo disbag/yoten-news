@@ -5,8 +5,12 @@
 // "Технологиях". Имена — как в sources.ts / таблице sources. Издания, которых
 // здесь нет (например, новое, добавленное позже), страница покажет в группе
 // "Другие" в конце — чтобы его всё равно можно было выключить.
+//
+// Группа "Искусство" из макета разделена вслед за рубриками ленты (см.
+// categories.ts): на кино, музыку и дизайн.
 export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
   { label: "Технологии", sources: ["Wired", "The Verge", "TechCrunch", "9to5Mac"] },
+  { label: "Наука", sources: ["Scientific American", "Popular Mechanics"] },
   {
     label: "Политика",
     sources: [
@@ -23,12 +27,14 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
       "BBC",
     ],
   },
-  { label: "Лайфстайл", sources: ["Lifehacker", "GQ", "Condé Nast Traveler"] },
+  { label: "Лайфстайл", sources: ["Lifehacker", "GQ", "Esquire", "Maxim", "Condé Nast Traveler"] },
   { label: "Игры", sources: ["IGN", "GameSpot", "Kotaku", "Polygon", "Eurogamer"] },
+  { label: "Кино и сериалы", sources: ["The Hollywood Reporter", "Variety"] },
+  { label: "Музыка", sources: ["Pitchfork", "Rolling Stone"] },
   // Creative Bloq в макете нет (добавлен позже) — по профилю это дизайн.
   {
-    label: "Искусство",
-    sources: ["Pitchfork", "The Hollywood Reporter", "Variety", "Rolling Stone", "Wallpaper", "Creative Bloq"],
+    label: "Дизайн",
+    sources: ["Wallpaper", "Creative Bloq", "Dezeen", "designboom", "The Art Newspaper", "It's Nice That", "Monocle"],
   },
   // Motor1 в макете нет (добавлен позже).
   { label: "Авто", sources: ["Car and Driver", "Motor Trend", "InsideEVs", "Motor1"] },

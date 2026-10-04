@@ -136,6 +136,14 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// WordPress по умолчанию дописывает в конец content:encoded служебную
+// строку "The post <заголовок> appeared first on <сайт>." (Dezeen,
+// designboom, Monocle) — это не текст статьи, а с ним одинаковый хвост
+// попадал бы в эмбеддинг каждой статьи издания.
+function stripFeedFooter(text: string): string {
+  return text.replace(/\s*The post .{1,400}? appeared first on .{1,120}?\.?\s*$/i, "");
+}
+
 // Некоторые издания (напр. Telegraph) блокируют запросы node:http/https по
 // TLS-отпечатку, но пропускают fetch() с браузерным User-Agent — поэтому
 // забираем текст сами, а не через parser.parseURL().
@@ -203,6 +211,12 @@ async function processSource(
       return;
     }
     if (!item.link || !item.title) continue;
+    // Заголовок идёт в эмбеддинг (в том числе отдельный вектор заголовка, см.
+    // grouping.ts) и в промпт: Hearst (Esquire, Car and Driver) размечает в
+    // нём названия фильмов тегами <i><em>, а The Art Newspaper оборачивает
+    // заголовки в пробелы и переносы строк.
+    item.title = stripHtml(item.title);
+    if (!item.title) continue;
     // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
     // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
     if (!/^https?:\/\//i.test(item.link)) continue;
@@ -221,7 +235,7 @@ async function processSource(
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
     const feedFullHtml = item["dc:content"] ?? item["content:encoded"];
-    const feedContent = feedFullHtml ? stripHtml(feedFullHtml).slice(0, MAX_ARTICLE_CHARS) : undefined;
+    const feedContent = feedFullHtml ? stripFeedFooter(stripHtml(feedFullHtml)).slice(0, MAX_ARTICLE_CHARS) : undefined;
 
     // Best-effort: некоторые издания (NYT, Telegraph) блокируют такие запросы
     // (Cloudflare-челлендж / собственная anti-bot защита) — тогда просто

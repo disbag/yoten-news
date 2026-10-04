@@ -318,6 +318,89 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.rollingstone.com/feed/",
     homepageUrl: "https://www.rollingstone.com",
   },
+  {
+    // Архитектура и дизайн. Полный чистый текст статьи в content:encoded;
+    // страница длиннее только за счёт блоков "похожие проекты" и подписки —
+    // берём текст из фида. Не блокирует бота.
+    name: "Dezeen",
+    rssUrl: "https://www.dezeen.com/feed/",
+    homepageUrl: "https://www.dezeen.com",
+    preferFeedContent: true,
+  },
+  {
+    // Дизайн, архитектура, искусство (Италия, пишет по-английски). Полный
+    // текст в content:encoded, как у Dezeen. Рекламные подборки собственного
+    // магазина выходят как "designboom shop drop: …".
+    name: "designboom",
+    rssUrl: "https://www.designboom.com/feed/",
+    homepageUrl: "https://www.designboom.com",
+    preferFeedContent: true,
+    adTitlePattern: /\bshop drop\b/i,
+  },
+  {
+    // Арт-рынок, музеи, выставки, аукционы. В RSS только заголовок, текст —
+    // со страницы (не блокирует бота, ~3,5 тыс. знаков).
+    name: "The Art Newspaper",
+    rssUrl: "https://www.theartnewspaper.com/rss.xml",
+    homepageUrl: "https://www.theartnewspaper.com",
+  },
+  {
+    // Города, дизайн, международная повестка. Полный текст в content:encoded,
+    // около двух материалов в день.
+    name: "Monocle",
+    rssUrl: "https://monocle.com/feed/",
+    homepageUrl: "https://monocle.com",
+    preferFeedContent: true,
+  },
+  {
+    // Графический дизайн и иллюстрация. Фид на FeedBurner (собственный /rss
+    // сайта отдаёт битый XML), в нём только анонс — текст со страницы.
+    name: "It's Nice That",
+    rssUrl: "https://feeds2.feedburner.com/itsnicethat/SlXC",
+    homepageUrl: "https://www.itsnicethat.com",
+  },
+  {
+    // Наука: физика, космос, биология, климат. Официальный фид платформы
+    // (старый rss.sciam.com по https не отвечает). В RSS анонс, статья
+    // целиком в JSON-LD страницы. robots.txt просит crawl-delay 5 с — при
+    // ~5 материалах в день и саммаризации между статьями это соблюдается
+    // само собой.
+    name: "Scientific American",
+    rssUrl: "https://www.scientificamerican.com/platform/syndication/rss/",
+    homepageUrl: "https://www.scientificamerican.com",
+  },
+  {
+    // Hearst, как Car and Driver. Около половины фида — подборки покупок
+    // ("The 8 Best Space Heaters…", "Solo Stove vs. Breeo…", Prime Day):
+    // разделы /home/, /adventure/, /culture/ целиком торговые, галереи /g…/ —
+    // всегда списки товаров. Новости — в /science/, /military/, /technology/.
+    name: "Popular Mechanics",
+    rssUrl: "https://www.popularmechanics.com/rss/all.xml/",
+    homepageUrl: "https://www.popularmechanics.com",
+    adLinkPattern:
+      /^\/(?:home|adventure|culture|video)\/|\/g\d+\/|(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|prime-(?:big-)?deal/i,
+    adTitlePattern: /\b(?:best|deals?|gifts?|prime day|prime big deal days?)\b|\bvs\.?\s|\breview\b|\bsav(?:e|ing) up to\b/i,
+  },
+  {
+    // Hearst. Политика, кино и сериалы, стиль. Около трети фида — шопинг:
+    // раздел /style/ (одежда, часы, парфюм), техника в /lifestyle/tech/,
+    // подарочные галереи /g…/ и Prime Day.
+    name: "Esquire",
+    rssUrl: "https://www.esquire.com/rss/all.xml/",
+    homepageUrl: "https://www.esquire.com",
+    adLinkPattern:
+      /^\/style\/|^\/lifestyle\/tech\/|\/g\d+\/|(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|prime-(?:big-)?deal/i,
+    adTitlePattern: /\b(?:best|deals?|gifts?|prime day|prime big deal days?)\b|\$\d+(?:\.\d+)? off\b/i,
+  },
+  {
+    // Люкс: часы, авто, яхты, алкоголь, знаменитости. Полный текст в
+    // content:encoded. "Maxim Models Competition" — промо их конкурса моделей.
+    name: "Maxim",
+    rssUrl: "https://www.maxim.com/feed/",
+    homepageUrl: "https://www.maxim.com",
+    preferFeedContent: true,
+    adTitlePattern: /\bmaxim models\b/i,
+  },
   // Top Gear: официального публичного RSS не нашлось (проверено ~10
   // стандартных путей — везде 404, автообнаружение на главной тоже пусто).
   // Похоже, его убрали, как и у National Geographic. Если найдёшь рабочую
