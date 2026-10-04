@@ -252,7 +252,36 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // страница закрыта Cloudflare-проверкой от ботов (403), а RSS кладёт фото
 // статьи прямо в <description> (?w=636) и обложку в media:content (?w=300 —
 // мыльная в карточке). WordPress-CDN режет по ?w= — приводим всё к 1280.
-export type GallerySite = "hearst" | "futureplc" | "condenast" | "time" | "motor1" | "polygon" | "gamespot";
+// "dezeen", "designboom", "maxim", "monocle" — WordPress с полной статьёй в
+// content:encoded: фото тела лежат прямо в RSS, как у GameSpot, страницу для
+// них разбирать не нужно.
+//  - Dezeen: кадры тела (…_dezeen_2364_col_N.jpg) в облегчённом размере 852px;
+//    готовые миниатюры из фида ("-852x852.jpg" — квадратная обложка,
+//    "-191x191" — превью ссылки на другую статью) не берём.
+//  - designboom: кадры на www. и static. — один и тот же файл, приводим к
+//    одному хосту; анимированные GIF по 1800px пропускаем.
+//  - Maxim: кадры "-788xNNN" из тела; обложка — отдельная "Promo"-картинка.
+//  - Monocle: CDN режет по ?w= — приводим к 1280.
+// "artnewspaper" (The Art Newspaper): в RSS картинок нет, фото тела на
+// странице — figure.w-full с cdn.sanity.io; первый кадр статьи
+// (figure.max-w-col-3) совпадает с обложкой. Sanity режет по ?w=.
+// "itsnicethat" (It's Nice That): фото тела — figure.p0.m0 внутри <article>,
+// m.itsnicethat.com/original_images, размер задаётся ?class=wNNNN. og:image
+// бывает общей заглушкой сайта (/images/social.jpg) — она в галерею не идёт.
+export type GallerySite =
+  | "hearst"
+  | "futureplc"
+  | "condenast"
+  | "time"
+  | "motor1"
+  | "polygon"
+  | "gamespot"
+  | "dezeen"
+  | "designboom"
+  | "maxim"
+  | "monocle"
+  | "artnewspaper"
+  | "itsnicethat";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -264,7 +293,13 @@ const MOTOR1_IMAGE_PATH = /^\/images\/mgl\/([A-Za-z0-9]+)\/s\d+\/([^/]+?)\.(?:jp
 // из HTML самого RSS-элемента (extractFeedGallery).
 const GALLERY_SITES: Record<
   GallerySite,
-  { selector: string; normalize: (url: URL) => URL | null; leadWithCover: boolean; from?: "page" | "rss" }
+  {
+    selector: string;
+    // size — width/height из атрибутов <img>, если они есть (у обложки их нет).
+    normalize: (url: URL, size?: { width: number; height: number }) => URL | null;
+    leadWithCover: boolean;
+    from?: "page" | "rss";
+  }
 > = {
   hearst: {
     selector: 'a[href*="/photos"] img',
@@ -336,6 +371,79 @@ const GALLERY_SITES: Record<
     leadWithCover: true,
     from: "rss",
   },
+  dezeen: {
+    selector: "img",
+    normalize: (url, size) => {
+      if (url.hostname !== "static.dezeen.com" || !url.pathname.startsWith("/uploads/")) return null;
+      if (/-\d{2,4}x\d{2,4}(?:-\d+)?\.\w+$/.test(url.pathname)) return null;
+      url.search = "";
+      // Оригинал — 2364px и ~650КБ на кадр. WordPress держит рядом вариант
+      // шириной 852px (~90КБ) с высотой в имени файла — она считается из
+      // пропорций (проверено на 79 кадрах: не совпало у одного, такой кадр
+      // карусель просто скроет как битый).
+      const file = url.pathname.match(/^(.*?)(?:-scaled)?\.(jpe?g|png)$/i);
+      if (file && size && size.width > 852) {
+        url.pathname = `${file[1]}-852x${Math.round((852 * size.height) / size.width)}.${file[2]}`;
+      }
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
+  designboom: {
+    selector: "img",
+    normalize: (url) => {
+      if (!url.hostname.endsWith("designboom.com") || !/^\/(?:wp-content|twitterimages)\//.test(url.pathname)) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.hostname = "www.designboom.com";
+      url.search = "";
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
+  maxim: {
+    selector: "img",
+    normalize: (url) => {
+      if (!url.hostname.endsWith("maxim.com") || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      url.search = "";
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
+  monocle: {
+    selector: "img",
+    normalize: (url) => {
+      if (url.hostname !== "monocle.com" || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      url.search = "?w=1280";
+      return url;
+    },
+    // Обложка — отдельный файл "00THUMB-…" с тем же снимком, что и один из
+    // кадров тела ("…_CROP"): с ней в карусели был бы повтор, а у колонок с
+    // одной картинкой — "галерея" из двух одинаковых фото.
+    leadWithCover: false,
+    from: "rss",
+  },
+  artnewspaper: {
+    selector: "figure.w-full img",
+    normalize: (url) => {
+      if (url.hostname !== "cdn.sanity.io") return null;
+      url.search = "?w=1280&q=80&auto=format";
+      return url;
+    },
+    leadWithCover: true,
+  },
+  itsnicethat: {
+    selector: "article figure.p0.m0 img",
+    normalize: (url) => {
+      if (url.hostname !== "m.itsnicethat.com" || !url.pathname.startsWith("/original_images/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.search = "?class=w1080";
+      return url;
+    },
+    leadWithCover: true,
+  },
 };
 
 export function galleryFromRss(site: GallerySite | undefined): boolean {
@@ -360,10 +468,10 @@ export function normalizeCover(site: GallerySite, cover: string): string {
 function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
   const { selector, normalize, leadWithCover } = GALLERY_SITES[site];
   const urls = new Set<string>();
-  const add = (src: string | undefined): boolean => {
+  const add = (src: string | undefined, size?: { width: number; height: number }): boolean => {
     if (!src) return false;
     try {
-      const normalized = normalize(new URL(src, baseUrl));
+      const normalized = normalize(new URL(src, baseUrl), size);
       if (!normalized) return false;
       urls.add(normalized.toString());
       return true;
@@ -375,7 +483,10 @@ function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover
   $(selector).each((_, el) => {
     // <source> и lazy-картинки с заглушкой в src держат настоящий URL в
     // srcset — берём его первый вариант, только если src ничего не дал.
-    if (!add($(el).attr("src"))) add($(el).attr("srcset")?.trim().split(",")[0]?.trim().split(/\s+/)[0]);
+    const width = Number($(el).attr("width"));
+    const height = Number($(el).attr("height"));
+    const size = width > 0 && height > 0 ? { width, height } : undefined;
+    if (!add($(el).attr("src"), size)) add($(el).attr("srcset")?.trim().split(",")[0]?.trim().split(/\s+/)[0], size);
   });
   // Одна обложка без единого фото из тела — это не галерея.
   return urls.size > 1 ? Array.from(urls) : [];

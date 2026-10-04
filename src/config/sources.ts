@@ -330,6 +330,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Dezeen",
     rssUrl: "https://www.dezeen.com/feed/",
     homepageUrl: "https://www.dezeen.com",
+    gallery: "dezeen",
     preferFeedContent: true,
   },
   {
@@ -339,6 +340,7 @@ export const SOURCES: SourceConfig[] = [
     name: "designboom",
     rssUrl: "https://www.designboom.com/feed/",
     homepageUrl: "https://www.designboom.com",
+    gallery: "designboom",
     preferFeedContent: true,
     adTitlePattern: /\bshop drop\b/i,
   },
@@ -348,6 +350,7 @@ export const SOURCES: SourceConfig[] = [
     name: "The Art Newspaper",
     rssUrl: "https://www.theartnewspaper.com/rss.xml",
     homepageUrl: "https://www.theartnewspaper.com",
+    gallery: "artnewspaper",
   },
   {
     // Города, дизайн, международная повестка. Полный текст в content:encoded,
@@ -356,6 +359,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Monocle",
     rssUrl: "https://monocle.com/feed/",
     homepageUrl: "https://monocle.com",
+    gallery: "monocle",
     preferFeedContent: true,
     adTitlePattern: /\bbrightest sparks\b|\bmonocle quiz\b/i,
   },
@@ -365,6 +369,7 @@ export const SOURCES: SourceConfig[] = [
     name: "It's Nice That",
     rssUrl: "https://feeds2.feedburner.com/itsnicethat/SlXC",
     homepageUrl: "https://www.itsnicethat.com",
+    gallery: "itsnicethat",
   },
   {
     // Наука: физика, космос, биология, климат. Официальный фид платформы
@@ -405,6 +410,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Maxim",
     rssUrl: "https://www.maxim.com/feed/",
     homepageUrl: "https://www.maxim.com",
+    gallery: "maxim",
     preferFeedContent: true,
     adTitlePattern: /\bmaxim models\b/i,
   },
