@@ -346,11 +346,13 @@ export const SOURCES: SourceConfig[] = [
   },
   {
     // Города, дизайн, международная повестка. Полный текст в content:encoded,
-    // около двух материалов в день.
+    // около двух материалов в день. Викторина для читателей с призами ("Are
+    // you one of Monocle's brightest sparks?") — не новость.
     name: "Monocle",
     rssUrl: "https://monocle.com/feed/",
     homepageUrl: "https://monocle.com",
     preferFeedContent: true,
+    adTitlePattern: /\bbrightest sparks\b|\bmonocle quiz\b/i,
   },
   {
     // Графический дизайн и иллюстрация. Фид на FeedBurner (собственный /rss

@@ -562,8 +562,13 @@ async function main() {
   await acquireLock();
   try {
     const sources = await pool.query("SELECT id, name, rss_url FROM sources");
+    // FETCH_SOURCES="Dezeen,Esquire" — ручной прогон только по перечисленным
+    // изданиям (вместе с FETCH_SINCE_DAYS — догрузить прошлые дни у только что
+    // добавленного источника, не трогая остальные). По расписанию не задаётся.
+    const only = process.env.FETCH_SOURCES?.split(",").map((name) => name.trim()).filter(Boolean);
     const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
     for (const source of sources.rows) {
+      if (only?.length && !only.includes(source.name)) continue;
       if (remaining.count <= 0) break;
       await processSource(source, remaining);
     }
