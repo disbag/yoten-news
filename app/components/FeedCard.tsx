@@ -45,9 +45,23 @@ export default function FeedCard({
   // даже через прокси (см. коммент в app/api/image-proxy/route.ts) — вместо
   // сломанной иконки картинки в ленте просто скрываем блок с ней целиком.
   const [imageBroken, setImageBroken] = useState(false);
+  // Вертикальная или квадратная обложка (у The NY Times они все квадратные) в
+  // рамке 16:9 при обрезке теряла почти половину кадра — такую вписываем
+  // целиком на чёрном фоне, как кадры в карусели (см. Gallery.tsx).
+  const [coverUpright, setCoverUpright] = useState(false);
+  const coverRef = useRef<HTMLImageElement>(null);
   // Просмотр фото на весь экран: номер кадра, с которого открыли, или null.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const cardRef = useRef<HTMLElement>(null);
+
+  function checkCoverUpright(img: HTMLImageElement) {
+    if (img.naturalWidth > 0 && img.naturalWidth <= img.naturalHeight) setCoverUpright(true);
+  }
+  // Обложка приходит в серверном HTML и у верхних карточек успевает
+  // загрузиться до гидрации — тогда onLoad React уже не увидит.
+  useEffect(() => {
+    if (coverRef.current?.complete) checkCoverUpright(coverRef.current);
+  }, []);
   const favicon = faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
   // "Читать" раскрывает карточку на месте, без модалки, и только в одну
@@ -186,8 +200,10 @@ export default function FeedCard({
           <img
             src={`/api/image-proxy?url=${encodeURIComponent(item.imageUrl)}`}
             alt=""
-            className="cover"
+            ref={coverRef}
+            className={coverUpright ? "cover upright" : "cover"}
             loading="lazy"
+            onLoad={(e) => checkCoverUpright(e.currentTarget)}
             onError={() => setImageBroken(true)}
             onClick={() => setLightboxIndex(0)}
           />
@@ -215,10 +231,17 @@ export default function FeedCard({
         .cover {
           display: block;
           width: 100%;
-          aspect-ratio: 1200 / 630;
+          /* 16:9, а не 1200×630 (1.91:1): по выборке из 450 обложек всех
+             изданий 61% — ровно 16:9 и ещё 26% — 1.91:1; в рамке 16:9
+             в среднем обрезается 5.8% площади кадра против 8.4% (DIS-35). */
+          aspect-ratio: 16 / 9;
           object-fit: cover;
           border-radius: 14px;
           cursor: zoom-in;
+        }
+        .cover.upright {
+          object-fit: contain;
+          background: #000;
         }
         .header {
           display: flex;

@@ -50,7 +50,7 @@ export default function Gallery({
   // исключаем из карусели по мере обнаружения, а не показываем битую иконку —
   // тот же принцип, что и для одиночной обложки в FeedCard.tsx.
   const [broken, setBroken] = useState<Set<string>>(new Set());
-  // Вертикальные (и квадратные) кадры в широкой рамке 1200×630 при cover
+  // Вертикальные (и квадратные) кадры в широкой рамке 16:9 при cover
   // теряли бо́льшую часть кадра — их вписываем целиком, поля по бокам чёрные.
   // Ориентацию узнаём только после загрузки, по натуральным размерам.
   const [upright, setUpright] = useState<Set<string>>(new Set());
@@ -305,7 +305,8 @@ export default function Gallery({
         }
         .slide {
           flex: 0 0 100%;
-          aspect-ratio: 1200 / 630;
+          /* 16:9 — пропорции большинства фото изданий, см. .cover в FeedCard.tsx */
+          aspect-ratio: 16 / 9;
           background: var(--card-hover);
         }
         .slide img {
