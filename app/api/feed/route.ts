@@ -1,39 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFeed } from "../../../src/lib/feed";
+import { getFeed, getNewCount } from "../../../src/lib/feed";
 import { getSessionUserId } from "../../../src/lib/session";
+import { FEED_PAGE_SIZE } from "../../../src/lib/feedPosition";
 
-// Отдаёт на одну карточку больше запрошенного limit, чтобы понять, есть ли
-// ещё данные, без отдельного count-запроса — hasMore = смогли получить
-// limit+1-ю карточку. Используется и первой загрузкой страницы (см.
-// app/page.tsx), и кнопкой "Показать ещё" (см. app/components/FeedList.tsx).
+function cursor(searchParams: URLSearchParams, prefix: "before" | "after") {
+  const publishedAt = searchParams.get(`${prefix}PublishedAt`);
+  const clusterId = Number(searchParams.get(`${prefix}ClusterId`));
+  return publishedAt && clusterId ? { publishedAt, clusterId } : undefined;
+}
+
+// Подгрузка ленты (см. app/components/FeedList.tsx): вниз — before*, вверх —
+// after*, без курсора — верх ленты. Отдельный режим ?newSince=<время> — только
+// число новых карточек для плашки "N Новых".
+//
+// Запрашиваем на одну карточку больше limit, чтобы понять, есть ли ещё
+// данные, без отдельного count-запроса.
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const category = searchParams.get("category") ?? undefined;
-  // Клиент всегда просит 30 (PAGE_SIZE в FeedList.tsx). Без потолка
-  // ?limit=5000 отдавал ~8 МБ за один запрос — дешёвый способ нагрузить базу.
-  const requested = Number(searchParams.get("limit") ?? 30);
-  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 50) : 30;
-  const beforePublishedAt = searchParams.get("beforePublishedAt");
-  const beforeClusterId = searchParams.get("beforeClusterId");
-  const before =
-    beforePublishedAt && beforeClusterId
-      ? { publishedAt: beforePublishedAt, clusterId: Number(beforeClusterId) }
-      : undefined;
-  // tab=read -> вкладка "Прочитанные", иначе (в т.ч. по умолчанию) -> "Новые"
-  // (непрочитанные) — см. FeedTabs.tsx, заменили режим "показать всё".
   const userId = await getSessionUserId();
-  // У гостя вкладки "Прочитанные" нет (см. app/page.tsx) — всегда вся лента.
-  const readOnly = userId !== null && searchParams.get("tab") === "read";
 
-  const rows = await getFeed({
-    category,
-    limit: limit + 1,
-    before,
-    userId,
-    unreadOnly: !readOnly,
-    readOnly,
-  });
+  const newSince = searchParams.get("newSince");
+  if (newSince) {
+    if (Number.isNaN(Date.parse(newSince))) return NextResponse.json({ error: "newSince" }, { status: 400 });
+    return NextResponse.json({ count: await getNewCount({ since: newSince, category, userId }) });
+  }
+
+  // Без потолка ?limit=5000 отдавал ~8 МБ за один запрос — дешёвый способ
+  // нагрузить базу.
+  const requested = Number(searchParams.get("limit") ?? FEED_PAGE_SIZE);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 50) : FEED_PAGE_SIZE;
+  const before = cursor(searchParams, "before");
+  const after = before ? undefined : cursor(searchParams, "after");
+
+  // Момент ДО запроса: клиент запоминает его как "всё до этого времени я
+  // видел" (см. markSeen в FeedList.tsx), и статья, попавшая в базу во время
+  // запроса, не должна потеряться для счётчика новых.
+  const now = new Date().toISOString();
+  const rows = await getFeed({ category, limit: limit + 1, before, after, userId });
   const hasMore = rows.length > limit;
+  // Лишняя карточка — самая дальняя от курсора: у подгрузки вверх она первая.
+  const items = hasMore ? (after ? rows.slice(1) : rows.slice(0, limit)) : rows;
 
-  return NextResponse.json({ items: rows.slice(0, limit), hasMore });
+  return NextResponse.json({ items, hasMore, now });
 }

@@ -14,8 +14,8 @@ const lora = Lora({
 });
 
 // Onest — гротеск для текста самой новости (см. .summary в FeedCard.tsx) и,
-// с редизайна 2026 года, для меню/табов/сайдбара (Light-начертание 300 —
-// см. Sidebar.tsx, MobileChrome.tsx, FeedTabs.tsx).
+// с редизайна 2026 года, для меню и сайдбара (Light-начертание 300 —
+// см. Sidebar.tsx, MobileChrome.tsx).
 const onest = Onest({
   subsets: ["latin", "cyrillic"],
   weight: ["300", "400", "500"],

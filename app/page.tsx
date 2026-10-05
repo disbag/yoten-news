@@ -1,65 +1,57 @@
-import { getFeed, getUnreadCount } from "../src/lib/feed";
+import { cookies } from "next/headers";
+import { getFeed } from "../src/lib/feed";
 import { getSessionUserId } from "../src/lib/session";
 import { CATEGORIES } from "../src/config/categories";
-import FeedShell from "./components/FeedShell";
+import { FEED_PAGE_SIZE, positionCookieName } from "../src/lib/feedPosition";
+import FeedList from "./components/FeedList";
 import Sidebar from "./components/Sidebar";
 import MobileChrome from "./components/MobileChrome";
 
 export const dynamic = "force-dynamic";
 
-const PAGE_SIZE = 30;
-
-export default async function HomePage(props: {
-  searchParams: Promise<{ category?: string; tab?: string }>;
-}) {
+export default async function HomePage(props: { searchParams: Promise<{ category?: string }> }) {
   const searchParams = await props.searchParams;
   const activeCategory = CATEGORIES.find((c) => c.id === searchParams.category);
   const userId = await getSessionUserId();
   const isLoggedIn = userId !== null;
-  // Табы "Новые/Прочитанные" и отметка прочитанного — только для вошедших:
-  // гостю прочитанное всё равно негде хранить (/api/reads для userId=null —
-  // no-op), и раньше оно лишь локально гасло при скролле и возвращалось после
-  // перезагрузки. Гость видит просто всю ленту; ?tab=read ему не показываем
-  // (для userId=null это всегда пустой список).
-  const tab: "new" | "read" = isLoggedIn && searchParams.tab === "read" ? "read" : "new";
+  const category = activeCategory?.id;
+
+  // Момент ДО запроса ленты — см. такой же в app/api/feed/route.ts.
+  const loadedAt = new Date().toISOString();
   // На единицу больше лимита — чтобы понять, есть ли ещё карточки для
-  // автоподгрузки по скроллу (см. FeedList.tsx), без отдельного count-запроса.
-  const [rows, unreadCount] = await Promise.all([
-    getFeed({
-      category: activeCategory?.id,
-      limit: PAGE_SIZE + 1,
-      userId,
-      unreadOnly: tab === "new",
-      readOnly: tab === "read",
-    }),
-    isLoggedIn ? getUnreadCount(userId) : 0,
-  ]);
-  const hasMore = rows.length > PAGE_SIZE;
-  const feed = rows.slice(0, PAGE_SIZE);
+  // подгрузки (см. FeedList.tsx), без отдельного count-запроса.
+  const limit = FEED_PAGE_SIZE + 1;
+
+  // Лента открывается на карточке, на которой пользователь остановился в
+  // прошлый раз (см. src/lib/feedPosition.ts), даже если сверху появились
+  // новые. Если этой карточки больше нет (давно не заходил, она удалена по
+  // сроку хранения) или она не проходит нынешний фильтр — обычный верх ленты.
+  const savedId = Number((await cookies()).get(positionCookieName(category))?.value);
+  let rows = savedId > 0 ? await getFeed({ category, limit, userId, fromClusterId: savedId }) : [];
+  const restored = rows[0]?.clusterId === savedId;
+  if (!restored) rows = await getFeed({ category, limit, userId });
 
   return (
     <div className="shell">
       <div className="mobile-only">
-        <MobileChrome activeCategory={activeCategory?.id} isLoggedIn={isLoggedIn} />
+        <MobileChrome activeCategory={category} isLoggedIn={isLoggedIn} />
       </div>
       <div className="desktop-only">
-        <Sidebar activeCategory={activeCategory?.id} isLoggedIn={isLoggedIn} />
+        <Sidebar activeCategory={category} isLoggedIn={isLoggedIn} />
       </div>
 
       <main>
-        {/* key пересоздаёт весь FeedShell (табы + лента + счётчик
-            непрочитанных) при смене категории/таба — иначе useState
-            внутри него не подхватит новые initial*-пропсы от сервера,
-            а старый (уменьшившийся по ходу скролла) счётчик и список
-            карточек останутся от предыдущего фильтра. */}
-        <FeedShell
-          key={`${activeCategory?.id ?? "all"}:${tab}`}
-          tab={tab}
+        {/* key пересоздаёт ленту при смене рубрики — иначе useState внутри
+            неё не подхватит новые initial*-пропсы от сервера, и список
+            карточек останется от предыдущего фильтра. */}
+        <FeedList
+          key={category ?? "all"}
+          initialItems={rows.slice(0, FEED_PAGE_SIZE)}
+          initialHasOlder={rows.length > FEED_PAGE_SIZE}
+          restored={restored}
+          loadedAt={loadedAt}
+          category={category}
           trackReads={isLoggedIn}
-          category={activeCategory?.id}
-          initialUnreadCount={unreadCount}
-          initialItems={feed}
-          initialHasMore={hasMore}
         />
       </main>
     </div>

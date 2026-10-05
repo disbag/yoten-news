@@ -29,16 +29,18 @@ function faviconUrl(homepage: string | null): string | null {
   }
 }
 
+// Сколько карточка должна пробыть на экране, чтобы считаться прочитанной.
+const READ_AFTER_MS = 2500;
+
 export default function FeedCard({
   item,
-  onRead,
+  trackReads,
 }: {
   item: FeedItem;
-  // Нет onRead — у гостя: прочитанное не отслеживается и не показывается
-  // (ни точки "новое", ни приглушённого текста, см. app/page.tsx).
-  onRead?: (clusterId: number) => void;
+  // false у гостя: прочитанное не отслеживается и не показывается (ни точки
+  // "новое", ни приглушённого текста, см. app/page.tsx).
+  trackReads: boolean;
 }) {
-  const trackReads = Boolean(onRead);
   const [expanded, setExpanded] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
   // Некоторые издания (Telegraph — известный случай) отдают 402/битые байты
@@ -76,7 +78,6 @@ export default function FeedCard({
 
   function markRead() {
     setIsRead(true);
-    onRead?.(item.clusterId);
     // Fire-and-forget: ошибка сети не должна мешать ленте — в худшем случае
     // статья снова придёт непрочитанной при следующей загрузке.
     fetch("/api/reads", {
@@ -86,28 +87,42 @@ export default function FeedCard({
     }).catch(() => {});
   }
 
-  // Прочитанной карточка становится не по клику, а когда пользователь
-  // проскроллил её целиком выше видимой области — как в Twitter/почте, где
-  // "просмотрено" значит "прошло через экран", а не "открыто по клику".
-  // rootMargin не используем — вместо этого различаем направление выхода по
-  // boundingClientRect: top < 0 при !isIntersecting означает "ушла наверх"
-  // (пользователь проскроллил мимо), а не "ещё не долистали" (там top > 0).
+  // Прочитанной карточка становится, когда пробыла на экране READ_AFTER_MS —
+  // как в Twitter (DIS-25): пролистанная на ходу остаётся непрочитанной.
+  // "На экране" — видна хотя бы наполовину; у карточки выше экрана (раскрытая,
+  // с вертикальным фото) половина может не поместиться никогда, поэтому ей
+  // достаточно занять половину экрана. Пока вкладка в фоне, время не идёт.
   useEffect(() => {
     if (isRead || !trackReads) return;
     const el = cardRef.current;
     if (!el) return;
 
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    function tick() {
+      timer = null;
+      if (document.visibilityState === "visible") markRead();
+      else timer = setTimeout(tick, READ_AFTER_MS);
+    }
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
-          markRead();
+        const screenHeight = entry.rootBounds?.height ?? window.innerHeight;
+        const onScreen =
+          entry.isIntersecting &&
+          (entry.intersectionRatio >= 0.5 || entry.intersectionRect.height >= screenHeight * 0.5);
+        if (onScreen) timer ??= setTimeout(tick, READ_AFTER_MS);
+        else if (timer) {
+          clearTimeout(timer);
+          timer = null;
         }
       },
-      { threshold: 0 }
+      { threshold: [0, 0.25, 0.5, 0.75, 1] }
     );
     observer.observe(el);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead читает актуальный isRead через замыкание на каждый ре-рендер, доп. зависимости пересоздавали бы observer без надобности
+    return () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead не зависит от состояния, пересоздавать observer при каждом рендере не нужно
   }, [isRead]);
 
   // timeAgo зависит от Date.now() — на сервере и при гидратации на клиенте
@@ -325,6 +340,7 @@ export default function FeedCard({
           font-size: calc(15px * var(--font-scale));
           line-height: calc(20px * var(--font-scale));
           color: var(--text);
+          transition: color 0.4s;
         }
         .summary.expandable {
           cursor: pointer;

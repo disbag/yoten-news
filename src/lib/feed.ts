@@ -41,18 +41,21 @@ export async function getFeed(
     // какую-то. Курсор по последней увиденной паре не зависит от того,
     // сколько строк появилось до него с момента предыдущего запроса.
     before?: { publishedAt: string; clusterId: number };
-    // Без userId (гость) isRead всегда false и unreadOnly ничего не фильтрует
-    // — сравнение ar.user_id = NULL никогда не истинно в SQL.
+    // Обратный курсор — карточки НОВЕЕ указанной (лента подгружается и
+    // вверх, когда открыта с запомненного места, см. FeedList.tsx).
+    // Возвращает ближайшие к курсору, в обычном порядке ленты.
+    after?: { publishedAt: string; clusterId: number };
+    // Лента начиная с этой карточки включительно — открытие на запомненном
+    // месте (см. app/page.tsx). Сравнение с датой самой карточки делается в
+    // SQL: в JS-дате нет микросекунд, и карточка могла бы не попасть в
+    // собственную выборку. Если карточки уже нет, выборка пустая.
+    fromClusterId?: number;
+    // Без userId (гость) isRead всегда false — сравнение ar.user_id = NULL
+    // никогда не истинно в SQL.
     userId?: number | null;
-    unreadOnly?: boolean;
-    // Обратный режим для таба "Прочитанные" — показывает только кластеры, где
-    // текущий пользователь отметил хотя бы одну статью прочитанной. Для
-    // гостя (userId=null) не бывает ни одной отметки, поэтому вкладка
-    // закономерно пустая — это ожидаемо, а не баг.
-    readOnly?: boolean;
   } = {}
 ): Promise<FeedItem[]> {
-  const { limit = 30, category, before, userId = null, unreadOnly = false, readOnly = false } = options;
+  const { limit = 30, category, before, after, fromClusterId, userId = null } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
   // одного кластера описывают один инфоповод, категория у них должна
@@ -86,12 +89,18 @@ export async function getFeed(
       `(max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})`
     );
   }
-  if (unreadOnly) {
-    havingClauses.push("NOT bool_or(ar.user_id IS NOT NULL)");
+  if (after) {
+    havingClauses.push(
+      `(max(a.published_at), a.cluster_id) > ($${params.push(after.publishedAt)}::timestamptz, $${params.push(after.clusterId)})`
+    );
   }
-  if (readOnly) {
-    havingClauses.push("bool_or(ar.user_id IS NOT NULL)");
+  if (fromClusterId) {
+    const n = params.push(fromClusterId);
+    havingClauses.push(
+      `(max(a.published_at), a.cluster_id) <= ((SELECT max(published_at) FROM articles WHERE cluster_id = $${n}), $${n})`
+    );
   }
+  const direction = after ? "ASC" : "DESC";
 
   const { rows } = await pool.query(
     `
@@ -149,7 +158,7 @@ export async function getFeed(
     ${categoryClause}
     GROUP BY a.cluster_id
     HAVING ${havingClauses.join(" AND ")}
-    ORDER BY published_at DESC, a.cluster_id DESC
+    ORDER BY published_at ${direction}, a.cluster_id ${direction}
     LIMIT $1
     `,
     params
@@ -160,7 +169,7 @@ export async function getFeed(
   const toIso = (value: unknown): string | null =>
     value ? new Date(value as string | Date).toISOString() : null;
 
-  return rows.map(
+  const items = rows.map(
     (row): FeedItem => ({
       clusterId: row.cluster_id,
       imageUrl: row.image_url,
@@ -176,26 +185,34 @@ export async function getFeed(
       isRead: row.is_read,
     })
   );
+  return after ? items.reverse() : items;
 }
 
-// Счётчик для бейджа рядом с табом "Новые" (см. FeedTabs.tsx) — общий по
-// всей ленте, без учёта текущего фильтра по категории (в макете бейдж один
-// на всю ленту, а не пересчитывается под конкретную категорию). Кластеры
-// только из выключенных изданий и кластеры без саммари не считаются — их в
+// Сколько карточек появилось или обновилось после указанного момента — для
+// плашки "N Новых" (см. FeedList.tsx). Считаем по времени попадания статьи в
+// базу, а не по дате публикации: фетч часто приносит статьи, опубликованные
+// раньше уже показанных, и по дате они встали бы ниже верха ленты незамеченными.
+// Кластеры только из выключенных изданий и без саммари не считаются — их в
 // ленте нет (см. getFeed).
-export async function getUnreadCount(userId: number | null): Promise<number> {
+export async function getNewCount(options: {
+  since: string;
+  category?: string;
+  userId?: number | null;
+}): Promise<number> {
+  const params: unknown[] = [options.userId ?? null, options.since];
+  const categoryClause = options.category ? `WHERE $${params.push(options.category)} = ANY(a.category)` : "";
   const { rows } = await pool.query(
     `
     SELECT count(*) AS count FROM (
       SELECT a.cluster_id
       FROM articles a
-      LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
+      ${categoryClause}
       GROUP BY a.cluster_id
-      HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
-    ) unread
+      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND max(a.created_at) > $2::timestamptz
+    ) fresh
     `,
-    [userId]
+    params
   );
   return Number(rows[0].count);
 }
