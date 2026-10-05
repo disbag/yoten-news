@@ -107,6 +107,9 @@ export default function FeedList({
   // компенсацию в useLayoutEffect ниже.
   const anchorSnapshot = useRef<{ id: string; viewTop: number } | null>(null);
   const scrollToTopNext = useRef(false);
+  // Идёт переход наверх по плашке (см. showNew): на это время подгрузка и
+  // запоминание места выключены — лента всё равно сейчас заменится.
+  const replacing = useRef(false);
 
   function cards(): HTMLElement[] {
     return Array.from(listRef.current?.querySelectorAll<HTMLElement>(":scope > [data-cluster-id]") ?? []);
@@ -135,7 +138,7 @@ export default function FeedList({
 
   async function loadOlder() {
     const cursor = olderCursor.current;
-    if (!cursor || loadingOlder.current) return;
+    if (!cursor || loadingOlder.current || replacing.current) return;
     loadingOlder.current = true;
     const startedIn = generation.current;
     try {
@@ -160,7 +163,7 @@ export default function FeedList({
 
   async function loadNewer() {
     const cursor = newerCursor.current;
-    if (!cursor || !hasNewerRef.current || loadingNewer.current || pendingNewer.current) return;
+    if (!cursor || !hasNewerRef.current || loadingNewer.current || pendingNewer.current || replacing.current) return;
     loadingNewer.current = true;
     const startedIn = generation.current;
     try {
@@ -191,7 +194,7 @@ export default function FeedList({
   // самом верху страницы браузер прокрутку не удерживает нигде.
   function flushNewer() {
     const page = pendingNewer.current;
-    if (!page) return;
+    if (!page || replacing.current) return;
     const browserAnchors = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto") && window.scrollY > 0;
     const idle = !touching.current && Date.now() - lastScrollAt.current >= IDLE_MS;
     if (!browserAnchors && !idle) return scheduleIdle();
@@ -209,13 +212,39 @@ export default function FeedList({
   // а не достраивается вверх: между запомненным местом и верхом могут быть
   // сотни карточек, и тянуть их все ради перехода наверх незачем — вниз от
   // новых лента всё равно подгружается непрерывно.
+  // Плавная прокрутка к началу страницы; завершается, когда страница доехала
+  // (или через 2,5 с — на случай, если прокрутку перебили жестом).
+  function scrollToTopSmoothly(): Promise<void> {
+    if (window.scrollY < 2) return Promise.resolve();
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      const timer = setInterval(() => {
+        if (window.scrollY >= 2 && Date.now() - startedAt < 2500) return;
+        clearInterval(timer);
+        resolve();
+      }, 50);
+    });
+  }
+
+  // Нажатие на плашку: плавно едем наверх и показываем верх ленты заново.
+  // Лента заменяется целиком, а не достраивается вверх: между запомненным
+  // местом и верхом могут быть сотни карточек, и тянуть их все ради перехода
+  // наверх незачем — вниз от новых лента всё равно подгружается непрерывно.
+  // Заменяем уже после прокрутки: новая лента короче, и замена на ходу
+  // оборвала бы движение.
   async function showNew() {
+    if (replacing.current) return;
+    replacing.current = true;
+    generation.current += 1;
+    pendingNewer.current = null;
+    anchorSnapshot.current = null;
     try {
-      const res = await fetch(feedUrl({ limit: String(FEED_PAGE_SIZE) }));
-      const page: Page = await res.json();
-      generation.current += 1;
-      pendingNewer.current = null;
-      anchorSnapshot.current = null;
+      const request = fetch(feedUrl({ limit: String(FEED_PAGE_SIZE) })).then((res) => res.json() as Promise<Page>);
+      request.catch(() => {});
+      await scrollToTopSmoothly();
+      const page = await request;
       olderCursor.current = page.items[page.items.length - 1] ?? null;
       newerCursor.current = page.items[0] ?? null;
       scrollToTopNext.current = true;
@@ -225,7 +254,10 @@ export default function FeedList({
       topLoadedAt.current = page.now;
       markSeen(page.now);
       if (page.unreadCount !== undefined) setUnreadCount(page.unreadCount);
-    } catch {}
+    } catch {
+    } finally {
+      replacing.current = false;
+    }
   }
 
   async function checkNew() {
@@ -241,7 +273,7 @@ export default function FeedList({
   // экрана. В самом верху ленты запоминать нечего: при следующем открытии
   // там должны быть свежие новости, а не вчерашняя первая карточка.
   function savePosition() {
-    if (!live) return;
+    if (!live || replacing.current) return;
     const atTop = !hasNewerRef.current && window.scrollY < 50;
     if (atTop && topLoadedAt.current && topLoadedAt.current > seenAt.current) markSeen(topLoadedAt.current);
     const top = atTop ? undefined : cards().find((el) => el.getBoundingClientRect().bottom > topInset);
