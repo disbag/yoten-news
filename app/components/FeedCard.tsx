@@ -156,7 +156,6 @@ export default function FeedCard({
           )}
           <div className="meta">
             <div className="source-row">
-              {trackReads && !isRead && <span className="unread-dot" />}
               <a
                 href={item.primaryLink}
                 target="_blank"
@@ -171,6 +170,9 @@ export default function FeedCard({
                   +{otherSources.length} источника
                 </button>
               )}
+              {/* Точка "новое" — последней в строке: когда карточка становится
+                  прочитанной и точка пропадает, ничего не сдвигается. */}
+              {trackReads && !isRead && <span className="unread-dot" />}
             </div>
             <span className="date">
               {category ? `${category} • ` : ""}
@@ -350,7 +352,7 @@ export default function FeedCard({
           cursor: pointer;
         }
         .summary.read {
-          color: var(--text-dim);
+          color: var(--text-read);
         }
         .read-more {
           color: var(--link);
