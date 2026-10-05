@@ -56,10 +56,10 @@ export default function AuthModal({ open, onClose }: { open: boolean; onClose: (
   // sticky в целом, независимо от z-index) сам создаёт stacking context.
   // Внутри него z-index модалки сравнивается только с соседями ВНУТРИ
   // Sidebar — снаружи весь этот stacking context целиком проигрывает
-  // элементам ленты с явным z-index (плашка "N Новых" в FeedList.tsx,
-  // раньше — табы), у которых положительный z-index против z-index: auto у
-  // Sidebar побеждает независимо от порядка в DOM. Реальный баг: табы
-  // оставались НЕ затемнены оверлеем модалки. Портал в body убирает Sidebar/MobileChrome
+  // FeedTabs с её явным z-index: 10 (см. FeedTabs.tsx), у которого
+  // положительный z-index против z-index: auto у Sidebar побеждает
+  // независимо от порядка в DOM. Реальный баг: табы оставались НЕ
+  // затемнены оверлеем модалки. Портал в body убирает Sidebar/MobileChrome
   // из цепочки предков совсем — z-index: 100 сравнивается уже на верхнем
   // уровне, где и выигрывает.
   return createPortal(

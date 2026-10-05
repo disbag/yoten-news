@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFeed, getNewCount } from "../../../src/lib/feed";
+import { getFeed, getNewCount, getUnreadCount } from "../../../src/lib/feed";
 import { getSessionUserId } from "../../../src/lib/session";
 import { FEED_PAGE_SIZE } from "../../../src/lib/feedPosition";
 
@@ -19,6 +19,9 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const category = searchParams.get("category") ?? undefined;
   const userId = await getSessionUserId();
+  // tab=read — вкладка "Прочитанные", иначе "Новые" (непрочитанные). У гостя
+  // вкладок нет (см. app/page.tsx) — всегда вся лента.
+  const readOnly = userId !== null && searchParams.get("tab") === "read";
 
   const newSince = searchParams.get("newSince");
   if (newSince) {
@@ -37,10 +40,14 @@ export async function GET(request: NextRequest) {
   // видел" (см. markSeen в FeedList.tsx), и статья, попавшая в базу во время
   // запроса, не должна потеряться для счётчика новых.
   const now = new Date().toISOString();
-  const rows = await getFeed({ category, limit: limit + 1, before, after, userId });
+  const rows = await getFeed({ category, limit: limit + 1, before, after, userId, unreadOnly: !readOnly, readOnly });
   const hasMore = rows.length > limit;
   // Лишняя карточка — самая дальняя от курсора: у подгрузки вверх она первая.
   const items = hasMore ? (after ? rows.slice(1) : rows.slice(0, limit)) : rows;
 
-  return NextResponse.json({ items, hasMore, now });
+  // Верх ленты запрашивают по плашке "N Новых" — заодно отдаём свежий
+  // счётчик непрочитанных для вкладки.
+  const unreadCount = !before && !after && userId !== null ? await getUnreadCount(userId) : undefined;
+
+  return NextResponse.json({ items, hasMore, now, unreadCount });
 }

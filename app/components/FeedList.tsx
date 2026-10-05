@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FeedItem } from "../../src/lib/feed";
 import { FEED_PAGE_SIZE, positionCookieName } from "../../src/lib/feedPosition";
 import FeedCard from "./FeedCard";
+import FeedTabs from "./FeedTabs";
 
 // Подгружаем следующие карточки, когда до края загруженного остаётся столько.
 const EDGE_CARDS = 3;
@@ -12,8 +13,10 @@ const POLL_MS = 60_000;
 // Пауза в прокрутке, после которой она считается законченной.
 const IDLE_MS = 150;
 const POSITION_MAX_AGE = 60 * 60 * 24 * 30;
+// Высота липких вкладок (см. FeedTabs.tsx): карточка под ними не видна.
+const TABS_HEIGHT = 40;
 
-type Page = { items: FeedItem[]; hasMore: boolean; now: string };
+type Page = { items: FeedItem[]; hasMore: boolean; now: string; unreadCount?: number };
 type Cursor = { publishedAt: string | null; clusterId: number };
 
 function newLabel(count: number): string {
@@ -24,10 +27,14 @@ function newLabel(count: number): string {
   return `${count} Новых`;
 }
 
-// Лента устроена как в Twitter (DIS-25): одна непрерывная, прочитанное не
-// скрывается, а только сереет (см. FeedCard.tsx). Раньше прочитанные карточки
-// удалялись из ленты прямо во время прокрутки, и вместе с догрузкой страницы
-// по 30 это и давало скачки. Теперь над видимым местом ничего не удаляется:
+// Лента устроена как в Twitter (DIS-25): непрерывная, прочитанная карточка
+// только сереет (см. FeedCard.tsx) и остаётся на месте. Раньше прочитанные
+// карточки удалялись из ленты прямо во время прокрутки, и вместе с догрузкой
+// страницы по 30 это и давало скачки. Из вкладки "Новые" прочитанное уходит
+// только тогда, когда лента и так собирается заново: при нажатии на плашку
+// "N Новых", при перезагрузке страницы и при возврате с вкладки
+// "Прочитанные" — сервер отдаёт уже только непрочитанное (unreadOnly в
+// src/lib/feed.ts). Пока лента открыта, над видимым местом ничего не удаляется:
 //  - вниз карточки дописываются в конец — на положение экрана это не влияет;
 //  - лента запоминает место и в следующий раз открывается с той же карточки
 //    (initialItems начинаются с неё, restored=true) — тогда она растёт и
@@ -40,7 +47,9 @@ export default function FeedList({
   restored,
   loadedAt,
   category,
+  tab,
   trackReads,
+  initialUnreadCount,
 }: {
   initialItems: FeedItem[];
   initialHasOlder: boolean;
@@ -49,15 +58,21 @@ export default function FeedList({
   // Время сервера, на которое собрана эта лента.
   loadedAt: string;
   category?: string;
-  // false у гостя: прочитанное хранить негде (см. /api/reads).
+  // "Прочитанные" — простой список: без запоминания места и без плашки.
+  tab: "new" | "read";
+  // false у гостя: прочитанное хранить негде (см. /api/reads), вкладок нет.
   trackReads: boolean;
+  initialUnreadCount: number;
 }) {
+  const live = tab === "new";
   const [items, setItems] = useState(initialItems);
   const [hasOlder, setHasOlder] = useState(initialHasOlder);
-  const [hasNewer, setHasNewer] = useState(restored);
+  const [hasNewer, setHasNewer] = useState(restored && live);
   const [newCount, setNewCount] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const topInset = trackReads ? TABS_HEIGHT : 0;
   const scope = category ?? "all";
   const positionKey = `yoten:pos:${scope}`;
   const seenKey = `yoten:seen:${scope}`;
@@ -100,6 +115,7 @@ export default function FeedList({
   function feedUrl(params: Record<string, string>): string {
     const query = new URLSearchParams(params);
     if (category) query.set("category", category);
+    if (tab === "read") query.set("tab", "read");
     return `/api/feed?${query}`;
   }
 
@@ -180,7 +196,7 @@ export default function FeedList({
     const idle = !touching.current && Date.now() - lastScrollAt.current >= IDLE_MS;
     if (!browserAnchors && !idle) return scheduleIdle();
     pendingNewer.current = null;
-    const anchor = cards().find((el) => el.getBoundingClientRect().bottom > 0);
+    const anchor = cards().find((el) => el.getBoundingClientRect().bottom > topInset);
     anchorSnapshot.current = anchor
       ? { id: anchor.dataset.clusterId!, viewTop: anchor.getBoundingClientRect().top }
       : null;
@@ -208,11 +224,12 @@ export default function FeedList({
       setHasNewer(false);
       topLoadedAt.current = page.now;
       markSeen(page.now);
+      if (page.unreadCount !== undefined) setUnreadCount(page.unreadCount);
     } catch {}
   }
 
   async function checkNew() {
-    if (document.visibilityState !== "visible") return;
+    if (!live || document.visibilityState !== "visible") return;
     try {
       const res = await fetch(feedUrl({ newSince: seenAt.current }));
       const data: { count: number } = await res.json();
@@ -224,9 +241,10 @@ export default function FeedList({
   // экрана. В самом верху ленты запоминать нечего: при следующем открытии
   // там должны быть свежие новости, а не вчерашняя первая карточка.
   function savePosition() {
+    if (!live) return;
     const atTop = !hasNewerRef.current && window.scrollY < 50;
     if (atTop && topLoadedAt.current && topLoadedAt.current > seenAt.current) markSeen(topLoadedAt.current);
-    const top = atTop ? undefined : cards().find((el) => el.getBoundingClientRect().bottom > 0);
+    const top = atTop ? undefined : cards().find((el) => el.getBoundingClientRect().bottom > topInset);
     const cookie = `${positionCookieName(category)}=`;
     try {
       if (!top) {
@@ -260,16 +278,19 @@ export default function FeedList({
   // бы число пикселей, а лента за это время изменилась.
   useLayoutEffect(() => {
     history.scrollRestoration = "manual";
+    // Первая карточка — запомненная или, если та уже прочитана и скрыта,
+    // следующая непрочитанная за ней. Запомненную ставим ровно как стояла,
+    // следующую — в начало экрана.
     const first = restored ? cards()[0] : undefined;
-    if (!first) {
-      window.scrollTo(0, 0);
-    } else {
-      let offset = 0;
-      try {
-        const saved = JSON.parse(localStorage.getItem(positionKey) ?? "null");
-        if (saved?.clusterId === Number(first.dataset.clusterId)) offset = Number(saved.offset) || 0;
-      } catch {}
+    let saved: { clusterId?: number; offset?: number } | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(positionKey) ?? "null");
+    } catch {}
+    if (first && saved?.clusterId === Number(first.dataset.clusterId)) {
+      const offset = Number(saved.offset) || 0;
       window.scrollTo(0, Math.max(0, first.getBoundingClientRect().top + window.scrollY - offset));
+    } else {
+      window.scrollTo(0, 0);
     }
     return () => {
       history.scrollRestoration = "auto";
@@ -285,7 +306,7 @@ export default function FeedList({
         seenAt.current = localStorage.getItem(seenKey) ?? loadedAt;
       } catch {}
       checkNew();
-    } else {
+    } else if (live) {
       markSeen(loadedAt);
     }
 
@@ -376,8 +397,10 @@ export default function FeedList({
 
   return (
     <>
+      {trackReads && <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />}
+
       {newCount > 0 && (
-        <div className="new-anchor">
+        <div className={trackReads ? "new-anchor below-tabs" : "new-anchor"}>
           <button type="button" className="new-toast" onClick={showNew}>
             {newLabel(newCount)}
           </button>
@@ -386,7 +409,12 @@ export default function FeedList({
 
       <div className="card-list" ref={listRef}>
         {items.map((item) => (
-          <FeedCard key={item.clusterId} item={item} trackReads={trackReads} />
+          <FeedCard
+            key={item.clusterId}
+            item={item}
+            trackReads={trackReads}
+            onRead={live ? () => setUnreadCount((count) => Math.max(0, count - 1)) : undefined}
+          />
         ))}
       </div>
 
@@ -402,6 +430,9 @@ export default function FeedList({
           z-index: 20;
           display: flex;
           justify-content: center;
+        }
+        .new-anchor.below-tabs {
+          top: 52px;
         }
         .new-toast {
           height: 32px;

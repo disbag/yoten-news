@@ -45,17 +45,25 @@ export async function getFeed(
     // вверх, когда открыта с запомненного места, см. FeedList.tsx).
     // Возвращает ближайшие к курсору, в обычном порядке ленты.
     after?: { publishedAt: string; clusterId: number };
-    // Лента начиная с этой карточки включительно — открытие на запомненном
-    // месте (см. app/page.tsx). Сравнение с датой самой карточки делается в
-    // SQL: в JS-дате нет микросекунд, и карточка могла бы не попасть в
-    // собственную выборку. Если карточки уже нет, выборка пустая.
+    // Лента начиная с места этой карточки (включительно) — открытие на
+    // запомненном месте (см. app/page.tsx). Сама карточка в выборку может и
+    // не попасть (прочитана — см. unreadOnly), тогда первой идёт следующая за
+    // ней. Сравнение с датой карточки делается в SQL: в JS-дате нет
+    // микросекунд, и карточка могла бы не попасть в собственную выборку. Если
+    // карточки уже нет в базе, выборка пустая.
     fromClusterId?: number;
     // Без userId (гость) isRead всегда false — сравнение ar.user_id = NULL
     // никогда не истинно в SQL.
     userId?: number | null;
+    // Вкладка "Новые": только кластеры, которые пользователь ещё не отметил
+    // прочитанными. У гостя (userId=null) отметок нет — фильтр ничего не
+    // убирает.
+    unreadOnly?: boolean;
+    // Вкладка "Прочитанные": наоборот, только отмеченные. У гостя пусто.
+    readOnly?: boolean;
   } = {}
 ): Promise<FeedItem[]> {
-  const { limit = 30, category, before, after, fromClusterId, userId = null } = options;
+  const { limit = 30, category, before, after, fromClusterId, userId = null, unreadOnly = false, readOnly = false } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
   // одного кластера описывают один инфоповод, категория у них должна
@@ -103,6 +111,8 @@ export async function getFeed(
       `(max(a.published_at), a.cluster_id) <= ((SELECT max(published_at) FROM articles WHERE cluster_id = $${n}), $${n})`
     );
   }
+  if (unreadOnly) havingClauses.push("NOT bool_or(ar.user_id IS NOT NULL)");
+  if (readOnly) havingClauses.push("bool_or(ar.user_id IS NOT NULL)");
   const direction = after ? "ASC" : "DESC";
 
   const { rows } = await pool.query(
@@ -197,7 +207,9 @@ export async function getFeed(
 // а не по дате публикации: фетч часто приносит статьи, опубликованные раньше
 // уже показанных, и по дате они встали бы ниже верха ленты незамеченными.
 // Кластеры только из выключенных изданий и без саммари не считаются — их в
-// ленте нет (см. getFeed).
+// ленте нет (см. getFeed). Прочитанные тоже: новая статья в уже прочитанном
+// кластере его не возвращает во вкладку "Новые", и плашка обещала бы больше
+// карточек, чем покажет.
 export async function getNewCount(options: {
   since: string;
   category?: string;
@@ -210,13 +222,36 @@ export async function getNewCount(options: {
     SELECT count(*) AS count FROM (
       SELECT a.cluster_id
       FROM articles a
+      LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
       WHERE a.visible_at IS NOT NULL ${categoryClause}
       GROUP BY a.cluster_id
-      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND max(a.visible_at) > $2::timestamptz
+      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND NOT bool_or(ar.user_id IS NOT NULL)
+         AND max(a.visible_at) > $2::timestamptz
     ) fresh
     `,
     params
+  );
+  return Number(rows[0].count);
+}
+
+// Счётчик рядом с вкладкой "Новые" (см. FeedTabs.tsx) — общий по всей ленте,
+// без учёта рубрики. Кластеры только из выключенных изданий, без саммари и
+// ещё скрытые до конца прогона не считаются — их в ленте нет (см. getFeed).
+export async function getUnreadCount(userId: number | null): Promise<number> {
+  const { rows } = await pool.query(
+    `
+    SELECT count(*) AS count FROM (
+      SELECT a.cluster_id
+      FROM articles a
+      LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
+      LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
+      WHERE a.visible_at IS NOT NULL
+      GROUP BY a.cluster_id
+      HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
+    ) unread
+    `,
+    [userId]
   );
   return Number(rows[0].count);
 }

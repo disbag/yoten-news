@@ -35,11 +35,14 @@ const READ_AFTER_MS = 2500;
 export default function FeedCard({
   item,
   trackReads,
+  onRead,
 }: {
   item: FeedItem;
   // false у гостя: прочитанное не отслеживается и не показывается (ни точки
   // "новое", ни приглушённого текста, см. app/page.tsx).
   trackReads: boolean;
+  // Карточка только что стала прочитанной — для счётчика вкладки "Новые".
+  onRead?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
@@ -78,6 +81,7 @@ export default function FeedCard({
 
   function markRead() {
     setIsRead(true);
+    onRead?.();
     // Fire-and-forget: ошибка сети не должна мешать ленте — в худшем случае
     // статья снова придёт непрочитанной при следующей загрузке.
     fetch("/api/reads", {
