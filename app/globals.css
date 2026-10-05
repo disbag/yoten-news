@@ -10,7 +10,7 @@
   --text: #000000;
   --text-dim: rgba(0, 0, 0, 0.5);
   /* Текст прочитанной новости: заметно, но мягче, чем --text-dim. */
-  --text-read: rgba(0, 0, 0, 0.68);
+  --text-read: rgba(0, 0, 0, 0.85);
   /* Мягкий тёмно-серый текст меню, настроек и модалки входа (#3d3d3d в
      макете) и приглушённые подписи — заголовки групп, неактивные табы. */
   --text-soft: #3d3d3d;
@@ -52,7 +52,7 @@
   --border: #2e3035;
   --text: #ececea;
   --text-dim: rgba(236, 236, 234, 0.55);
-  --text-read: rgba(236, 236, 234, 0.84);
+  --text-read: rgba(236, 236, 234, 0.9);
   --text-soft: #d6d6d2;
   --text-muted: rgba(236, 236, 234, 0.45);
   --icon: #b9bcc4;
@@ -73,7 +73,7 @@
     --border: #2e3035;
     --text: #ececea;
     --text-dim: rgba(236, 236, 234, 0.55);
-    --text-read: rgba(236, 236, 234, 0.84);
+    --text-read: rgba(236, 236, 234, 0.9);
     --text-soft: #d6d6d2;
     --text-muted: rgba(236, 236, 234, 0.45);
     --icon: #b9bcc4;
