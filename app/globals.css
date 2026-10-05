@@ -52,7 +52,7 @@
   --border: #2e3035;
   --text: #ececea;
   --text-dim: rgba(236, 236, 234, 0.55);
-  --text-read: rgba(236, 236, 234, 0.72);
+  --text-read: rgba(236, 236, 234, 0.84);
   --text-soft: #d6d6d2;
   --text-muted: rgba(236, 236, 234, 0.45);
   --icon: #b9bcc4;
@@ -73,7 +73,7 @@
     --border: #2e3035;
     --text: #ececea;
     --text-dim: rgba(236, 236, 234, 0.55);
-    --text-read: rgba(236, 236, 234, 0.72);
+    --text-read: rgba(236, 236, 234, 0.84);
     --text-soft: #d6d6d2;
     --text-muted: rgba(236, 236, 234, 0.45);
     --icon: #b9bcc4;
