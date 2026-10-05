@@ -318,9 +318,12 @@ async function processSource(
     // вставить ту же ссылку first), без ON CONFLICT это валит весь процесс
     // с необработанным исключением вместо того, чтобы просто пропустить уже
     // занятую кем-то статью.
+    //
+    // visible_at = NULL — статья скрыта из ленты до конца прогона, см.
+    // revealBatch.
     const insert = await pool.query(
-      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, embedding, title_embedding, image_urls)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9::vector, $10)
+      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, embedding, title_embedding, image_urls, visible_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9::vector, $10, NULL)
        ON CONFLICT (link) DO NOTHING
        RETURNING id`,
       [
@@ -555,12 +558,26 @@ async function markSkipped(link: string, reason: "sport" | "no_text") {
   ]);
 }
 
+// Статьи прогона появляются в ленте одной пачкой, а не по одной каждые
+// 10 секунд (DIS-25): иначе плашка "N Новых" у открытой ленты срабатывала бы
+// заново каждую минуту все 3-8 минут, что идёт прогон. Статья вставляется
+// скрытой (visible_at = NULL, см. INSERT выше), а здесь все скрытые
+// открываются одним запросом. Склейке скрытость не мешает: она смотрит на все
+// статьи в базе.
+async function revealBatch() {
+  const res = await pool.query("UPDATE articles SET visible_at = now() WHERE visible_at IS NULL");
+  if (res.rowCount) console.log(`Показано в ленте: ${res.rowCount}`);
+}
+
 async function main() {
   // Проверка на уже запущенный прогон — см. src/lib/fetchLock.ts. Ждёт
   // завершения, если тот прогресс идёт нормально, либо останавливает его и
   // продолжает сама, если он завис (не подавал признаков жизни).
   await acquireLock();
   try {
+    // Прошлый прогон могли оборвать снаружи (таймаут джобы) — тогда его статьи
+    // так и остались скрытыми.
+    await revealBatch();
     const sources = await pool.query("SELECT id, name, rss_url FROM sources");
     // FETCH_SOURCES="Dezeen,Esquire" — ручной прогон только по перечисленным
     // изданиям (вместе с FETCH_SINCE_DAYS — догрузить прошлые дни у только что
@@ -573,8 +590,11 @@ async function main() {
       await processSource(source, remaining);
     }
     await cleanupOld();
-    await pool.end();
   } finally {
+    // И при ошибке посреди прогона (исчерпана квота, упала сеть): то, что уже
+    // обработано, должно попасть в ленту сейчас, а не через полчаса.
+    await revealBatch().catch((err) => console.error(`не удалось показать статьи: ${(err as Error).message}`));
+    await pool.end().catch(() => {});
     releaseLock();
   }
 }

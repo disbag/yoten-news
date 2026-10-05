@@ -64,11 +64,14 @@ export async function getFeed(
   // относиться сразу к двум темам (см. CATEGORY_INSTRUCTIONS в
   // src/lib/prompt.ts), поэтому category — массив, и фильтр — вхождение, а
   // не равенство.
+  //
+  // visible_at IS NOT NULL — статьи идущего прямо сейчас прогона скрыты до его
+  // конца и появляются одной пачкой (см. revealBatch в fetchAndProcess.ts).
   const params: unknown[] = [limit, userId];
-  let categoryClause = "";
+  let categoryClause = "WHERE a.visible_at IS NOT NULL";
   if (category) {
     params.push(category);
-    categoryClause = `WHERE $${params.length} = ANY(a.category)`;
+    categoryClause += ` AND $${params.length} = ANY(a.category)`;
   }
 
   // Издания, выключенные пользователем на странице настроек (см.
@@ -189,9 +192,10 @@ export async function getFeed(
 }
 
 // Сколько карточек появилось или обновилось после указанного момента — для
-// плашки "N Новых" (см. FeedList.tsx). Считаем по времени попадания статьи в
-// базу, а не по дате публикации: фетч часто приносит статьи, опубликованные
-// раньше уже показанных, и по дате они встали бы ниже верха ленты незамеченными.
+// плашки "N Новых" (см. FeedList.tsx). Считаем по времени появления статьи в
+// ленте (visible_at — конец её прогона, см. revealBatch в fetchAndProcess.ts),
+// а не по дате публикации: фетч часто приносит статьи, опубликованные раньше
+// уже показанных, и по дате они встали бы ниже верха ленты незамеченными.
 // Кластеры только из выключенных изданий и без саммари не считаются — их в
 // ленте нет (см. getFeed).
 export async function getNewCount(options: {
@@ -200,16 +204,16 @@ export async function getNewCount(options: {
   userId?: number | null;
 }): Promise<number> {
   const params: unknown[] = [options.userId ?? null, options.since];
-  const categoryClause = options.category ? `WHERE $${params.push(options.category)} = ANY(a.category)` : "";
+  const categoryClause = options.category ? `AND $${params.push(options.category)} = ANY(a.category)` : "";
   const { rows } = await pool.query(
     `
     SELECT count(*) AS count FROM (
       SELECT a.cluster_id
       FROM articles a
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
-      ${categoryClause}
+      WHERE a.visible_at IS NOT NULL ${categoryClause}
       GROUP BY a.cluster_id
-      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND max(a.created_at) > $2::timestamptz
+      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND max(a.visible_at) > $2::timestamptz
     ) fresh
     `,
     params

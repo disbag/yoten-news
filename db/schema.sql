@@ -121,6 +121,13 @@ CREATE TABLE IF NOT EXISTS email_login_codes (
 -- до появления колонки, — для них работает только сравнение тел.
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_embedding vector(384);
 
+-- Когда статья появилась в ленте. Фетч вставляет статью скрытой (NULL) и
+-- открывает все статьи прогона одной пачкой в его конце (см. revealBatch в
+-- src/jobs/fetchAndProcess.ts); лента показывает только открытые, а плашка
+-- "N Новых" считает по этому времени (см. src/lib/feed.ts). DEFAULT now() —
+-- для вставок, которые колонку не указывают: такая статья видна сразу.
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS visible_at TIMESTAMPTZ DEFAULT now();
+
 -- Порядковые "user-01", "user-02"... для user.name/displayName при passkey-
 -- регистрации без ручного ввода имени (см. app/api/auth/register/options).
 CREATE SEQUENCE IF NOT EXISTS passkey_user_seq;
