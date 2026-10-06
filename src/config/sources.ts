@@ -60,9 +60,6 @@ type SourceConfig = {
   // Отрезать от ссылок из фида всё после "?" — когда издание дописывает к
   // ним рекламные метки (utm_…), а сама статья открывается и без них.
   stripLinkQuery?: boolean;
-  // Обложку брать из RSS (media:content), а не og:image со страницы — когда
-  // картинка из og:image серверному запросу не отдаётся.
-  coverFromFeed?: boolean;
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -461,20 +458,6 @@ export const SOURCES: SourceConfig[] = [
     gallery: "colossal",
     preferFeedContent: true,
     feedFooterPattern: /\s*Do stories and artists like this matter to you\?[\s\S]*$/i,
-  },
-  {
-    // Брендинг, айдентика, упаковка, индустрия дизайна (Великобритания).
-    // Полный текст в content:encoded (страница обрывает его призывом
-    // поддержать издание), в конце — блок "What to read next" со ссылками на
-    // другие статьи и ссылка "Source". Картинки — см. "designweek" в
-    // src/lib/ogTags.ts: og:image серверу не отдаётся, обложка из фида.
-    name: "Design Week",
-    rssUrl: "https://www.designweek.co.uk/feed/",
-    homepageUrl: "https://www.designweek.co.uk",
-    gallery: "designweek",
-    preferFeedContent: true,
-    feedFooterPattern: /\s*(?:What to read next:[\s\S]*|Source)\s*$/i,
-    coverFromFeed: true,
   },
   {
     // Интерьеры, мебель, архитектура, искусство (США). Полный чистый текст в

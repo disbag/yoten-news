@@ -30,7 +30,7 @@ import { isAd } from "../lib/adFilter.js";
 // которые блокируют fetchOgTags (см. комментарий у og-запроса ниже) — без
 // og:image со страницы это единственный источник картинки, который у нас
 // вообще есть.
-type MediaContent = { $: { url: string; medium?: string; width?: string; height?: string } };
+type MediaContent = { $: { url: string; medium?: string } };
 type FeedItem = {
   "dc:content"?: string;
   "content:encoded"?: string;
@@ -40,25 +40,18 @@ const parser = new Parser<Record<string, never>, FeedItem>({
   customFields: { item: ["dc:content", "content:encoded", "media:content"] },
 });
 
-// size — размеры картинки, если фид их указывает: по ним считается имя
-// облегчённого варианта обложки (см. "designweek" в src/lib/ogTags.ts).
-type FeedImage = { url: string; size?: { width: number; height: number } };
-function extractFeedImage(media: MediaContent | MediaContent[] | undefined): FeedImage | undefined {
+function extractFeedImage(media: MediaContent | MediaContent[] | undefined): string | undefined {
   const items = Array.isArray(media) ? media : media ? [media] : [];
-  const image = items.find((m) => !m.$.medium || m.$.medium === "image")?.$;
-  if (!image?.url) return undefined;
-  const width = Number(image.width);
-  const height = Number(image.height);
-  return { url: image.url, size: width > 0 && height > 0 ? { width, height } : undefined };
+  return items.find((m) => !m.$.medium || m.$.medium === "image")?.$.url;
 }
 
 // <enclosure> с картинкой — обложка у фидов без media:content (Abduzeedo).
 // Нужна там же, где media:content: когда страница статьи боту не открылась.
 // http-адреса не берём — на https-странице браузер такую картинку не покажет.
-function extractEnclosureImage(enclosure: { url?: string; type?: string } | undefined): FeedImage | undefined {
+function extractEnclosureImage(enclosure: { url?: string; type?: string } | undefined): string | undefined {
   if (!enclosure?.url || !/^https:\/\//i.test(enclosure.url)) return undefined;
   if (!/^image\//i.test(enclosure.type ?? "")) return undefined;
-  return { url: enclosure.url };
+  return enclosure.url;
 }
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
 // Мягче обычного порога — только для пар, где хотя бы одна статья без
@@ -310,8 +303,7 @@ async function processSource(
         pageFailureLogged = true;
       }
     }
-    const feedImage = extractFeedImage(item["media:content"]) ?? extractEnclosureImage(item.enclosure);
-    if (feedImage && (sourceConfig?.coverFromFeed || !imageUrl)) imageUrl = feedImage.url;
+    imageUrl ??= extractFeedImage(item["media:content"]) ?? extractEnclosureImage(item.enclosure);
 
     // Галерея из самого RSS — для сайтов, чья страница закрыта от бота, но
     // RSS несёт фото статьи (GameSpot, см. GALLERY_SITES в src/lib/ogTags.ts).
@@ -320,11 +312,7 @@ async function processSource(
       const feedHtml = feedFullHtml ?? item.content;
       const firstFrame = feedHtml ? feedCover(feedHtml, item.link, gallerySite) : undefined;
       if (firstFrame) imageUrl = firstFrame;
-      else if (imageUrl) {
-        // Размеры обложки известны, только когда она взята из фида (coverFromFeed).
-        const size = sourceConfig?.coverFromFeed && imageUrl === feedImage?.url ? feedImage.size : undefined;
-        imageUrl = normalizeCover(gallerySite, imageUrl, size);
-      }
+      else if (imageUrl) imageUrl = normalizeCover(gallerySite, imageUrl);
       const feedGallery = feedHtml ? extractFeedGallery(feedHtml, item.link, gallerySite, imageUrl) : [];
       gallery = feedGallery.length ? feedGallery : undefined;
       // Обложка — анимированный GIF (у постов про анимацию и моушн-дизайн они

@@ -295,15 +295,6 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 //    1500x1000 (~150–450 КБ), а в og:image лежит оригинал до 1,3 МБ, и по
 //    адресу их не склеить — поэтому обложкой статьи становится кадр из RSS
 //    (coverFromFirstFrame), а og:image не используется.
-//  - "designweek" (Design Week): у картинок в RSS ленивые заглушки в src,
-//    настоящие адреса — в data-src/data-srcset. Основной сервер картинок
-//    (imagescdn.designweek.co.uk, он же в og:image) закрыт от серверных
-//    запросов проверкой Cloudflare; рабочие адреса — на cloudfront.net, их сам
-//    сайт отдаёт в media:content и data-srcset. Оригиналы там до 1,6 МБ,
-//    поэтому берём вариант WordPress "large" (вписан в 1024x1024, 40–130 КБ):
-//    у кадров тела он есть в data-srcset, у обложки имя считается из её
-//    размеров (проверено на обложках всего фида). Варианты "-1290x…" из того
-//    же data-srcset на сервере не существуют (403). GIF не берём.
 //  - "fastcompany" (Fast Company, раздел Co.Design): кадры на Cloudinary
 //    (images.fastcompany.com/image/upload/{преобразования}/wp-cms-2/…);
 //    og:image без ширины — 2480px и 1 МБ, приводим всё к JPEG шириной 1280
@@ -340,7 +331,6 @@ export type GallerySite =
   | "hyperallergic"
   | "colossal"
   | "designmilk"
-  | "designweek"
   | "fastcompany"
   | "architectureau"
   | "designwanted"
@@ -352,8 +342,6 @@ const MOTOR1_IMAGE_PATH = /^\/images\/mgl\/([A-Za-z0-9]+)\/s\d+\/([^/]+?)\.(?:jp
 const CREATIVEBOOM_IMAGE_PATH = /^(.*\/conversions\/[a-f0-9]+)-(?:thumb|small|medium|large)\.webp$/i;
 // Всё, что стоит между /image/upload/ и путём файла, — преобразования Cloudinary.
 const FASTCOMPANY_IMAGE_PATH = /^\/image\/upload\/(?:[^/]+\/)*?(wp-cms[^/]*\/.+)$/i;
-// Откуда Design Week на самом деле отдаёт загрузки (см. коммент к "designweek").
-const DESIGNWEEK_UPLOADS_HOST = "d3faj0w6aqatyx.cloudfront.net";
 
 // normalize возвращает null для картинок, которые не являются кадром
 // галереи (заглушки lazy-load и т.п.) — они просто пропускаются.
@@ -573,28 +561,6 @@ const GALLERY_SITES: Record<
     srcsetMaxWidth: 1024,
     coverFromFirstFrame: true,
   },
-  designweek: {
-    selector: "img",
-    normalize: (url, size) => {
-      if (url.hostname === "imagescdn.designweek.co.uk") url.hostname = DESIGNWEEK_UPLOADS_HOST;
-      if (url.hostname !== DESIGNWEEK_UPLOADS_HOST || !url.pathname.startsWith("/uploads/")) return null;
-      if (/\.gif$/i.test(url.pathname)) return null;
-      url.search = "";
-      // Имя варианта "large" WordPress считает так же: вписывает в 1024x1024
-      // и округляет обе стороны.
-      const file = url.pathname.match(/^(.*?)(?:-scaled)?\.(jpe?g|png|webp)$/i);
-      const longest = size ? Math.max(size.width, size.height) : 0;
-      if (file && size && longest > 1024 && !/-\d+x\d+$/.test(file[1])) {
-        const k = 1024 / longest;
-        url.pathname = `${file[1]}-${Math.round(size.width * k)}x${Math.round(size.height * k)}.${file[2]}`;
-      }
-      return url;
-    },
-    leadWithCover: true,
-    from: "rss",
-    lazy: true,
-    srcsetMaxWidth: 1024,
-  },
   fastcompany: {
     selector: "img",
     normalize: (url) => {
@@ -675,9 +641,9 @@ export function extractFeedGallery(html: string, baseUrl: string, site: GalleryS
 
 // Та же нормализация к облегчённому размеру — для одиночной обложки статьи
 // без галереи (у GameSpot обложка в RSS всего 300px).
-export function normalizeCover(site: GallerySite, cover: string, size?: { width: number; height: number }): string {
+export function normalizeCover(site: GallerySite, cover: string): string {
   try {
-    return GALLERY_SITES[site].normalize(new URL(cover), size)?.toString() ?? cover;
+    return GALLERY_SITES[site].normalize(new URL(cover))?.toString() ?? cover;
   } catch {
     return cover;
   }
