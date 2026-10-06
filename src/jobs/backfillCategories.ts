@@ -30,8 +30,8 @@ async function main() {
       const { summary: raw } = await summarize(row.title, row.ai_summary, CATEGORY_ONLY_PROMPT);
       const tag = lastCategoryTag(raw);
 
-      if (tag === "sport") {
-        // Спорт решили не показывать в ленте вообще (см. fetchAndProcess.ts) —
+      if (tag === "sport" || tag === "shopping") {
+        // Спорт и рекламу решили не показывать в ленте вообще (см. fetchAndProcess.ts) —
         // такие статьи не размечаем, а удаляем. cluster_id ссылается на
         // articles(id) без ON DELETE — на случай, если что-то всё же
         // сгруппировалось с этой статьёй, сначала отвязываем (обычно нет).
@@ -39,7 +39,7 @@ async function main() {
           row.id,
         ]);
         await pool.query("DELETE FROM articles WHERE id = $1", [row.id]);
-        console.log(`  #${row.id} "${row.title.slice(0, 50)}..." → спорт, удалена`);
+        console.log(`  #${row.id} "${row.title.slice(0, 50)}..." → ${tag === "sport" ? "спорт" : "реклама"}, удалена`);
         updated += 1;
         await sleep(500);
         continue;

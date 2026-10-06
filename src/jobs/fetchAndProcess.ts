@@ -8,6 +8,7 @@ import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
 import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
 import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
+import { isAd } from "../lib/adFilter.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
 // Lifehacker — Ziff Davis) кладут туда ПОЛНЫЙ, уже чистый текст статьи прямо
@@ -81,12 +82,6 @@ function toleratesOverload(err: GeminiQuotaExhaustedError): boolean {
   overloadedInRow += 1;
   return overloadedInRow < MAX_OVERLOADED_IN_ROW;
 }
-
-// Wired (и потенциально другие издания) подмешивают в общий RSS свою
-// партнёрскую рубрику купонов/промокодов — это не редакционный контент, а
-// affiliate-листинги ("50% Off DoorDash Promo Code"), не новости. Отсекаем по
-// заголовку до любых сетевых запросов/саммаризации — не тратим на них квоту.
-const PROMO_TITLE_PATTERN = /\b(promo codes?|coupons?|discount codes?)\b/i;
 
 // Guardian (и, вероятно, другие издания с тем же форматом) ведёт "live"-блоги
 // — одна страница на весь день, куда постоянно дописываются апдейты сразу по
@@ -220,7 +215,7 @@ async function processSource(
     // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
     // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
     if (!/^https?:\/\//i.test(item.link)) continue;
-    if (PROMO_TITLE_PATTERN.test(item.title)) continue; // партнёрский купон/промокод, не новость
+    if (isAd(item.title, item.link)) continue; // распродажа, подборка скидок, купон — общий фильтр для всех изданий
     if (sourceConfig?.adTitlePattern?.test(item.title)) continue; // рекламный пост со скидками, см. sources.ts
     if (sourceConfig?.adLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // то же по адресу
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
@@ -478,6 +473,16 @@ async function processSource(
       continue;
     }
 
+    // Рекламу, которую не узнали шаблоны (см. src/lib/adFilter.ts), отмечает
+    // модель тем же запросом — тегом shopping: подборки товаров, скидки, "где
+    // купить".
+    if (category?.includes("shopping")) {
+      console.log(`  – "${item.title.slice(0, 60)}..." → реклама/шопинг, пропущена`);
+      await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
+      await markSkipped(item.link, "shopping");
+      continue;
+    }
+
     // summarizeArticle возвращает title как есть только в одном случае —
     // когда ни один источник контекста (текст статьи, og:description, RSS-
     // сниппет) не дал ни одного факта (см. return title в src/lib/summarizer.ts).
@@ -551,7 +556,7 @@ async function cleanupOld() {
 // (спорт, нет текста), чтобы следующие прогоны не качали страницу и не звали
 // Gemini заново. Ошибки саммаризации сюда не пишем: они обычно временные
 // (сеть, перегрузка модели), и в следующем прогоне статья должна пройти.
-async function markSkipped(link: string, reason: "sport" | "no_text") {
+async function markSkipped(link: string, reason: "sport" | "shopping" | "no_text") {
   await pool.query("INSERT INTO skipped_links (link, reason) VALUES ($1, $2) ON CONFLICT (link) DO NOTHING", [
     link,
     reason,
