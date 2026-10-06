@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { FeedItem } from "../../src/lib/feed";
 import { FEED_PAGE_SIZE, positionCookieName } from "../../src/lib/feedPosition";
 import FeedCard from "./FeedCard";
@@ -15,6 +16,10 @@ const IDLE_MS = 150;
 const POSITION_MAX_AGE = 60 * 60 * 24 * 30;
 // Высота липких вкладок (см. FeedTabs.tsx): карточка под ними не видна.
 const TABS_HEIGHT = 40;
+
+// Ответы сервера (по их loadedAt), из которых лента уже собиралась, — см.
+// проверку на устаревшую копию в FeedList.
+const usedPayloads = new Set<string>();
 
 type Page = { items: FeedItem[]; hasMore: boolean; now: string; unreadCount?: number };
 type Cursor = { cursor: string | null; clusterId: number };
@@ -65,6 +70,32 @@ export default function FeedList({
   initialUnreadCount: number;
 }) {
   const live = tab === "new";
+  const router = useRouter();
+  // Лента собрана из ответа сервера, который уже показывали раньше. Так
+  // бывает, когда Next.js при возврате на страницу достаёт её сохранённую
+  // копию вместо запроса к серверу: в боевой сборке — при переходе по
+  // ссылке на страницу, с которой сайт был открыт (обычно это "Все"), и
+  // всегда при кнопке "назад". В копии прочитанные с тех пор карточки снова
+  // числятся новыми: возвращаешься с "Прочитанных" на "Новые", а они на месте
+  // (DIS-39; staleTimes в next.config.mjs от этого не спасает). Такую копию
+  // не показываем вовсе и сразу просим у сервера свежую ленту — она придёт с
+  // новым loadedAt, и лента соберётся заново (см. key в app/page.tsx).
+  const [stale, setStale] = useState(false);
+  const staleChecked = useRef(false);
+  useLayoutEffect(() => {
+    if (staleChecked.current) return;
+    staleChecked.current = true;
+    if (!usedPayloads.has(loadedAt)) {
+      usedPayloads.add(loadedAt);
+      return;
+    }
+    setStale(true);
+    router.refresh();
+    // Сервер не ответил (нет сети) — лучше старая лента, чем пустой экран.
+    const fallback = setTimeout(() => setStale(false), 5000);
+    return () => clearTimeout(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- только при монтировании
+  }, []);
   const [items, setItems] = useState(initialItems);
   const [hasOlder, setHasOlder] = useState(initialHasOlder);
   const [hasNewer, setHasNewer] = useState(restored && live);
@@ -337,6 +368,11 @@ export default function FeedList({
       touching.current = false;
       scheduleIdle();
     }
+    // Браузер вернул страницу из своего кеша целиком (bfcache в Safari) — её
+    // состояние заморожено на момент ухода, просим свежую ленту.
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) router.refresh();
+    }
     function onVisibility() {
       if (document.visibilityState === "visible") checkNew();
       else savePosition();
@@ -347,6 +383,7 @@ export default function FeedList({
     window.addEventListener("touchend", onTouchEnd, { passive: true });
     window.addEventListener("touchcancel", onTouchEnd, { passive: true });
     window.addEventListener("pagehide", savePosition);
+    window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       clearInterval(poll);
@@ -355,6 +392,7 @@ export default function FeedList({
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchEnd);
       window.removeEventListener("pagehide", savePosition);
+      window.removeEventListener("pageshow", onPageShow);
       document.removeEventListener("visibilitychange", onVisibility);
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
@@ -422,7 +460,7 @@ export default function FeedList({
       )}
 
       <div className="card-list" ref={listRef}>
-        {items.map((item) => (
+        {(stale ? [] : items).map((item) => (
           <FeedCard
             key={item.clusterId}
             item={item}

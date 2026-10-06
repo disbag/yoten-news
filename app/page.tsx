@@ -49,11 +49,12 @@ export default async function HomePage(props: { searchParams: Promise<{ category
       </div>
 
       <main>
-        {/* key пересоздаёт ленту при смене рубрики или вкладки — иначе
-            useState внутри неё не подхватит новые initial*-пропсы от сервера,
-            и список карточек останется от предыдущего фильтра. */}
+        {/* key пересоздаёт ленту при смене рубрики или вкладки и при каждом
+            новом ответе сервера (loadedAt) — иначе useState внутри неё не
+            подхватит новые initial*-пропсы, и список карточек останется
+            прежним. */}
         <FeedList
-          key={`${category ?? "all"}:${tab}`}
+          key={`${category ?? "all"}:${tab}:${loadedAt}`}
           initialItems={rows.slice(0, FEED_PAGE_SIZE)}
           initialHasOlder={rows.length > FEED_PAGE_SIZE}
           restored={restored}
