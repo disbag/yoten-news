@@ -17,7 +17,7 @@ const POSITION_MAX_AGE = 60 * 60 * 24 * 30;
 const TABS_HEIGHT = 40;
 
 type Page = { items: FeedItem[]; hasMore: boolean; now: string; unreadCount?: number };
-type Cursor = { publishedAt: string | null; clusterId: number };
+type Cursor = { cursor: string | null; clusterId: number };
 
 function newLabel(count: number): string {
   const mod10 = count % 10;
@@ -107,8 +107,8 @@ export default function FeedList({
   // компенсацию в useLayoutEffect ниже.
   const anchorSnapshot = useRef<{ id: string; viewTop: number } | null>(null);
   const scrollToTopNext = useRef(false);
-  // Идёт переход наверх по плашке (см. showNew): на это время подгрузка и
-  // запоминание места выключены — лента всё равно сейчас заменится.
+  // Идёт переход наверх по плашке (см. showNew): пока грузится верх ленты,
+  // подгрузка и запоминание места выключены — лента всё равно сейчас заменится.
   const replacing = useRef(false);
 
   function cards(): HTMLElement[] {
@@ -145,7 +145,7 @@ export default function FeedList({
       const res = await fetch(
         feedUrl({
           limit: String(FEED_PAGE_SIZE),
-          beforePublishedAt: cursor.publishedAt ?? "",
+          beforeCursor: cursor.cursor ?? "",
           beforeClusterId: String(cursor.clusterId),
         })
       );
@@ -170,7 +170,7 @@ export default function FeedList({
       const res = await fetch(
         feedUrl({
           limit: String(FEED_PAGE_SIZE),
-          afterPublishedAt: cursor.publishedAt ?? "",
+          afterCursor: cursor.cursor ?? "",
           afterClusterId: String(cursor.clusterId),
         })
       );
@@ -212,28 +212,12 @@ export default function FeedList({
   // а не достраивается вверх: между запомненным местом и верхом могут быть
   // сотни карточек, и тянуть их все ради перехода наверх незачем — вниз от
   // новых лента всё равно подгружается непрерывно.
-  // Плавная прокрутка к началу страницы; завершается, когда страница доехала
-  // (или через 2,5 с — на случай, если прокрутку перебили жестом).
-  function scrollToTopSmoothly(): Promise<void> {
-    if (window.scrollY < 2) return Promise.resolve();
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
-    return new Promise((resolve) => {
-      const startedAt = Date.now();
-      const timer = setInterval(() => {
-        if (window.scrollY >= 2 && Date.now() - startedAt < 2500) return;
-        clearInterval(timer);
-        resolve();
-      }, 50);
-    });
-  }
-
-  // Нажатие на плашку: плавно едем наверх и показываем верх ленты заново.
-  // Лента заменяется целиком, а не достраивается вверх: между запомненным
-  // местом и верхом могут быть сотни карточек, и тянуть их все ради перехода
-  // наверх незачем — вниз от новых лента всё равно подгружается непрерывно.
-  // Заменяем уже после прокрутки: новая лента короче, и замена на ходу
-  // оборвала бы движение.
+  // Нажатие на плашку: сразу показываем верх ленты заново, без анимации
+  // прокрутки. С плавной прокруткой через сотни карточек лента не успевала
+  // дорисовываться, и переход шёл рывками (DIS-39). Лента заменяется целиком,
+  // а не достраивается вверх: между запомненным местом и верхом могут быть
+  // сотни карточек, и тянуть их все ради перехода наверх незачем — вниз от
+  // новых лента всё равно подгружается непрерывно.
   async function showNew() {
     if (replacing.current) return;
     replacing.current = true;
@@ -241,10 +225,8 @@ export default function FeedList({
     pendingNewer.current = null;
     anchorSnapshot.current = null;
     try {
-      const request = fetch(feedUrl({ limit: String(FEED_PAGE_SIZE) })).then((res) => res.json() as Promise<Page>);
-      request.catch(() => {});
-      await scrollToTopSmoothly();
-      const page = await request;
+      const res = await fetch(feedUrl({ limit: String(FEED_PAGE_SIZE) }));
+      const page: Page = await res.json();
       olderCursor.current = page.items[page.items.length - 1] ?? null;
       newerCursor.current = page.items[0] ?? null;
       scrollToTopNext.current = true;

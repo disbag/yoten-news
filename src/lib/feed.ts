@@ -19,6 +19,11 @@ export type FeedItem = {
   // повторяя его. null — у тизеров без полного текста.
   summaryMore: string | null;
   publishedAt: string | null;
+  // Место карточки в порядке ленты — время, по которому она отсортирована, с
+  // точностью базы (микросекунды). Клиент передаёт его обратно курсором
+  // подгрузки (см. FeedList.tsx). Не то же, что publishedAt: "Прочитанные"
+  // отсортированы по времени прочтения, а не публикации.
+  cursor: string | null;
   primarySource: string;
   primaryHomepage: string | null;
   primaryLink: string;
@@ -40,11 +45,11 @@ export async function getFeed(
     // ещё" могло показать одну и ту же карточку дважды или пропустить
     // какую-то. Курсор по последней увиденной паре не зависит от того,
     // сколько строк появилось до него с момента предыдущего запроса.
-    before?: { publishedAt: string; clusterId: number };
+    before?: { cursor: string; clusterId: number };
     // Обратный курсор — карточки НОВЕЕ указанной (лента подгружается и
     // вверх, когда открыта с запомненного места, см. FeedList.tsx).
     // Возвращает ближайшие к курсору, в обычном порядке ленты.
-    after?: { publishedAt: string; clusterId: number };
+    after?: { cursor: string; clusterId: number };
     // Лента начиная с места этой карточки (включительно) — открытие на
     // запомненном месте (см. app/page.tsx). Сама карточка в выборку может и
     // не попасть (прочитана — см. unreadOnly), тогда первой идёт следующая за
@@ -95,14 +100,19 @@ export async function getFeed(
   // саммаризации, см. fetchAndProcess.ts), и если прогон оборвался посередине
   // (реальный случай — пустая карточка Polygon от 24 сентября).
   const havingClauses: string[] = ["bool_or(h.user_id IS NULL)", "bool_or(a.ai_summary IS NOT NULL)"];
+  // "Новые" идут по дате публикации, "Прочитанные" — по времени прочтения,
+  // последнее прочитанное сверху. По дате публикации только что прочитанная
+  // карточка вставала в список по своему возрасту и терялась среди сотен
+  // прочитанных раньше: выглядело так, будто она туда не попала (DIS-39).
+  const sortExpr = readOnly ? "max(ar.read_at)" : "max(a.published_at)";
   if (before) {
     havingClauses.push(
-      `(max(a.published_at), a.cluster_id) < ($${params.push(before.publishedAt)}::timestamptz, $${params.push(before.clusterId)})`
+      `(${sortExpr}, a.cluster_id) < ($${params.push(before.cursor)}::timestamptz, $${params.push(before.clusterId)})`
     );
   }
   if (after) {
     havingClauses.push(
-      `(max(a.published_at), a.cluster_id) > ($${params.push(after.publishedAt)}::timestamptz, $${params.push(after.clusterId)})`
+      `(${sortExpr}, a.cluster_id) > ($${params.push(after.cursor)}::timestamptz, $${params.push(after.clusterId)})`
     );
   }
   if (fromClusterId) {
@@ -135,6 +145,8 @@ export async function getFeed(
       -- из-за нового источника, но показывать дату многодневной давности —
       -- выглядело как "лента отсортирована неправильно".
       max(a.published_at) AS published_at,
+      ${sortExpr} AS sort_at,
+      to_char(${sortExpr} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
       (array_agg(s.name ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_source,
       (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_homepage,
       (array_agg(a.link ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_link,
@@ -171,7 +183,7 @@ export async function getFeed(
     ${categoryClause}
     GROUP BY a.cluster_id
     HAVING ${havingClauses.join(" AND ")}
-    ORDER BY published_at ${direction}, a.cluster_id ${direction}
+    ORDER BY sort_at ${direction}, a.cluster_id ${direction}
     LIMIT $1
     `,
     params
@@ -190,6 +202,7 @@ export async function getFeed(
       summary: row.summary,
       summaryMore: row.summary_more,
       publishedAt: toIso(row.published_at),
+      cursor: row.cursor,
       primarySource: row.primary_source,
       primaryHomepage: row.primary_homepage,
       primaryLink: row.primary_link,

@@ -4,9 +4,9 @@ import { getSessionUserId } from "../../../src/lib/session";
 import { FEED_PAGE_SIZE } from "../../../src/lib/feedPosition";
 
 function cursor(searchParams: URLSearchParams, prefix: "before" | "after") {
-  const publishedAt = searchParams.get(`${prefix}PublishedAt`);
+  const at = searchParams.get(`${prefix}Cursor`);
   const clusterId = Number(searchParams.get(`${prefix}ClusterId`));
-  return publishedAt && clusterId ? { publishedAt, clusterId } : undefined;
+  return at && clusterId && !Number.isNaN(Date.parse(at)) ? { cursor: at, clusterId } : undefined;
 }
 
 // Подгрузка ленты (см. app/components/FeedList.tsx): вниз — before*, вверх —
