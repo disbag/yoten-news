@@ -25,7 +25,8 @@ type SourceConfig = {
   // New Yorker, Pitchfork, GQ, CN Traveler) и "time" — фото-вставки <figure>
   // в теле статьи. "motor1" (InsideEVs, Motor1) — виджет превью фотогалереи статьи
   // "polygon" — фото в теле статьи; "gamespot" — фото из самого RSS (страница
-  // закрыта от бота). См. GALLERY_SITES в src/lib/ogTags.ts. Другие сайты
+  // закрыта от бота). У остальных — свой тип на каждое издание, по его
+  // названию. См. GALLERY_SITES в src/lib/ogTags.ts. Другие сайты
   // вёрстают галереи иначе, включать им эти флаги нельзя без отдельной
   // проверки их разметки.
   gallery?: GallerySite;
@@ -47,6 +48,21 @@ type SourceConfig = {
   // узнаются по адресу надёжнее, чем по заголовку: "…-deal-september-2026",
   // "…-deal-sale", раздел /ad/. Тоже своё для каждого издания.
   adLinkPattern?: RegExp;
+  // Рубрики пункта RSS (<category>), с которыми статья в ленту не берётся:
+  // рассылки-дайджесты сразу на несколько тем, оплаченные и партнёрские
+  // материалы. Надёжнее заголовка — у таких постов он обычный.
+  skipCategoryPattern?: RegExp;
+  // Служебный хвост, который издание дописывает к тексту статьи в RSS
+  // (призыв оформить подписку, блок "что почитать ещё") — срезается с конца
+  // текста, чтобы не попадал ни в эмбеддинг, ни в пересказ. Стандартную
+  // строку WordPress "The post … appeared first on …" срезает сам фетч.
+  feedFooterPattern?: RegExp;
+  // Отрезать от ссылок из фида всё после "?" — когда издание дописывает к
+  // ним рекламные метки (utm_…), а сама статья открывается и без них.
+  stripLinkQuery?: boolean;
+  // Обложку брать из RSS (media:content), а не og:image со страницы — когда
+  // картинка из og:image серверному запросу не отдаётся.
+  coverFromFeed?: boolean;
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -413,6 +429,105 @@ export const SOURCES: SourceConfig[] = [
     gallery: "maxim",
     preferFeedContent: true,
     adTitlePattern: /\bmaxim models\b/i,
+  },
+  {
+    // Графический дизайн, иллюстрация, брендинг (Великобритания). Полный
+    // чистый текст в content:encoded; страница добавляет в начало рекламу
+    // своего сообщества — берём текст из фида.
+    name: "Creative Boom",
+    rssUrl: "https://www.creativeboom.com/feed/",
+    homepageUrl: "https://www.creativeboom.com",
+    gallery: "creativeboom",
+    preferFeedContent: true,
+  },
+  {
+    // Новости искусства: выставки, музеи, арт-рынок (США, Ghost). Полный
+    // текст в content:encoded; страница дописывает призыв завести аккаунт.
+    // В том же фиде идут ежедневная и еженедельная рассылки (дайджест сразу
+    // по нескольким статьям) и оплаченные объявления — их узнаём по рубрике.
+    name: "Hyperallergic",
+    rssUrl: "https://hyperallergic.com/rss/",
+    homepageUrl: "https://hyperallergic.com",
+    gallery: "hyperallergic",
+    preferFeedContent: true,
+    skipCategoryPattern: /\b(?:newsletter|sponsored|announcement|opportunities)\b/i,
+  },
+  {
+    // Современное искусство, иллюстрация, фотография (США). Полный текст в
+    // content:encoded, в конце каждого — призыв стать подписчиком.
+    name: "Colossal",
+    rssUrl: "https://www.thisiscolossal.com/feed/",
+    homepageUrl: "https://www.thisiscolossal.com",
+    gallery: "colossal",
+    preferFeedContent: true,
+    feedFooterPattern: /\s*Do stories and artists like this matter to you\?[\s\S]*$/i,
+  },
+  {
+    // Брендинг, айдентика, упаковка, индустрия дизайна (Великобритания).
+    // Полный текст в content:encoded (страница обрывает его призывом
+    // поддержать издание), в конце — блок "What to read next" со ссылками на
+    // другие статьи и ссылка "Source". Картинки — см. "designweek" в
+    // src/lib/ogTags.ts: og:image серверу не отдаётся, обложка из фида.
+    name: "Design Week",
+    rssUrl: "https://www.designweek.co.uk/feed/",
+    homepageUrl: "https://www.designweek.co.uk",
+    gallery: "designweek",
+    preferFeedContent: true,
+    feedFooterPattern: /\s*(?:What to read next:[\s\S]*|Source)\s*$/i,
+    coverFromFeed: true,
+  },
+  {
+    // Интерьеры, мебель, архитектура, искусство (США). Полный чистый текст в
+    // content:encoded; страница добавляет биографию автора и анонсы других
+    // статей. Оплаченные материалы помечены рубрикой "Sponsor"/"sponsored".
+    name: "Design Milk",
+    rssUrl: "https://design-milk.com/feed/",
+    homepageUrl: "https://design-milk.com",
+    gallery: "designmilk",
+    preferFeedContent: true,
+    skipCategoryPattern: /^sponsor(?:ed)?$/i,
+  },
+  {
+    // Новости архитектуры Австралии: конкурсы, проекты, градостроительство.
+    // В RSS только анонс, текст — со страницы: абзацы прямо в #project (в нём
+    // же лежат подписи к фото, реклама и "View gallery", а общий разбор
+    // страницы цеплял ещё и анонсы соседних статей из блока "ещё по теме").
+    name: "ArchitectureAU",
+    rssUrl: "https://architectureau.com/rss.xml",
+    homepageUrl: "https://architectureau.com",
+    contentSelector: "#project > p",
+    gallery: "architectureau",
+  },
+  {
+    // Промышленный и предметный дизайн, выставки, интервью (Италия, пишет
+    // по-английски). В RSS только анонс, текст — со страницы: абзацы статьи
+    // без блока об авторе, который общий разбор захватывал в конец текста.
+    name: "DesignWanted",
+    rssUrl: "https://designwanted.com/feed/",
+    homepageUrl: "https://designwanted.com",
+    contentSelector: ".col-center > .container > p",
+    gallery: "designwanted",
+  },
+  {
+    // Раздел Co.Design: ребрендинги, дизайн продуктов, городов и интерфейсов
+    // (США). Полный текст — в description фида; страницы статей временами
+    // закрыты от бота (DataDome), тогда пересказ строится по тексту из фида.
+    // К ссылкам в фиде дописаны метки ?partner=rss&utm_…
+    name: "Fast Company",
+    rssUrl: "https://www.fastcompany.com/co-design/rss",
+    homepageUrl: "https://www.fastcompany.com/co-design",
+    gallery: "fastcompany",
+    stripLinkQuery: true,
+  },
+  {
+    // Айдентика, типографика, упаковка, веб-дизайн: короткие заметки о
+    // проектах студий (США/Бразилия). В RSS только обложка, текст — со
+    // страницы; общий разбор добавлял к нему подпись из подвала сайта.
+    name: "Abduzeedo",
+    rssUrl: "https://abduzeedo.com/rss.xml",
+    homepageUrl: "https://abduzeedo.com",
+    contentSelector: ".article-body",
+    gallery: "abduzeedo",
   },
   // Top Gear: официального публичного RSS не нашлось (проверено ~10
   // стандартных путей — везде 404, автообнаружение на главной тоже пусто).

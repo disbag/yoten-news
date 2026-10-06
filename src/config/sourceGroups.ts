@@ -34,7 +34,24 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
   // Creative Bloq в макете нет (добавлен позже) — по профилю это дизайн.
   {
     label: "Дизайн",
-    sources: ["Wallpaper", "Creative Bloq", "Dezeen", "designboom", "The Art Newspaper", "It's Nice That", "Monocle"],
+    sources: [
+      "Wallpaper",
+      "Creative Bloq",
+      "Dezeen",
+      "designboom",
+      "The Art Newspaper",
+      "It's Nice That",
+      "Monocle",
+      "Creative Boom",
+      "Hyperallergic",
+      "Colossal",
+      "Design Week",
+      "Design Milk",
+      "ArchitectureAU",
+      "DesignWanted",
+      "Fast Company",
+      "Abduzeedo",
+    ],
   },
   // Motor1 в макете нет (добавлен позже).
   { label: "Авто", sources: ["Car and Driver", "Motor Trend", "InsideEVs", "Motor1"] },

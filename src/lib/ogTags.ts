@@ -204,10 +204,17 @@ function extractParagraphs($: CheerioAPI, scope: Cheerio<AnyNode> | undefined): 
 // Ручной override на конкретное издание (см. contentSelector в
 // src/config/sources.ts) — источник добавляет это в конфиг, только когда уже
 // вручную проверил, что селектор однозначно ведёт к телу статьи на этом
-// сайте.
+// сайте. Селектор может указывать и на сами абзацы ("#project > p") — тогда
+// берётся текст всех совпавших элементов подряд: у части сайтов в контейнере
+// статьи вперемешку с абзацами лежат подписи к фото, реклама и "View gallery".
 function extractBySelector($: CheerioAPI, selector: string): string | undefined {
   try {
-    const text = $(selector).first().text().replace(/\s+/g, " ").trim();
+    const text = $(selector)
+      .toArray()
+      .map((el) => $(el).text())
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
     return text.length >= 80 ? text.slice(0, MAX_ARTICLE_CHARS) : undefined;
   } catch {
     return undefined;
@@ -268,6 +275,51 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // "itsnicethat" (It's Nice That): фото тела — figure.p0.m0 внутри <article>,
 // m.itsnicethat.com/original_images, размер задаётся ?class=wNNNN. og:image
 // бывает общей заглушкой сайта (/images/social.jpg) — она в галерею не идёт.
+//
+// Издания о дизайне, добавленные в октябре 2026-го. Фото из RSS:
+//  - "creativeboom" (Creative Boom): кадры media.creativeboom.com/…/conversions/
+//    {hash}-medium.webp. Размеры у CDN фиксированные: medium — 1280x1600 и
+//    0,5–1 МБ на кадр, small — 640x800 и 120–280 КБ; берём small и для обложки
+//    тоже. Обложка — отдельный кадр, в теле статьи его нет.
+//  - "hyperallergic" (Hyperallergic, Ghost): кадры storage.ghost.io/…/content/
+//    images/…; Ghost режет по /size/wNNNN/ в пути, как в og:image, и умеет
+//    отдавать WebP (/format/webp/) — PNG-обложка на 1,4 МБ так весит 150 КБ.
+//    Первый кадр в RSS — тот же файл, что и обложка.
+//  - "colossal" (Colossal, WordPress): кадры wp-content/uploads по 2000px и
+//    250–800 КБ — берём из srcset вариант 1536px (~150 КБ); анимированные GIF
+//    (у постов про анимацию они по несколько мегабайт) пропускаем. Первый
+//    кадр в RSS — обложка, тот же файл, что в og:image.
+//  - "designmilk" (Design Milk, WordPress): кадры design-milk.com/images/, из
+//    srcset берём вариант 800px (у PNG-кадров варианты 1500px весили по
+//    2,5–3,5 МБ). Первый кадр в RSS — обложка в размере
+//    1500x1000 (~150–450 КБ), а в og:image лежит оригинал до 1,3 МБ, и по
+//    адресу их не склеить — поэтому обложкой статьи становится кадр из RSS
+//    (coverFromFirstFrame), а og:image не используется.
+//  - "designweek" (Design Week): у картинок в RSS ленивые заглушки в src,
+//    настоящие адреса — в data-src/data-srcset. Основной сервер картинок
+//    (imagescdn.designweek.co.uk, он же в og:image) закрыт от серверных
+//    запросов проверкой Cloudflare; рабочие адреса — на cloudfront.net, их сам
+//    сайт отдаёт в media:content и data-srcset. Оригиналы там до 1,6 МБ,
+//    поэтому берём вариант WordPress "large" (вписан в 1024x1024, 40–130 КБ):
+//    у кадров тела он есть в data-srcset, у обложки имя считается из её
+//    размеров (проверено на обложках всего фида). Варианты "-1290x…" из того
+//    же data-srcset на сервере не существуют (403). GIF не берём.
+//  - "fastcompany" (Fast Company, раздел Co.Design): кадры на Cloudinary
+//    (images.fastcompany.com/image/upload/{преобразования}/wp-cms-2/…);
+//    og:image без ширины — 2480px и 1 МБ, приводим всё к JPEG шириной 1280
+//    (PNG-схемы и GIF в исходном формате весили до 1 МБ).
+// Фото со страницы статьи:
+//  - "architectureau" (ArchitectureAU): слайды просмотрщика фото
+//    .gallery-slides — все фото статьи; адрес в data-src (2400px, до 650 КБ),
+//    варианты поменьше — в data-srcset. Один снимок в разных размерах лежит
+//    под разными адресами, с og:image (638px) не склеить — обложку вперёд не
+//    добавляем, первым идёт первый слайд.
+//  - "designwanted" (DesignWanted, WordPress): слайдер .post-gallery в начале
+//    статьи и фото-вставки figure.wp-block-image (ленивые, адрес в data-src).
+//    Сайт отдаёт адреса картинок с http:// — приводим к https.
+//  - "abduzeedo" (Abduzeedo): фото тела — figure.image, в src адрес их
+//    собственного ресайзера /api/img?url=…; берём сам файл из параметра url
+//    (cms.abduzeedo.com/sites/default/files/originals/…).
 export type GallerySite =
   | "hearst"
   | "futureplc"
@@ -281,11 +333,25 @@ export type GallerySite =
   | "maxim"
   | "monocle"
   | "artnewspaper"
-  | "itsnicethat";
+  | "itsnicethat"
+  | "creativeboom"
+  | "hyperallergic"
+  | "colossal"
+  | "designmilk"
+  | "designweek"
+  | "fastcompany"
+  | "architectureau"
+  | "designwanted"
+  | "abduzeedo";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
 const MOTOR1_IMAGE_PATH = /^\/images\/mgl\/([A-Za-z0-9]+)\/s\d+\/([^/]+?)\.(?:jpe?g|webp|png)$/i;
+const CREATIVEBOOM_IMAGE_PATH = /^(.*\/conversions\/[a-f0-9]+)-(?:thumb|small|medium|large)\.webp$/i;
+// Всё, что стоит между /image/upload/ и путём файла, — преобразования Cloudinary.
+const FASTCOMPANY_IMAGE_PATH = /^\/image\/upload\/(?:[^/]+\/)*?(wp-cms[^/]*\/.+)$/i;
+// Откуда Design Week на самом деле отдаёт загрузки (см. коммент к "designweek").
+const DESIGNWEEK_UPLOADS_HOST = "d3faj0w6aqatyx.cloudfront.net";
 
 // normalize возвращает null для картинок, которые не являются кадром
 // галереи (заглушки lazy-load и т.п.) — они просто пропускаются.
@@ -299,6 +365,15 @@ const GALLERY_SITES: Record<
     normalize: (url: URL, size?: { width: number; height: number }) => URL | null;
     leadWithCover: boolean;
     from?: "page" | "rss";
+    // Картинки подгружаются лениво: в src заглушка, настоящий адрес — в
+    // data-src/data-srcset. Без флага эти атрибуты не читаются.
+    lazy?: boolean;
+    // Брать из srcset вариант не шире указанного (самый широкий из
+    // подходящих), а не src: когда в src оригинал на сотни килобайт.
+    srcsetMaxWidth?: number;
+    // Обложкой статьи считать первый кадр из разметки, а не og:image — когда
+    // это тот же снимок, но в облегчённом размере (см. feedCover).
+    coverFromFirstFrame?: boolean;
   }
 > = {
   hearst: {
@@ -444,7 +519,148 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: true,
   },
+  creativeboom: {
+    selector: "img",
+    normalize: (url) => {
+      if (url.hostname !== "media.creativeboom.com") return null;
+      url.search = "";
+      const match = url.pathname.match(CREATIVEBOOM_IMAGE_PATH);
+      if (match) url.pathname = `${match[1]}-small.webp`;
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
+  hyperallergic: {
+    selector: "img",
+    normalize: (url) => {
+      if (!/^(?:storage\.ghost\.io|(?:www\.)?hyperallergic\.com)$/.test(url.hostname)) return null;
+      if (!url.pathname.includes("/content/images/") || /\.gif$/i.test(url.pathname)) return null;
+      url.search = "";
+      url.pathname = url.pathname.replace(
+        /\/content\/images\/(?:size\/w\d+\/)?(?:format\/\w+\/)?/,
+        "/content/images/size/w1200/format/webp/"
+      );
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
+  colossal: {
+    selector: "img",
+    normalize: (url) => {
+      if (!url.hostname.endsWith("thisiscolossal.com") || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.search = "";
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+    srcsetMaxWidth: 1536,
+  },
+  designmilk: {
+    selector: "img",
+    normalize: (url) => {
+      if (url.hostname !== "design-milk.com" || !url.pathname.startsWith("/images/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.search = "";
+      return url;
+    },
+    leadWithCover: false,
+    from: "rss",
+    srcsetMaxWidth: 1024,
+    coverFromFirstFrame: true,
+  },
+  designweek: {
+    selector: "img",
+    normalize: (url, size) => {
+      if (url.hostname === "imagescdn.designweek.co.uk") url.hostname = DESIGNWEEK_UPLOADS_HOST;
+      if (url.hostname !== DESIGNWEEK_UPLOADS_HOST || !url.pathname.startsWith("/uploads/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.search = "";
+      // Имя варианта "large" WordPress считает так же: вписывает в 1024x1024
+      // и округляет обе стороны.
+      const file = url.pathname.match(/^(.*?)(?:-scaled)?\.(jpe?g|png|webp)$/i);
+      const longest = size ? Math.max(size.width, size.height) : 0;
+      if (file && size && longest > 1024 && !/-\d+x\d+$/.test(file[1])) {
+        const k = 1024 / longest;
+        url.pathname = `${file[1]}-${Math.round(size.width * k)}x${Math.round(size.height * k)}.${file[2]}`;
+      }
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+    lazy: true,
+    srcsetMaxWidth: 1024,
+  },
+  fastcompany: {
+    selector: "img",
+    normalize: (url) => {
+      if (url.hostname !== "images.fastcompany.com") return null;
+      url.search = "";
+      const match = url.pathname.match(FASTCOMPANY_IMAGE_PATH);
+      if (match) url.pathname = `/image/upload/f_jpg,q_auto,c_fit,w_1280/${match[1]}`;
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
+  },
+  architectureau: {
+    selector: ".gallery-slides .slide img",
+    normalize: (url) => {
+      if (!/^media\d*\.architecturemedia\.net$/.test(url.hostname)) return null;
+      if (!url.pathname.startsWith("/site_media/media/cache/")) return null;
+      url.search = "";
+      return url;
+    },
+    leadWithCover: false,
+    lazy: true,
+    srcsetMaxWidth: 1280,
+  },
+  designwanted: {
+    selector: ".col-center .post-gallery .swiper-slide img, .col-center figure.wp-block-image img",
+    normalize: (url) => {
+      if (!url.hostname.endsWith("designwanted.com") || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      url.protocol = "https:";
+      url.search = "";
+      return url;
+    },
+    leadWithCover: true,
+    lazy: true,
+  },
+  abduzeedo: {
+    selector: ".article-body figure.image img",
+    normalize: (url) => {
+      let file = url;
+      if (url.pathname === "/api/img") {
+        const inner = url.searchParams.get("url");
+        if (!inner) return null;
+        file = new URL(inner);
+      }
+      if (file.hostname !== "cms.abduzeedo.com" || !file.pathname.startsWith("/sites/default/files/")) return null;
+      file.search = "";
+      return file;
+    },
+    leadWithCover: true,
+  },
 };
+
+// Адрес самого широкого варианта из srcset, который не шире maxWidth; если
+// все шире — самого узкого. Запятые внутри адресов не поддерживаются (у
+// сайтов, где это используется, их нет).
+function pickFromSrcset(srcset: string | undefined, maxWidth: number): string | undefined {
+  const variants = (srcset ?? "")
+    .split(",")
+    .map((part) => part.trim().split(/\s+/))
+    .map(([url, descriptor]) => ({ url, width: Number(descriptor?.replace(/w$/, "")) }))
+    .filter((variant) => variant.url && variant.width > 0);
+  if (!variants.length) return undefined;
+  const fitting = variants.filter((variant) => variant.width <= maxWidth);
+  const best = fitting.length
+    ? fitting.reduce((a, b) => (b.width > a.width ? b : a))
+    : variants.reduce((a, b) => (b.width < a.width ? b : a));
+  return best.url;
+}
 
 export function galleryFromRss(site: GallerySite | undefined): boolean {
   return site !== undefined && GALLERY_SITES[site].from === "rss";
@@ -457,16 +673,29 @@ export function extractFeedGallery(html: string, baseUrl: string, site: GalleryS
 
 // Та же нормализация к облегчённому размеру — для одиночной обложки статьи
 // без галереи (у GameSpot обложка в RSS всего 300px).
-export function normalizeCover(site: GallerySite, cover: string): string {
+export function normalizeCover(site: GallerySite, cover: string, size?: { width: number; height: number }): string {
   try {
-    return GALLERY_SITES[site].normalize(new URL(cover))?.toString() ?? cover;
+    return GALLERY_SITES[site].normalize(new URL(cover), size)?.toString() ?? cover;
   } catch {
     return cover;
   }
 }
 
+// Обложка из HTML RSS-элемента — первый кадр разметки; только для сайтов с
+// coverFromFirstFrame, у остальных undefined (обложка — og:image).
+export function feedCover(html: string, baseUrl: string, site: GallerySite): string | undefined {
+  if (!GALLERY_SITES[site].coverFromFirstFrame) return undefined;
+  return collectFrames(cheerio.load(html), baseUrl, site)[0];
+}
+
 function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
-  const { selector, normalize, leadWithCover } = GALLERY_SITES[site];
+  const frames = collectFrames($, baseUrl, site, cover);
+  // Одна обложка без единого фото из тела — это не галерея.
+  return frames.length > 1 ? frames : [];
+}
+
+function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
+  const { selector, normalize, leadWithCover, lazy, srcsetMaxWidth } = GALLERY_SITES[site];
   const urls = new Set<string>();
   const add = (src: string | undefined, size?: { width: number; height: number }): boolean => {
     if (!src) return false;
@@ -486,10 +715,13 @@ function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover
     const width = Number($(el).attr("width"));
     const height = Number($(el).attr("height"));
     const size = width > 0 && height > 0 ? { width, height } : undefined;
-    if (!add($(el).attr("src"), size)) add($(el).attr("srcset")?.trim().split(",")[0]?.trim().split(/\s+/)[0], size);
+    const srcset = $(el).attr("srcset") ?? (lazy ? $(el).attr("data-srcset") : undefined);
+    if (srcsetMaxWidth && add(pickFromSrcset(srcset, srcsetMaxWidth), size)) return;
+    if (add($(el).attr("src"), size)) return;
+    if (lazy && add($(el).attr("data-src"), size)) return;
+    add(srcset?.trim().split(",")[0]?.trim().split(/\s+/)[0], size);
   });
-  // Одна обложка без единого фото из тела — это не галерея.
-  return urls.size > 1 ? Array.from(urls) : [];
+  return Array.from(urls);
 }
 
 export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[] };

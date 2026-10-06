@@ -3,7 +3,14 @@ import Parser from "rss-parser";
 import { pool, toVectorLiteral } from "../lib/db.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
-import { fetchOgTags, extractFeedGallery, galleryFromRss, normalizeCover, MAX_ARTICLE_CHARS } from "../lib/ogTags.js";
+import {
+  fetchOgTags,
+  extractFeedGallery,
+  feedCover,
+  galleryFromRss,
+  normalizeCover,
+  MAX_ARTICLE_CHARS,
+} from "../lib/ogTags.js";
 import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
 import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
@@ -23,7 +30,7 @@ import { isAd } from "../lib/adFilter.js";
 // которые блокируют fetchOgTags (см. комментарий у og-запроса ниже) — без
 // og:image со страницы это единственный источник картинки, который у нас
 // вообще есть.
-type MediaContent = { $: { url: string; medium?: string } };
+type MediaContent = { $: { url: string; medium?: string; width?: string; height?: string } };
 type FeedItem = {
   "dc:content"?: string;
   "content:encoded"?: string;
@@ -33,9 +40,17 @@ const parser = new Parser<Record<string, never>, FeedItem>({
   customFields: { item: ["dc:content", "content:encoded", "media:content"] },
 });
 
-function extractFeedImage(media: MediaContent | MediaContent[] | undefined): string | undefined {
+// size — размеры картинки, если фид их указывает: по ним считается имя
+// облегчённого варианта обложки (см. "designweek" в src/lib/ogTags.ts).
+function extractFeedImage(
+  media: MediaContent | MediaContent[] | undefined
+): { url: string; size?: { width: number; height: number } } | undefined {
   const items = Array.isArray(media) ? media : media ? [media] : [];
-  return items.find((m) => !m.$.medium || m.$.medium === "image")?.$.url;
+  const image = items.find((m) => !m.$.medium || m.$.medium === "image")?.$;
+  if (!image?.url) return undefined;
+  const width = Number(image.width);
+  const height = Number(image.height);
+  return { url: image.url, size: width > 0 && height > 0 ? { width, height } : undefined };
 }
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
 // Мягче обычного порога — только для пар, где хотя бы одна статья без
@@ -131,12 +146,19 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function isGif(url: string): boolean {
+  return /\.gif(?:$|[?#])/i.test(url);
+}
+
 // WordPress по умолчанию дописывает в конец content:encoded служебную
 // строку "The post <заголовок> appeared first on <сайт>." (Dezeen,
-// designboom, Monocle) — это не текст статьи, а с ним одинаковый хвост
-// попадал бы в эмбеддинг каждой статьи издания.
-function stripFeedFooter(text: string): string {
-  return text.replace(/\s*The post .{1,400}? appeared first on .{1,120}?\.?\s*$/i, "");
+// designboom, Monocle; у Colossal — "The article …") — это не текст статьи,
+// а с ним одинаковый хвост попадал бы в эмбеддинг каждой статьи издания.
+// sourceFooter — собственный хвост издания (см. feedFooterPattern в
+// src/config/sources.ts), он стоит перед этой строкой.
+function stripFeedFooter(text: string, sourceFooter?: RegExp): string {
+  const withoutWordPress = text.replace(/\s*The (?:post|article) .{1,400}? appeared first on .{1,120}?\.?\s*$/i, "");
+  return sourceFooter ? withoutWordPress.replace(sourceFooter, "") : withoutWordPress;
 }
 
 // Некоторые издания (напр. Telegraph) блокируют запросы node:http/https по
@@ -215,9 +237,13 @@ async function processSource(
     // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
     // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
     if (!/^https?:\/\//i.test(item.link)) continue;
+    // До проверки "уже обработана": в базе ссылка лежит уже без меток.
+    if (sourceConfig?.stripLinkQuery) item.link = item.link.replace(/[?#].*$/, "");
     if (isAd(item.title, item.link)) continue; // распродажа, подборка скидок, купон — общий фильтр для всех изданий
     if (sourceConfig?.adTitlePattern?.test(item.title)) continue; // рекламный пост со скидками, см. sources.ts
     if (sourceConfig?.adLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // то же по адресу
+    const skipCategory = sourceConfig?.skipCategoryPattern;
+    if (skipCategory && (item.categories ?? []).some((c) => typeof c === "string" && skipCategory.test(c))) continue; // рассылка или оплаченный материал, см. sources.ts
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
     if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
     if (!isWithinFetchWindow(item.isoDate)) continue; // вне окна FETCH_SINCE_DAYS — не берём в ленту
@@ -230,7 +256,9 @@ async function processSource(
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
     const feedFullHtml = item["dc:content"] ?? item["content:encoded"];
-    const feedContent = feedFullHtml ? stripFeedFooter(stripHtml(feedFullHtml)).slice(0, MAX_ARTICLE_CHARS) : undefined;
+    const feedContent = feedFullHtml
+      ? stripFeedFooter(stripHtml(feedFullHtml), sourceConfig?.feedFooterPattern).slice(0, MAX_ARTICLE_CHARS)
+      : undefined;
 
     // Best-effort: некоторые издания (NYT, Telegraph) блокируют такие запросы
     // (Cloudflare-челлендж / собственная anti-bot защита) — тогда просто
@@ -266,16 +294,28 @@ async function processSource(
       // страница недоступна боту — это ожидаемо для части источников
       excerpt = feedContent;
     }
-    imageUrl ??= extractFeedImage(item["media:content"]);
+    const feedImage = extractFeedImage(item["media:content"]);
+    if (feedImage && (sourceConfig?.coverFromFeed || !imageUrl)) imageUrl = feedImage.url;
 
     // Галерея из самого RSS — для сайтов, чья страница закрыта от бота, но
     // RSS несёт фото статьи (GameSpot, см. GALLERY_SITES в src/lib/ogTags.ts).
     const gallerySite = sourceConfig?.gallery;
     if (gallerySite && galleryFromRss(gallerySite)) {
-      if (imageUrl) imageUrl = normalizeCover(gallerySite, imageUrl);
       const feedHtml = feedFullHtml ?? item.content;
+      const firstFrame = feedHtml ? feedCover(feedHtml, item.link, gallerySite) : undefined;
+      if (firstFrame) imageUrl = firstFrame;
+      else if (imageUrl) {
+        // Размеры обложки известны, только когда она взята из фида (coverFromFeed).
+        const size = sourceConfig?.coverFromFeed && imageUrl === feedImage?.url ? feedImage.size : undefined;
+        imageUrl = normalizeCover(gallerySite, imageUrl, size);
+      }
       const feedGallery = feedHtml ? extractFeedGallery(feedHtml, item.link, gallerySite, imageUrl) : [];
       gallery = feedGallery.length ? feedGallery : undefined;
+      // Обложка — анимированный GIF (у постов про анимацию и моушн-дизайн они
+      // весят мегабайты), а у статьи есть обычные фото: обложкой становится
+      // первое из них.
+      const still = gallery?.find((url) => !isGif(url));
+      if (imageUrl && isGif(imageUrl) && still) imageUrl = still;
     }
 
     // Эмбеддим оригинальный текст статьи (excerpt/fullDescription/rawSummary
