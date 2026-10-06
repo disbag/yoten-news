@@ -23,9 +23,9 @@ const AD_TITLE_PATTERN = new RegExp(
     String.raw`\b(?:prime day|prime big deal days?|black friday|cyber monday)\b`,
     // Купоны и промокоды (партнёрская рубрика Wired и других).
     String.raw`\b(?:promo codes?|coupons?|discount codes?)\b`,
-    // "40% Off", "$80 Off", "Save $20", "Save up to 53%".
+    // "40% Off", "$80 Off", "$450+ off", "Save $20", "Save up to 53%".
     String.raw`\d+% off\b`,
-    String.raw`\$\d+(?:\.\d+)? off\b`,
+    String.raw`\$\d+(?:\.\d+)?\+? off\b`,
     String.raw`\bsave (?:you )?(?:up to )?(?:\$\d[\d,.]*\b(?! ?(?:million|billion|trillion|[mb]n?\b))|\d+%)`,
     // "Lowest Price Ever/Yet", "Buy 2, Get 1 Free", "$30 Cheaper Right Now".
     String.raw`\blowest price (?:ever|yet)\b`,

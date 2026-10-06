@@ -39,7 +39,9 @@ type SourceConfig = {
   // Заголовки рекламных постов со скидками (подборки Amazon-скидок, Prime Day,
   // промо с кодом скидки) — такие статьи не берём в ленту вообще. Своё для
   // каждого издания: общий фильтр по слову "deal" резал бы и новости вроде
-  // "Trump Revives Iran Deal Hopes" (Bloomberg).
+  // "Trump Revives Iran Deal Hopes" (Bloomberg). Сюда — только то, чего нет
+  // в общем фильтре для всех изданий (src/lib/adFilter.ts): он уже ловит
+  // Prime Day, "N% off", "$N off", "Save $N", купоны и шопинг-разделы.
   adTitlePattern?: RegExp;
   // То же по пути ссылки (без query) — у многих изданий рекламные посты
   // узнаются по адресу надёжнее, чем по заголовку: "…-deal-september-2026",
@@ -105,8 +107,6 @@ export const SOURCES: SourceConfig[] = [
     name: "9to5Mac",
     rssUrl: "https://9to5mac.com/feed/",
     homepageUrl: "https://9to5mac.com",
-    // "Deals: …", "Apple weekend deals: …", "… $450 off", "[Save 10%]".
-    adTitlePattern: /\bdeals:|\$\d+(?:\.\d+)?\+? off\b|\[save \d+%\]/i,
   },
   {
     // И RSS-описание, и страница статьи — не блокирует бота, минимум мусора
@@ -136,10 +136,10 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://www.creativebloq.com",
     gallery: "futureplc",
     preferFeedContent: true,
-    // "Prime Day deals", "save up to 53%", "could save you $20", "$50 off".
-    // "deals" — только во множественном: "a deal with …" бывает и новостью.
-    adTitlePattern:
-      /\b(?:deals|prime day|black friday|cyber monday|all-time low|lowest price|price drop)\b|\d+% off\b|\$\d+(?:\.\d+)? off\b|\bsave (?:you )?(?:up to )?\$?\d/i,
+    // Сверх общего фильтра: любые "deals" (только во множественном: "a deal
+    // with …" бывает и новостью), "all-time low", "lowest price", "price drop"
+    // — у издания о дизайне это всегда про товар, а не про рынки.
+    adTitlePattern: /\b(?:deals|all-time low|lowest price|price drop)\b/i,
   },
   {
     // Полный чистый текст в стандартном content:encoded — используется тот
@@ -149,9 +149,9 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://lifehacker.com/feed/rss",
     homepageUrl: "https://lifehacker.com",
     // Около трети фида — "This … Is $180 Off Right Now" с адресом
-    // "…-sale-september-2026"/"…-deal-…", плюс оплаченный раздел /ad/.
-    // "deal-with" — это "how to deal with…", не реклама.
-    adLinkPattern: /(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|^\/ad\//i,
+    // "…-sale-september-2026"/"…-deal-…". "deal-with" — это "how to deal
+    // with…", не реклама. Оплаченный раздел /ad/ ловит общий фильтр.
+    adLinkPattern: /(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)/i,
   },
   {
     // Condé Nast (как Wired/New Yorker/Verge) — JSON-LD с полным текстом,
@@ -390,8 +390,8 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.popularmechanics.com/rss/all.xml/",
     homepageUrl: "https://www.popularmechanics.com",
     adLinkPattern:
-      /^\/(?:home|adventure|culture|video)\/|\/g\d+\/|(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|prime-(?:big-)?deal/i,
-    adTitlePattern: /\b(?:best|deals?|gifts?|prime day|prime big deal days?)\b|\bvs\.?\s|\breview\b|\bsav(?:e|ing) up to\b/i,
+      /^\/(?:home|adventure|culture|video)\/|\/g\d+\/|(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)/i,
+    adTitlePattern: /\b(?:best|deals?|gifts?)\b|\bvs\.?\s|\breview\b|\bsav(?:e|ing) up to\b/i,
   },
   {
     // Hearst. Политика, кино и сериалы, стиль. Около трети фида — шопинг:
@@ -401,8 +401,8 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.esquire.com/rss/all.xml/",
     homepageUrl: "https://www.esquire.com",
     adLinkPattern:
-      /^\/style\/|^\/lifestyle\/tech\/|\/g\d+\/|(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)|prime-(?:big-)?deal/i,
-    adTitlePattern: /\b(?:best|deals?|gifts?|prime day|prime big deal days?)\b|\$\d+(?:\.\d+)? off\b/i,
+      /^\/style\/|^\/lifestyle\/tech\/|\/g\d+\/|(?:^|[-/])(?:sales?|deals?)(?=[-/]|$)(?!-with)/i,
+    adTitlePattern: /\b(?:best|deals?|gifts?)\b/i,
   },
   {
     // Люкс: часы, авто, яхты, алкоголь, знаменитости. Полный текст в
