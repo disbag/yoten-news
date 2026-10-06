@@ -34,7 +34,7 @@ export default async function HomePage(props: { searchParams: Promise<{ category
   const savedId = tab === "new" ? Number((await cookies()).get(positionCookieName(category))?.value) : 0;
   const [restoredRows, unreadCount] = await Promise.all([
     savedId > 0 ? getFeed({ ...filter, fromClusterId: savedId }) : [],
-    isLoggedIn ? getUnreadCount(userId) : 0,
+    isLoggedIn ? getUnreadCount(userId, category) : 0,
   ]);
   const restored = restoredRows.length > 0;
   const rows = restored ? restoredRows : await getFeed(filter);

@@ -248,10 +248,13 @@ export async function getNewCount(options: {
   return Number(rows[0].count);
 }
 
-// Счётчик рядом с вкладкой "Новые" (см. FeedTabs.tsx) — общий по всей ленте,
-// без учёта рубрики. Кластеры только из выключенных изданий, без саммари и
-// ещё скрытые до конца прогона не считаются — их в ленте нет (см. getFeed).
-export async function getUnreadCount(userId: number | null): Promise<number> {
+// Счётчик рядом с вкладкой "Новые" (см. FeedTabs.tsx) — по открытой рубрике,
+// без рубрики — по всей ленте (DIS-38). Кластеры только из выключенных
+// изданий, без саммари и ещё скрытые до конца прогона не считаются — их в
+// ленте нет (см. getFeed).
+export async function getUnreadCount(userId: number | null, category?: string): Promise<number> {
+  const params: unknown[] = [userId];
+  const categoryClause = category ? `AND $${params.push(category)} = ANY(a.category)` : "";
   const { rows } = await pool.query(
     `
     SELECT count(*) AS count FROM (
@@ -259,12 +262,12 @@ export async function getUnreadCount(userId: number | null): Promise<number> {
       FROM articles a
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
-      WHERE a.visible_at IS NOT NULL
+      WHERE a.visible_at IS NOT NULL ${categoryClause}
       GROUP BY a.cluster_id
       HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
     ) unread
     `,
-    [userId]
+    params
   );
   return Number(rows[0].count);
 }

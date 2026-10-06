@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
 
   // Верх ленты запрашивают по плашке "N Новых" — заодно отдаём свежий
   // счётчик непрочитанных для вкладки.
-  const unreadCount = !before && !after && userId !== null ? await getUnreadCount(userId) : undefined;
+  const unreadCount = !before && !after && userId !== null ? await getUnreadCount(userId, category) : undefined;
 
   return NextResponse.json({ items, hasMore, now, unreadCount });
 }
