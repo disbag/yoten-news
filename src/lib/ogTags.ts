@@ -317,9 +317,11 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 //  - "designwanted" (DesignWanted, WordPress): слайдер .post-gallery в начале
 //    статьи и фото-вставки figure.wp-block-image (ленивые, адрес в data-src).
 //    Сайт отдаёт адреса картинок с http:// — приводим к https.
-//  - "abduzeedo" (Abduzeedo): фото тела — figure.image, в src адрес их
-//    собственного ресайзера /api/img?url=…; берём сам файл из параметра url
-//    (cms.abduzeedo.com/sites/default/files/originals/…).
+//  - "abduzeedo" (Abduzeedo): фото тела — все img внутри .article-body: у
+//    части статей они обёрнуты в figure.image, у большинства лежат прямо в
+//    теле. В src адрес их собственного ресайзера /api/img?url=…; берём сам
+//    файл из параметра url (cms.abduzeedo.com/sites/default/files/originals/…),
+//    картинки с чужих сайтов отбрасываем.
 export type GallerySite =
   | "hearst"
   | "futureplc"
@@ -629,7 +631,7 @@ const GALLERY_SITES: Record<
     lazy: true,
   },
   abduzeedo: {
-    selector: ".article-body figure.image img",
+    selector: ".article-body img",
     normalize: (url) => {
       let file = url;
       if (url.pathname === "/api/img") {

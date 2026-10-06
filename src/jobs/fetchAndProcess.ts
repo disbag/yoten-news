@@ -42,15 +42,23 @@ const parser = new Parser<Record<string, never>, FeedItem>({
 
 // size — размеры картинки, если фид их указывает: по ним считается имя
 // облегчённого варианта обложки (см. "designweek" в src/lib/ogTags.ts).
-function extractFeedImage(
-  media: MediaContent | MediaContent[] | undefined
-): { url: string; size?: { width: number; height: number } } | undefined {
+type FeedImage = { url: string; size?: { width: number; height: number } };
+function extractFeedImage(media: MediaContent | MediaContent[] | undefined): FeedImage | undefined {
   const items = Array.isArray(media) ? media : media ? [media] : [];
   const image = items.find((m) => !m.$.medium || m.$.medium === "image")?.$;
   if (!image?.url) return undefined;
   const width = Number(image.width);
   const height = Number(image.height);
   return { url: image.url, size: width > 0 && height > 0 ? { width, height } : undefined };
+}
+
+// <enclosure> с картинкой — обложка у фидов без media:content (Abduzeedo).
+// Нужна там же, где media:content: когда страница статьи боту не открылась.
+// http-адреса не берём — на https-странице браузер такую картинку не покажет.
+function extractEnclosureImage(enclosure: { url?: string; type?: string } | undefined): FeedImage | undefined {
+  if (!enclosure?.url || !/^https:\/\//i.test(enclosure.url)) return undefined;
+  if (!/^image\//i.test(enclosure.type ?? "")) return undefined;
+  return { url: enclosure.url };
 }
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
 // Мягче обычного порога — только для пар, где хотя бы одна статья без
@@ -221,6 +229,7 @@ async function processSource(
     return;
   }
 
+  let pageFailureLogged = false;
   for (const item of feed.items) {
     heartbeat(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
     if (remaining.count <= 0) {
@@ -290,11 +299,18 @@ async function processSource(
       else
         excerpt =
           (feedContent?.length ?? 0) >= (og.excerpt?.length ?? 0) ? feedContent ?? og.excerpt : og.excerpt;
-    } catch {
+    } catch (err) {
       // страница недоступна боту — это ожидаемо для части источников
       excerpt = feedContent;
+      // Причину пишем один раз на издание за прогон: без неё не отличить
+      // блокировку от разового сбоя (так осталась без обложки первая статья
+      // Abduzeedo), а у закрытых изданий вроде Bloomberg отказов десятки.
+      if (!pageFailureLogged) {
+        console.log(`  страница статьи не открылась: ${(err as Error).message}`);
+        pageFailureLogged = true;
+      }
     }
-    const feedImage = extractFeedImage(item["media:content"]);
+    const feedImage = extractFeedImage(item["media:content"]) ?? extractEnclosureImage(item.enclosure);
     if (feedImage && (sourceConfig?.coverFromFeed || !imageUrl)) imageUrl = feedImage.url;
 
     // Галерея из самого RSS — для сайтов, чья страница закрыта от бота, но
