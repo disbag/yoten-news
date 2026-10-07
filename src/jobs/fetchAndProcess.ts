@@ -205,13 +205,16 @@ async function processSource(
   source: { id: number; name: string; rss_url: string },
   remaining: { count: number }
 ) {
-  console.log(`→ ${source.name}`);
   // Ручной override контент-селектора для этого издания, если задан в
   // конфиге (см. contentSelector в src/config/sources.ts) — источники
   // синхронизируются в БД через db:init, но сам селектор там не хранится
   // (это dev-time настройка парсинга, не пользовательские данные), поэтому
   // ищем его в конфиге по имени.
   const sourceConfig = SOURCES.find((s) => s.name === source.name);
+  // У фида раздела (extraFeeds) в логе рядом с названием — его адрес, иначе
+  // фиды одного издания не различить.
+  const isExtraFeed = sourceConfig?.extraFeeds?.includes(source.rss_url);
+  console.log(`→ ${source.name}${isExtraFeed ? ` (${source.rss_url.replace(/^https?:\/\/(?:www\.)?/, "")})` : ""}`);
   const contentSelector = sourceConfig?.contentSelector;
   let feed;
   try {

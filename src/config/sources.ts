@@ -16,6 +16,10 @@ import type { GallerySite } from "../lib/ogTags.js";
 type SourceConfig = {
   name: string;
   rssUrl: string;
+  // Фиды других разделов того же издания: у крупных изданий раздел — отдельный
+  // фид ("Мир", "Книги", "Путешествия"). В базе у каждого фида своя строка
+  // sources с тем же названием; в ленте и в настройках это одно издание.
+  extraFeeds?: string[];
   homepageUrl: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
@@ -318,15 +322,25 @@ export const SOURCES: SourceConfig[] = [
   {
     // Не блокирует бота, страница отдаёт чистый текст статьи почти без
     // мусора в начале. RSS тоже с более длинным description, чем большинство.
+    // Основной фид — раздел "Мир" (политика, происшествия); искусство и
+    // дизайн, книги и путешествия — отдельными фидами.
     name: "The Guardian",
     rssUrl: "https://www.theguardian.com/world/rss",
+    extraFeeds: [
+      "https://www.theguardian.com/artanddesign/rss",
+      "https://www.theguardian.com/books/rss",
+      "https://www.theguardian.com/travel/rss",
+    ],
     homepageUrl: "https://www.theguardian.com",
   },
   {
     // Не блокирует бота, страница отдаёт чистый текст статьи без мусора в
-    // начале — один из самых чистых источников. RSS — world-раздел.
+    // начале — один из самых чистых источников. Основной фид — world-раздел
+    // новостей; "Культура" и "Путешествия" — длинные очерки с bbc.com, около
+    // статьи в день в каждом.
     name: "BBC",
     rssUrl: "https://feeds.bbci.co.uk/news/world/rss.xml",
+    extraFeeds: ["https://www.bbc.com/culture/feed.rss", "https://www.bbc.com/travel/feed.rss"],
     homepageUrl: "https://www.bbc.com",
   },
   {
