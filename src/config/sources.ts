@@ -332,6 +332,7 @@ export const SOURCES: SourceConfig[] = [
       "https://www.theguardian.com/travel/rss",
     ],
     homepageUrl: "https://www.theguardian.com",
+    gallery: "guardian",
   },
   {
     // Не блокирует бота, страница отдаёт чистый текст статьи без мусора в

@@ -313,6 +313,19 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 //    теле. В src адрес их собственного ресайзера /api/img?url=…; берём сам
 //    файл из параметра url (cms.abduzeedo.com/sites/default/files/originals/…),
 //    картинки с чужих сайтов отбрасываем.
+//  - "guardian" (The Guardian): главное фото статьи и фото-вставки тела
+//    (ImageBlockElement); на страницах-галереях "in pictures" у figure нет
+//    разметки блока — берём и их. Вставки других типов (подписка на рассылку,
+//    ссылка на другую статью, видео) пропускаем. Картинки отдаёт их ресайзер
+//    i.guim.co.uk/img/media/…: без подписи он отвечает только на наборы
+//    параметров, которыми пользуется сам сайт ("width=N&dpr=1&s=none&crop=none"
+//    и то же с "quality=45&dpr=2"), остальное — 401. Берём вариант сайта для
+//    экранов высокой чёткости, width=500 при dpr=2: это 1000px по ширине,
+//    45–200 КБ на кадр (при dpr=1 тот же размер весит 110–530 КБ). Узкие
+//    полосы (в конце статей о путешествиях стоит баннер 6100x520) пропускаем
+//    по размерам обрезки из адреса. og:image не используем вовсе — это
+//    обрезка 1200x630 с плашкой логотипа: обложкой статьи становится первый
+//    кадр страницы, главное фото (coverFromFirstFrame).
 export type GallerySite =
   | "hearst"
   | "futureplc"
@@ -334,7 +347,8 @@ export type GallerySite =
   | "fastcompany"
   | "architectureau"
   | "designwanted"
-  | "abduzeedo";
+  | "abduzeedo"
+  | "guardian";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -362,7 +376,8 @@ const GALLERY_SITES: Record<
     // подходящих), а не src: когда в src оригинал на сотни килобайт.
     srcsetMaxWidth?: number;
     // Обложкой статьи считать первый кадр из разметки, а не og:image — когда
-    // это тот же снимок, но в облегчённом размере (см. feedCover).
+    // это тот же снимок, но в облегчённом размере (Design Milk, см. feedCover)
+    // или без плашки логотипа (The Guardian, см. fetchOgTags).
     coverFromFirstFrame?: boolean;
   }
 > = {
@@ -611,6 +626,19 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: true,
   },
+  guardian: {
+    selector: 'figure:not([data-spacefinder-type]) img, figure[data-spacefinder-type$="ImageBlockElement"] img',
+    normalize: (url) => {
+      if (url.hostname !== "i.guim.co.uk" || !url.pathname.startsWith("/img/media/")) return null;
+      // В адресе после идентификатора — обрезка "x_y_ширина_высота".
+      const crop = url.pathname.match(/^\/img\/media\/[^/]+\/\d+_\d+_(\d+)_(\d+)\//);
+      if (crop && Math.max(Number(crop[1]) / Number(crop[2]), Number(crop[2]) / Number(crop[1])) > 3) return null;
+      url.search = "?width=500&quality=45&dpr=2&s=none&crop=none";
+      return url;
+    },
+    leadWithCover: false,
+    coverFromFirstFrame: true,
+  },
 };
 
 // Адрес самого широкого варианта из srcset, который не шире maxWidth; если
@@ -717,11 +745,18 @@ export async function fetchOgTags(
     extractArticleBodyFromJsonLd($)?.slice(0, MAX_ARTICLE_CHARS) ??
     (articleScope && extractParagraphs($, articleScope)) ??
     extractParagraphs($, undefined);
-  const image = extractMetaContent($, "og:image");
+  const ogImage = extractMetaContent($, "og:image");
+  const pageSite = gallery && !galleryFromRss(gallery) ? gallery : undefined;
+  const frames = pageSite ? collectFrames($, url, pageSite, ogImage) : undefined;
+  // У сайтов с coverFromFirstFrame обложка — первый кадр страницы, даже когда
+  // он один и галереи нет: у The Guardian og:image обрезан под соцсети и
+  // несёт плашку логотипа, а главное фото статьи чистое.
+  const image = (pageSite && GALLERY_SITES[pageSite].coverFromFirstFrame && frames?.[0]) || ogImage;
   return {
     description: extractMetaContent($, "og:description"),
     image,
     excerpt,
-    gallery: gallery && !galleryFromRss(gallery) ? extractGallery($, url, gallery, image) : undefined,
+    // Одна обложка без единого фото из тела — это не галерея.
+    gallery: frames && (frames.length > 1 ? frames : []),
   };
 }
