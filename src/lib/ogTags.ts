@@ -367,6 +367,9 @@ const GALLERY_SITES: Record<
     selector: string;
     // size — width/height из атрибутов <img>, если они есть (у обложки их нет).
     normalize: (url: URL, size?: { width: number; height: number }) => URL | null;
+    // Своё правило для обложки, когда она приходит не тем файлом, что кадры
+    // галереи (см. normalizeCover). Без него к обложке применяется normalize.
+    cover?: (url: URL) => URL | null;
     leadWithCover: boolean;
     from?: "page" | "rss";
     // Картинки подгружаются лениво: в src заглушка, настоящий адрес — в
@@ -465,6 +468,16 @@ const GALLERY_SITES: Record<
       if (file && size && size.width > 852) {
         url.pathname = `${file[1]}-852x${Math.round((852 * size.height) / size.width)}.${file[2]}`;
       }
+      return url;
+    },
+    // Страницы статей с 7 октября 2026 закрыты от бота (403), og:image взять
+    // неоткуда. В <enclosure> фида лежит квадратная миниатюра 411x411 того же
+    // файла, что стоял в og:image: убираем размер из имени — получаем его.
+    cover: (url) => {
+      if (url.hostname !== "static.dezeen.com" || !url.pathname.startsWith("/uploads/")) return null;
+      url.protocol = "https:";
+      url.search = "";
+      url.pathname = url.pathname.replace(/-\d{2,4}x\d{2,4}(\.\w+)$/, "$1");
       return url;
     },
     leadWithCover: true,
@@ -671,7 +684,8 @@ export function extractFeedGallery(html: string, baseUrl: string, site: GalleryS
 // без галереи (у GameSpot обложка в RSS всего 300px).
 export function normalizeCover(site: GallerySite, cover: string): string {
   try {
-    return GALLERY_SITES[site].normalize(new URL(cover))?.toString() ?? cover;
+    const { cover: coverRule, normalize } = GALLERY_SITES[site];
+    return (coverRule ?? normalize)(new URL(cover))?.toString() ?? cover;
   } catch {
     return cover;
   }

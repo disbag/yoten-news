@@ -45,13 +45,13 @@ function extractFeedImage(media: MediaContent | MediaContent[] | undefined): str
   return items.find((m) => !m.$.medium || m.$.medium === "image")?.$.url;
 }
 
-// <enclosure> с картинкой — обложка у фидов без media:content (Abduzeedo).
-// Нужна там же, где media:content: когда страница статьи боту не открылась.
-// http-адреса не берём — на https-странице браузер такую картинку не покажет.
+// <enclosure> с картинкой — обложка у фидов без media:content (Abduzeedo,
+// Dezeen). Нужна там же, где media:content: когда страница статьи боту не
+// открылась. Адрес с http:// (так у Dezeen) переводим на https.
 function extractEnclosureImage(enclosure: { url?: string; type?: string } | undefined): string | undefined {
-  if (!enclosure?.url || !/^https:\/\//i.test(enclosure.url)) return undefined;
+  if (!enclosure?.url || !/^https?:\/\//i.test(enclosure.url)) return undefined;
   if (!/^image\//i.test(enclosure.type ?? "")) return undefined;
-  return enclosure.url;
+  return enclosure.url.replace(/^http:\/\//i, "https://");
 }
 const DEDUPE_THRESHOLD = Number(process.env.DEDUPE_THRESHOLD ?? 0.75);
 // Мягче обычного порога — только для пар, где хотя бы одна статья без
@@ -324,6 +324,9 @@ async function processSource(
       const still = gallery?.find((url) => !isGif(url));
       if (imageUrl && isGif(imageUrl) && still) imageUrl = still;
     }
+    // Обложку взять неоткуда (страница закрыта, в фиде её нет), а фото статьи
+    // есть — обложкой становится первое из них.
+    imageUrl ??= gallery?.[0];
 
     // Эмбеддим оригинальный текст статьи (excerpt/fullDescription/rawSummary
     // по убыванию качества) ДО саммаризации — раньше порядок был обратным
