@@ -402,14 +402,19 @@ async function processSource(
     // другая). Сократили окно до 12ч — этого достаточно, чтобы разные издания
     // склеились при отражении одного и того же события в течение дня, но
     // старый якорь перестаёт быть кандидатом для склейки с тем, что появилось
-    // на следующий день.
+    // на следующий день. С 8 октября якорь остаётся кандидатом ещё 12 часов
+    // (windowHours: 24), но после recentHours — только для статей других
+    // изданий и по строгому правилу с опорой на заголовок, см. OLD_* в
+    // src/lib/grouping.ts: об одном событии издания пишут с разницей и в
+    // 13–24 часа.
     const { groupId: clusterId, matched: clusterMatched } = await findAndAssignGroup(
       "cluster_id",
       newId,
       vectorLiteral,
       {
         excludeSourceId: null,
-        windowHours: 12,
+        windowHours: 24,
+        recentHours: 12,
         threshold: DEDUPE_THRESHOLD,
         isThin: !fullDescription,
         thinThreshold: THIN_DEDUPE_THRESHOLD,

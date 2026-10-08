@@ -1,5 +1,21 @@
 import { pool } from "./db.js";
 
+// Якорь старше recentHours (но моложе windowHours) — "вчерашняя" новость.
+// К ней статья приклеивается только по более строгому правилу и только от
+// другого издания: за ночь разные издания пишут об одном и том же событии с
+// разницей в 13–24 часа (Spotify и аудиокниги у TechCrunch и 9to5Mac — тела
+// 0.94, заголовки 0.92, разрыв 13,5 ч), а то же издание через сутки пишет
+// уже продолжение, а не ту же новость. Одного сходства тел тут мало — на нём
+// раньше, при окне 48 ч, один якорь собирал десяток чужих статей (см.
+// коммент у вызова в fetchAndProcess.ts). Подобрано на неделе данных:
+// правило добавляет около 60 склеек на 4 800 статей, почти все — настоящие
+// дубли.
+const OLD_TITLE = 0.8;
+const OLD_ASSIST_TITLE = 0.7;
+const OLD_ASSIST_BODY = 0.7;
+const OLD_BODY = 0.85;
+const OLD_BODY_TITLE = 0.6;
+
 // Склейка статей с тем же инфоповодом в один cluster_id (строгий порог,
 // источник может быть любым, включая тот же самый — см. вызов в
 // fetchAndProcess.ts).
@@ -9,7 +25,10 @@ export async function findAndAssignGroup(
   vectorLiteral: string,
   options: {
     excludeSourceId: number | null;
+    // Сколько часов якорь остаётся кандидатом; обычные пороги действуют
+    // первые recentHours, дальше — строгое правило (см. OLD_* выше).
     windowHours: number;
+    recentHours: number;
     threshold: number;
     // Более мягкий порог для пар, где хотя бы одна сторона — тизер из RSS
     // без полного текста страницы (full_description IS NULL, платные/
@@ -74,15 +93,36 @@ export async function findAndAssignGroup(
        AND ($2::int IS NULL OR source_id != $2)
        AND created_at > now() - interval '${options.windowHours} hours'
        AND (
-         1 - (embedding <=> $3::vector) > (
-           CASE WHEN $5::bool OR full_description IS NULL THEN $6::float8 ELSE $4::float8 END
+         (
+           created_at > now() - interval '${options.recentHours} hours'
+           AND (
+             1 - (embedding <=> $3::vector) > (
+               CASE WHEN $5::bool OR full_description IS NULL THEN $6::float8 ELSE $4::float8 END
+             )
+             OR (
+               title_embedding IS NOT NULL AND (
+                 1 - (title_embedding <=> $7::vector) >= $8::float8
+                 OR (
+                   1 - (title_embedding <=> $7::vector) >= $9::float8
+                   AND 1 - (embedding <=> $3::vector) >= $10::float8
+                 )
+               )
+             )
+           )
          )
          OR (
-           title_embedding IS NOT NULL AND (
-             1 - (title_embedding <=> $7::vector) >= $8::float8
+           created_at <= now() - interval '${options.recentHours} hours'
+           AND source_id <> $11
+           AND title_embedding IS NOT NULL
+           AND (
+             1 - (title_embedding <=> $7::vector) >= ${OLD_TITLE}
              OR (
-               1 - (title_embedding <=> $7::vector) >= $9::float8
-               AND 1 - (embedding <=> $3::vector) >= $10::float8
+               1 - (title_embedding <=> $7::vector) >= ${OLD_ASSIST_TITLE}
+               AND 1 - (embedding <=> $3::vector) >= ${OLD_ASSIST_BODY}
+             )
+             OR (
+               1 - (embedding <=> $3::vector) >= ${OLD_BODY}
+               AND 1 - (title_embedding <=> $7::vector) >= ${OLD_BODY_TITLE}
              )
            )
          )
@@ -103,16 +143,123 @@ export async function findAndAssignGroup(
       options.titleThreshold,
       options.titleAssistThreshold,
       options.titleAssistBodyThreshold,
+      options.sourceId,
     ]
   );
   const fallback = match.rowCount
     ? null
-    : (await matchByMember(newId, vectorLiteral, options)) ??
+    : (await matchCompanion(newId, options)) ??
+      (await matchSameHourNews(newId, vectorLiteral, options)) ??
+      (await matchByMember(newId, vectorLiteral, options)) ??
       (await matchByNamePair(newId, vectorLiteral, options)) ??
       (await matchBySameImage(newId, vectorLiteral, options));
   const groupId = match.rowCount ? match.rows[0][column] ?? match.rows[0].id : fallback ?? newId;
   await pool.query(`UPDATE articles SET ${column} = $1 WHERE id = $2`, [groupId, newId]);
   return { groupId, matched: !!match.rowCount || fallback !== null };
+}
+
+// Запасное правило: то же издание в тот же час выпустило парный материал об
+// одном и том же — статью и её фотогалерею (Car and Driver "2027 BMW iX4" и
+// "View Exterior Photos of the 2027 BMW iX4"), проект и рассказ о нём (Wired
+// "Spend Elon Musk's Money" и "How Massive Is Elon Musk's Trillion-Dollar
+// Fortune? Spend It Yourself": у страницы проекта нет текста, тела 0.48,
+// заголовки 0.785 — мимо всех остальных правил). Одной близости заголовков
+// мало: у серий того же издания она такая же (подборки Condé Nast Traveler
+// "12 Best Hotels in Florida 2026: Readers' Choice Awards" и "15 Best Resorts
+// in South Africa…" — 0.77). Отличает парные материалы короткий заголовок,
+// почти целиком входящий в длинный: не больше COMPANION_MAX_WORDS значимых
+// слов, из них не меньше COMPANION_SHARE есть во втором. На неделе данных
+// правило склеивает 4 пары, все настоящие, и ни одной серии.
+const COMPANION_HOURS = 1;
+const COMPANION_TITLE = 0.72;
+const COMPANION_MAX_WORDS = 5;
+const COMPANION_SHARE = 0.75;
+
+function titleWords(title: string): Set<string> {
+  return new Set(
+    title
+      .replace(/&#8217;|[’‘`]/g, "'")
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}']+/u)
+      .map((w) => w.replace(/^'+|'+$/g, "").replace(/'s$/, ""))
+      .filter((w) => w.length > 1 && !PHRASE_STOPWORDS.has(w))
+  );
+}
+
+function isCompanionTitle(a: string, b: string): boolean {
+  const [short, long] = [titleWords(a), titleWords(b)].sort((x, y) => x.size - y.size);
+  if (short.size < 2 || short.size > COMPANION_MAX_WORDS) return false;
+  let shared = 0;
+  for (const w of short) if (long.has(w)) shared++;
+  return shared / short.size >= COMPANION_SHARE;
+}
+
+async function matchCompanion(
+  newId: number,
+  options: { title: string; sourceId: number; titleVector: string }
+): Promise<number | null> {
+  const near = await pool.query<{ id: number; title: string }>(
+    `SELECT id, title FROM articles
+     WHERE id < $1 AND cluster_id = id AND source_id = $2
+       AND title_embedding IS NOT NULL
+       AND created_at > now() - interval '${COMPANION_HOURS} hours'
+       AND 1 - (title_embedding <=> $3::vector) >= ${COMPANION_TITLE}
+     ORDER BY title_embedding <=> $3::vector`,
+    [newId, options.sourceId, options.titleVector]
+  );
+  const hit = near.rows.find((r) => isCompanionTitle(options.title, r.title));
+  if (!hit) return null;
+  console.log(`  Склейка парного материала того же издания: кластер #${hit.id}`);
+  return hit.id;
+}
+
+// Запасное правило: два издания почти одновременно написали об одном
+// объявлении, но по-разному — у одного короткая заметка, у другого разбор.
+// Реальный случай: Variety "Xbox Sets New Division for Film and TV, Consumer
+// Products and Experiences" и Hollywood Reporter "Xbox Forms New Division
+// Focused on Film and TV Adaptations" с разницей в 3 минуты — заголовки
+// 0.705, тела 0.542, до основного правила (тела от 0.58) не хватило. Просто
+// опустить тот порог нельзя: в полосе 0.50–0.58 в основном разные материалы
+// одной большой истории (слияние Paramount и Warner). Отличают настоящий
+// дубль близость по времени и общие слова заголовков: не меньше
+// SAME_HOUR_WORDS значимых слов, и это не меньше SAME_HOUR_SHARE более
+// короткого заголовка. За 4 дня данных под правило не попала ни одна лишняя
+// пара.
+const SAME_HOUR_HOURS = 3;
+const SAME_HOUR_TITLE = 0.68;
+const SAME_HOUR_BODY = 0.5;
+const SAME_HOUR_WORDS = 3;
+const SAME_HOUR_SHARE = 0.5;
+
+function sharedTitleWords(a: string, b: string): { count: number; share: number } {
+  const [short, long] = [titleWords(a), titleWords(b)].sort((x, y) => x.size - y.size);
+  let count = 0;
+  for (const w of short) if (long.has(w)) count++;
+  return { count, share: short.size ? count / short.size : 0 };
+}
+
+async function matchSameHourNews(
+  newId: number,
+  vectorLiteral: string,
+  options: { title: string; sourceId: number; titleVector: string }
+): Promise<number | null> {
+  const near = await pool.query<{ id: number; title: string }>(
+    `SELECT id, title FROM articles
+     WHERE id < $1 AND cluster_id = id AND source_id <> $2
+       AND title_embedding IS NOT NULL
+       AND created_at > now() - interval '${SAME_HOUR_HOURS} hours'
+       AND 1 - (title_embedding <=> $3::vector) >= ${SAME_HOUR_TITLE}
+       AND 1 - (embedding <=> $4::vector) >= ${SAME_HOUR_BODY}
+     ORDER BY title_embedding <=> $3::vector`,
+    [newId, options.sourceId, options.titleVector, vectorLiteral]
+  );
+  const hit = near.rows.find((r) => {
+    const { count, share } = sharedTitleWords(options.title, r.title);
+    return count >= SAME_HOUR_WORDS && share >= SAME_HOUR_SHARE;
+  });
+  if (!hit) return null;
+  console.log(`  Склейка одновременных новостей с общими словами в заголовке: кластер #${hit.id}`);
+  return hit.id;
 }
 
 // Запасное правило: новая статья почти дословно совпадает по заголовку не с
@@ -132,7 +279,7 @@ async function matchByMember(
   newId: number,
   vectorLiteral: string,
   options: {
-    windowHours: number;
+    recentHours: number;
     titleVector: string;
     titleThreshold: number;
     titleAssistThreshold: number;
@@ -146,7 +293,7 @@ async function matchByMember(
      WHERE m.id < $1
        AND m.cluster_id <> m.id
        AND m.title_embedding IS NOT NULL
-       AND m.created_at > now() - interval '${options.windowHours} hours'
+       AND m.created_at > now() - interval '${options.recentHours} hours'
        AND 1 - (anchor.embedding <=> $2::vector) >= $7
        AND (
          1 - (m.title_embedding <=> $3::vector) >= $4
@@ -220,7 +367,7 @@ function titleBigrams(title: string, capitalizedOnly: boolean): Set<string> {
 async function matchByNamePair(
   newId: number,
   vectorLiteral: string,
-  options: { title: string; sourceId: number; titleVector: string; windowHours: number }
+  options: { title: string; sourceId: number; titleVector: string; recentHours: number }
 ): Promise<number | null> {
   const names = titleBigrams(options.title, true);
   if (!names.size) return null;
@@ -258,7 +405,7 @@ async function matchByNamePair(
               COALESCE(1 - (title_embedding <=> $3::vector), 0) AS title
        FROM articles
        WHERE id = ANY($1::int[]) AND cluster_id = id
-         AND created_at > now() - interval '${options.windowHours} hours'
+         AND created_at > now() - interval '${options.recentHours} hours'
      ) s
      WHERE body >= $4 OR (body >= $5 AND title >= $6)
      ORDER BY body DESC
@@ -313,7 +460,7 @@ function sameImage(a: string, b: string): boolean {
 async function matchBySameImage(
   newId: number,
   vectorLiteral: string,
-  options: { imageUrl: string | null; sourceId: number; windowHours: number }
+  options: { imageUrl: string | null; sourceId: number; recentHours: number }
 ): Promise<number | null> {
   const key = options.imageUrl ? imageKey(options.imageUrl) : null;
   if (!key) return null;
@@ -322,7 +469,7 @@ async function matchBySameImage(
     `SELECT cluster_id, image_url, 1 - (embedding <=> $2::vector) AS body
      FROM articles
      WHERE id <> $1 AND cluster_id IS NOT NULL AND image_url IS NOT NULL AND source_id <> $3
-       AND created_at > now() - interval '${options.windowHours} hours'
+       AND created_at > now() - interval '${options.recentHours} hours'
      ORDER BY body DESC`,
     [newId, vectorLiteral, options.sourceId]
   );
