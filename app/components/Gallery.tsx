@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent, type TransitionEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 
 // Мини-галерея для источников с несколькими кадрами на статью (см. gallery в
 // src/config/sources.ts). urls.length уже гарантированно >= 2 на уровне
@@ -11,20 +11,27 @@ import { useEffect, useRef, useState, type PointerEvent, type TransitionEvent } 
 // начинал грузиться только по клику, и перелистывание "залипало" до конца
 // загрузки). Свайп/перетаскивание ведёт ленту за пальцем.
 //
-// По кругу — бесшовно: по краям ленты стоят копии (перед первым кадром —
-// копия последнего, после последнего — копия первого). С последнего кадра
-// лента едет вперёд на копию первого, а когда анимация закончилась, без
-// анимации перескакивает на настоящий первый — со стороны это одно плавное
-// движение, а не откат назад через все кадры.
+// Не по кругу: на первом кадре назад листать некуда, на последнем — вперёд.
+// Стрелка в эту сторону скрыта, а лента за пальцем тянется с сопротивлением
+// и возвращается на место.
 //
 // Тот же компонент — и просмотр на весь экран (fullscreen, см. Lightbox.tsx):
 // листание должно быть ровно таким же, как в ленте, поэтому это не отдельная
 // карусель, а другой размер кадра и пара отличий — кадры вписаны целиком,
-// стрелки клавиатуры листают, взмах вниз или вверх закрывает.
+// стрелки клавиатуры листают, взмах вниз или вверх закрывает. Только там фото
+// можно увеличить: щипком или двойным нажатием. Увеличенное фото двигают
+// пальцем; листание и закрытие взмахом в это время выключены, чтобы жесты не
+// путались, — сначала фото возвращают к обычному размеру.
 const SWIPE_THRESHOLD = 0.2; // доля ширины, после которой отпускание листает
 const FLICK_MS = 250; // быстрый короткий взмах листает и без порога
 const FLICK_PX = 30;
 const DISMISS_PX = 90; // на сколько увести фото по вертикали, чтобы закрыть просмотр
+// Увеличение фото на весь экран: щипком двумя пальцами или двойным нажатием.
+const MAX_ZOOM = 4;
+const DOUBLE_TAP_ZOOM = 2.5;
+const DOUBLE_TAP_MS = 300;
+type Zoom = { scale: number; x: number; y: number };
+const NO_ZOOM: Zoom = { scale: 1, x: 0, y: 0 };
 
 export default function Gallery({
   urls,
@@ -41,11 +48,8 @@ export default function Gallery({
   onTap?: (index: number, target: EventTarget) => void;
   onClose?: () => void;
 }) {
-  // Позиция в ленте с копиями: 0 — копия последнего, 1..n — настоящие кадры,
-  // n+1 — копия первого.
-  const [pos, setPos] = useState(startIndex + 1);
-  // Перескок с копии на настоящий кадр — без анимации.
-  const [instant, setInstant] = useState(false);
+  // Номер текущего кадра в ленте, с нуля.
+  const [pos, setPos] = useState(startIndex);
   // Сломанные (402/битые байты — см. app/api/image-proxy/route.ts) кадры
   // исключаем из карусели по мере обнаружения, а не показываем битую иконку —
   // тот же принцип, что и для одиночной обложки в FeedCard.tsx.
@@ -70,12 +74,31 @@ export default function Gallery({
   const moved = useRef(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const firstImgRef = useRef<HTMLImageElement>(null);
+  const currentImgRef = useRef<HTMLImageElement>(null);
+  // Увеличение текущего кадра (только на весь экран): масштаб и сдвиг.
+  const [zoom, setZoomState] = useState<Zoom>(NO_ZOOM);
+  // Последнее значение — сразу, не дожидаясь перерисовки: за один кадр
+  // приходит несколько движений пальцев, и каждое считается от предыдущего.
+  const zoomRef = useRef(zoom);
+  function setZoom(next: Zoom) {
+    zoomRef.current = next;
+    setZoomState(next);
+  }
+  // Жест увеличения идёт — без анимации, фото должно идти точно за пальцами.
+  const [zooming, setZooming] = useState(false);
+  // Все пальцы на экране и то, с чего начался щипок или сдвиг увеличенного фото.
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; scale: number; cx: number; cy: number } | null>(null);
+  const pan = useRef<{ id: number; x: number; y: number; zx: number; zy: number } | null>(null);
+  const lastTap = useRef(0);
 
   const workingUrls = urls.filter((u) => !broken.has(u));
   const n = workingUrls.length;
-  const safePos = Math.min(pos, n + 1);
-  const current = n ? (((safePos - 1) % n) + n) % n : 0;
-  const neighbors = n ? [workingUrls[(current - 1 + n) % n], workingUrls[current], workingUrls[(current + 1) % n]] : [];
+  // Кадр могли исключить как битый — номер не должен выйти за конец ленты.
+  const current = Math.max(0, Math.min(pos, n - 1));
+  const neighbors = [workingUrls[current - 1], workingUrls[current], workingUrls[current + 1]].filter(
+    (u): u is string => Boolean(u)
+  );
   const neighborsKey = neighbors.join("|");
 
   // Первая картинка приходит уже в серверном HTML и у верхних карточек
@@ -101,14 +124,6 @@ export default function Gallery({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- neighborsKey и есть содержимое neighbors
   }, [firstLoaded, neighborsKey]);
 
-  // После перескока без анимации возвращаем анимацию — через два кадра, чтобы
-  // браузер успел применить новую позицию без transition.
-  useEffect(() => {
-    if (!instant) return;
-    const id = requestAnimationFrame(() => requestAnimationFrame(() => setInstant(false)));
-    return () => cancelAnimationFrame(id);
-  }, [instant]);
-
   useEffect(() => {
     if (!fullscreen) return;
     function onKey(e: KeyboardEvent) {
@@ -120,24 +135,59 @@ export default function Gallery({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- go читает только n, он в зависимостях
   }, [fullscreen, n]);
 
+  // Safari на iPhone на щипок увеличивает всю страницу, и touch-action его не
+  // останавливает — жест двумя пальцами на весь экран забираем себе явно.
+  useEffect(() => {
+    const view = viewportRef.current;
+    if (!fullscreen || !view) return;
+    const onTouch = (e: TouchEvent) => {
+      if (e.touches.length > 1) e.preventDefault();
+    };
+    const onGesture = (e: Event) => e.preventDefault();
+    view.addEventListener("touchstart", onTouch, { passive: false });
+    view.addEventListener("touchmove", onTouch, { passive: false });
+    document.addEventListener("gesturestart", onGesture);
+    document.addEventListener("gesturechange", onGesture);
+    return () => {
+      view.removeEventListener("touchstart", onTouch);
+      view.removeEventListener("touchmove", onTouch);
+      document.removeEventListener("gesturestart", onGesture);
+      document.removeEventListener("gesturechange", onGesture);
+    };
+  }, [fullscreen]);
+
   if (n === 0) return null;
 
   function go(delta: number) {
-    // Пока лента стоит на копии, дальше ехать некуда — ждём перескока на
-    // настоящий кадр (он случится в конце текущей анимации).
-    if (n < 2) return;
-    setPos((p) => (p === 0 || p === n + 1 ? p : p + delta));
+    setZoom(NO_ZOOM);
+    setPos((p) => Math.max(0, Math.min(Math.min(p, n - 1) + delta, n - 1)));
   }
 
-  function onTransitionEnd(e: TransitionEvent<HTMLDivElement>) {
-    if (e.target !== e.currentTarget || e.propertyName !== "transform") return;
-    if (safePos === n + 1) {
-      setInstant(true);
-      setPos(1);
-    } else if (safePos === 0) {
-      setInstant(true);
-      setPos(n);
-    }
+  // Сдвиг увеличенного фото — не дальше его края: пустоты за фото не видно.
+  function clampZoom(scale: number, x: number, y: number): Zoom {
+    const s = Math.max(1, Math.min(scale, MAX_ZOOM));
+    const img = currentImgRef.current;
+    const view = viewportRef.current;
+    if (s === 1 || !img || !view) return NO_ZOOM;
+    const maxX = Math.max(0, (img.offsetWidth * s - view.offsetWidth) / 2);
+    const maxY = Math.max(0, (img.offsetHeight * s - view.offsetHeight) / 2);
+    return { scale: s, x: Math.max(-maxX, Math.min(x, maxX)), y: Math.max(-maxY, Math.min(y, maxY)) };
+  }
+
+  // Новый масштаб так, чтобы точка фото под пальцами (px, py) осталась под ними.
+  function zoomAt(scale: number, px: number, py: number, from: Zoom = zoomRef.current): Zoom {
+    const view = viewportRef.current?.getBoundingClientRect();
+    if (!view) return from;
+    const s = Math.max(1, Math.min(scale, MAX_ZOOM));
+    const cx = px - (view.left + view.width / 2);
+    const cy = py - (view.top + view.height / 2);
+    const k = s / from.scale;
+    return clampZoom(s, cx - (cx - from.x) * k, cy - (cy - from.y) * k);
+  }
+
+  function pinchState() {
+    const [a, b] = [...pointers.current.values()];
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
   }
 
   function markBroken(url: string) {
@@ -151,11 +201,66 @@ export default function Gallery({
 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (fullscreen) {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.current.size === 2) {
+        // Второй палец — это щипок, а не листание: начатый жест отменяем.
+        drag.current = null;
+        pan.current = null;
+        setDragging(false);
+        setDragPx(0);
+        setDragY(0);
+        moved.current = true;
+        pinch.current = { ...pinchState(), scale: zoomRef.current.scale };
+        setZooming(true);
+        for (const id of pointers.current.keys()) {
+          try {
+            viewportRef.current?.setPointerCapture(id);
+          } catch {}
+        }
+        return;
+      }
+      if (pointers.current.size > 2) return;
+      if (zoomRef.current.scale > 1) {
+        // Увеличенное фото одним пальцем двигают, а не листают.
+        moved.current = false;
+        pan.current = { id: e.pointerId, x: e.clientX, y: e.clientY, zx: zoomRef.current.x, zy: zoomRef.current.y };
+        return;
+      }
+    }
     moved.current = false;
     drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, horizontal: null };
   }
 
   function onPointerMove(e: PointerEvent<HTMLDivElement>) {
+    if (fullscreen && pointers.current.has(e.pointerId)) {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const p = pinch.current;
+      if (p && pointers.current.size >= 2) {
+        const now = pinchState();
+        // Сначала сдвиг вслед за серединой между пальцами, затем масштаб вокруг неё.
+        const z = zoomRef.current;
+        const moved2 = { scale: z.scale, x: z.x + (now.cx - p.cx), y: z.y + (now.cy - p.cy) };
+        setZoom(zoomAt((p.scale * now.dist) / p.dist, now.cx, now.cy, moved2));
+        pinch.current = { dist: now.dist, cx: now.cx, cy: now.cy, scale: Math.max(1, Math.min((p.scale * now.dist) / p.dist, MAX_ZOOM)) };
+        return;
+      }
+      const m = pan.current;
+      if (m && m.id === e.pointerId) {
+        const dx = e.clientX - m.x;
+        const dy = e.clientY - m.y;
+        if (!moved.current && Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        if (!moved.current) {
+          moved.current = true;
+          setZooming(true);
+          try {
+            viewportRef.current?.setPointerCapture(e.pointerId);
+          } catch {}
+        }
+        setZoom(clampZoom(zoomRef.current.scale, m.zx + dx, m.zy + dy));
+        return;
+      }
+    }
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
     const dx = e.clientX - d.x;
@@ -179,11 +284,38 @@ export default function Gallery({
       } catch {}
       setDragging(true);
     }
-    if (d.horizontal) setDragPx(dx);
+    // За край ленты (первый кадр вправо, последний влево) тянется втрое туже.
+    const pastEdge = (current === 0 && dx > 0) || (current === n - 1 && dx < 0);
+    if (d.horizontal) setDragPx(pastEdge ? dx / 3 : dx);
     else setDragY(dy);
   }
 
   function endDrag(e: PointerEvent<HTMLDivElement>, cancelled: boolean) {
+    if (fullscreen) {
+      pointers.current.delete(e.pointerId);
+      if (pinch.current) {
+        if (pointers.current.size >= 2) {
+          pinch.current = { ...pinchState(), scale: zoomRef.current.scale };
+          return;
+        }
+        // Щипок закончен. Почти обычный размер — возвращаем ровно к нему.
+        pinch.current = null;
+        setZooming(false);
+        if (zoomRef.current.scale < 1.05) setZoom(NO_ZOOM);
+        // Оставшийся палец продолжает двигать увеличенное фото.
+        const [rest] = [...pointers.current.entries()];
+        pan.current =
+          rest && zoomRef.current.scale >= 1.05
+            ? { id: rest[0], x: rest[1].x, y: rest[1].y, zx: zoomRef.current.x, zy: zoomRef.current.y }
+            : null;
+        return;
+      }
+      if (pan.current?.id === e.pointerId) {
+        pan.current = null;
+        setZooming(false);
+        return;
+      }
+    }
     const d = drag.current;
     drag.current = null;
     if (!d || d.horizontal === null) return;
@@ -202,13 +334,6 @@ export default function Gallery({
     else if (dx > width * SWIPE_THRESHOLD || (flick && dx > 0)) go(-1);
   }
 
-  // Лента с копиями по краям — см. коммент вверху файла.
-  const slides = [
-    { key: "clone-last", url: workingUrls[n - 1], real: false },
-    ...workingUrls.map((url) => ({ key: url, url, real: true })),
-    { key: "clone-first", url: workingUrls[0], real: false },
-  ];
-
   return (
     <div className={fullscreen ? "gallery fullscreen" : "gallery"}>
       <div
@@ -220,31 +345,53 @@ export default function Gallery({
         onPointerCancel={(e) => endDrag(e, true)}
         onClick={(e) => {
           // click приходит и после перетаскивания — это не нажатие.
-          if (moved.current) moved.current = false;
-          else onTap?.(current, e.target);
+          if (moved.current) {
+            moved.current = false;
+            return;
+          }
+          // Двойное нажатие по фото на весь экран — увеличить в этой точке или
+          // вернуть обычный размер.
+          if (fullscreen && e.target instanceof HTMLImageElement) {
+            const doubleTap = e.timeStamp - lastTap.current < DOUBLE_TAP_MS;
+            lastTap.current = doubleTap ? 0 : e.timeStamp;
+            if (doubleTap) {
+              setZoom(zoomRef.current.scale > 1 ? NO_ZOOM : zoomAt(DOUBLE_TAP_ZOOM, e.clientX, e.clientY));
+              return;
+            }
+          }
+          onTap?.(current, e.target);
         }}
       >
         <div
           className="track"
-          onTransitionEnd={onTransitionEnd}
           style={{
-            transform: `translate(calc(${-safePos * 100}% + ${dragPx}px), ${dragY}px)`,
-            transition: dragging || instant ? "none" : undefined,
+            transform: `translate(calc(${-current * 100}% + ${dragPx}px), ${dragY}px)`,
+            transition: dragging ? "none" : undefined,
             opacity: dragY ? Math.max(0.3, 1 - Math.abs(dragY) / 400) : undefined,
           }}
         >
-          {slides.map(({ key, url, real }) => {
+          {workingUrls.map((url, i) => {
             // Ленивая загрузка — только для первого кадра карусели в ленте.
-            const isFirst = !fullscreen && real && url === workingUrls[0];
+            const isFirst = !fullscreen && url === workingUrls[0];
+            const zoomed = fullscreen && i === current && zoom.scale > 1;
             return (
-              <div className={upright.has(url) ? "slide upright" : "slide"} key={key}>
+              <div className={upright.has(url) ? "slide upright" : "slide"} key={url}>
                 {requested.has(url) && (
                   // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание), через /api/image-proxy как и одиночная обложка
                   <img
-                    ref={isFirst ? firstImgRef : undefined}
+                    ref={isFirst ? firstImgRef : fullscreen && i === current ? currentImgRef : undefined}
                     src={`/api/image-proxy?url=${encodeURIComponent(url)}`}
                     alt=""
                     draggable={false}
+                    style={
+                      zoomed
+                        ? {
+                            transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})`,
+                            transition: zooming ? "none" : undefined,
+                            cursor: "grab",
+                          }
+                        : undefined
+                    }
                     loading={isFirst ? "lazy" : "eager"}
                     onLoad={(e) => {
                       checkUpright(url, e.currentTarget);
@@ -263,22 +410,27 @@ export default function Gallery({
         </div>
       </div>
 
-      {/* После отсева битых кадров может остаться один — листать нечего. */}
-      {n > 1 && (
+      {/* После отсева битых кадров может остаться один — листать нечего.
+          Пока фото увеличено, стрелки и точки убраны: они закрывали бы его. */}
+      {n > 1 && zoom.scale === 1 && (
         <>
-          <button className="arrow left" aria-label="Предыдущее фото" onClick={() => go(-1)}>
-            ‹
-          </button>
-          <button className="arrow right" aria-label="Следующее фото" onClick={() => go(1)}>
-            ›
-          </button>
+          {current > 0 && (
+            <button className="arrow left" aria-label="Предыдущее фото" onClick={() => go(-1)}>
+              ‹
+            </button>
+          )}
+          {current < n - 1 && (
+            <button className="arrow right" aria-label="Следующее фото" onClick={() => go(1)}>
+              ›
+            </button>
+          )}
           <div className="dots">
             {workingUrls.map((url, i) => (
               <button
                 key={url}
                 className={i === current ? "dot active" : "dot"}
                 aria-label={`Фото ${i + 1}`}
-                onClick={() => setPos(i + 1)}
+                onClick={() => setPos(i)}
               />
             ))}
           </div>
@@ -403,6 +555,7 @@ export default function Gallery({
           max-width: 100%;
           max-height: 100%;
           object-fit: contain;
+          transition: transform 0.2s ease;
         }
         .fullscreen .arrow {
           width: 44px;
