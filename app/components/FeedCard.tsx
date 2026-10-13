@@ -206,7 +206,10 @@ export default function FeedCard({
             </span>
           </div>
           {copied && <span className="copied">Ссылка скопирована</span>}
-          <button type="button" className="share" aria-label="Поделиться" title="Поделиться" onClick={share}>
+          {/* Ни в классе, ни в подписи нет слов "share"/"Поделиться": по ним
+              блокировщики рекламы в Safari скрывают кнопку как виджет соцсетей
+              (так и было в первой версии). */}
+          <button type="button" className="post-link" aria-label="Отправить ссылку на пост" onClick={share}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
                 d="M12 15V3.5M7.5 8L12 3.5L16.5 8M5 12.5V19.5H19V12.5"
@@ -328,7 +331,7 @@ export default function FeedCard({
           align-items: center;
           gap: 6px;
         }
-        .share {
+        .post-link {
           display: flex;
           flex-shrink: 0;
           /* Поле вокруг значка — чтобы попадать пальцем; отрицательный отступ
@@ -340,7 +343,7 @@ export default function FeedCard({
           color: var(--text-dim);
           cursor: pointer;
         }
-        .share:hover {
+        .post-link:hover {
           color: var(--accent);
         }
         .copied {
