@@ -215,3 +215,41 @@ main {
     padding: 0;
   }
 }
+
+/* Страница одного поста (app/post/[id]) — ссылка назад над карточкой и
+   заглушка для поста, которого уже нет. */
+.post-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 300;
+  font-size: 15px;
+  color: var(--text-soft);
+  text-decoration: none;
+}
+
+.post-back:hover {
+  color: var(--accent);
+}
+
+.post-gone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 80px 20px;
+  text-align: center;
+  font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.post-gone p {
+  margin: 0;
+}
+
+.post-gone a {
+  color: var(--link);
+}

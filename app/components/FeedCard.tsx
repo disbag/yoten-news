@@ -36,6 +36,7 @@ export default function FeedCard({
   item,
   trackReads,
   onRead,
+  standalone = false,
 }: {
   item: FeedItem;
   // false у гостя: прочитанное не отслеживается и не показывается (ни точки
@@ -43,8 +44,12 @@ export default function FeedCard({
   trackReads: boolean;
   // Карточка только что стала прочитанной — для счётчика вкладки "Новые".
   onRead?: () => void;
+  // Страница одного поста (app/post/[id]): карточка сразу раскрыта.
+  standalone?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(standalone);
+  // Подпись "Ссылка скопирована" рядом с кнопкой "Поделиться".
+  const [copied, setCopied] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
   // Некоторые издания (Telegraph — известный случай) отдают 402/битые байты
   // даже через прокси (см. коммент в app/api/image-proxy/route.ts) — вместо
@@ -78,6 +83,27 @@ export default function FeedCard({
   // они в раскрытой карточке, а раскрыть её можно и бейджем "+N источника"
   // (у поста без ката иначе до них было бы не добраться).
   const otherSources = item.sources.filter((s) => s.link !== item.primaryLink);
+
+  // Ссылка на страницу поста (DIS-20). На телефоне — системное окно
+  // "Поделиться", на компьютере — сразу в буфер обмена: там его окно только
+  // добавляет лишний шаг до того же "Скопировать".
+  async function share() {
+    const url = `${window.location.origin}/post/${item.clusterId}`;
+    if (navigator.share && window.matchMedia("(pointer: coarse)").matches) {
+      // Отказ пользователя (закрыл окно) приходит как ошибка — это не сбой.
+      await navigator.share({ url }).catch(() => {});
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Буфер недоступен (старый браузер, страница не по https) — открываем
+      // пост, ссылку можно взять из адресной строки.
+      window.location.assign(url);
+    }
+  }
 
   function markRead() {
     setIsRead(true);
@@ -179,6 +205,17 @@ export default function FeedCard({
               {dateLabel}
             </span>
           </div>
+          {copied && <span className="copied">Ссылка скопирована</span>}
+          <button type="button" className="share" aria-label="Поделиться" title="Поделиться" onClick={share}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M12 15V3.5M7.5 8L12 3.5L16.5 8M5 12.5V19.5H19V12.5"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
         <p
           className={`summary${isRead ? " read" : ""}${hasMoreText && !expanded ? " expandable" : ""}`}
@@ -290,6 +327,28 @@ export default function FeedCard({
           display: flex;
           align-items: center;
           gap: 6px;
+        }
+        .share {
+          display: flex;
+          flex-shrink: 0;
+          /* Поле вокруг значка — чтобы попадать пальцем; отрицательный отступ
+             оставляет сам значок на правом краю карточки. */
+          padding: 8px;
+          margin: -8px;
+          border: none;
+          background: none;
+          color: var(--text-dim);
+          cursor: pointer;
+        }
+        .share:hover {
+          color: var(--accent);
+        }
+        .copied {
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 10px;
+          line-height: 12px;
+          color: var(--text-dim);
+          white-space: nowrap;
         }
         .unread-dot {
           width: 7px;

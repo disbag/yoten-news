@@ -66,9 +66,22 @@ export async function getFeed(
     unreadOnly?: boolean;
     // Вкладка "Прочитанные": наоборот, только отмеченные. У гостя пусто.
     readOnly?: boolean;
+    // Одна карточка — та, в которой сейчас лежит эта статья (страница поста,
+    // см. getPost).
+    articleId?: number;
   } = {}
 ): Promise<FeedItem[]> {
-  const { limit = 30, category, before, after, fromClusterId, userId = null, unreadOnly = false, readOnly = false } = options;
+  const {
+    limit = 30,
+    category,
+    before,
+    after,
+    fromClusterId,
+    userId = null,
+    unreadOnly = false,
+    readOnly = false,
+    articleId,
+  } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
   // одного кластера описывают один инфоповод, категория у них должна
@@ -85,6 +98,10 @@ export async function getFeed(
   if (category) {
     params.push(category);
     categoryClause += ` AND $${params.length} = ANY(a.category)`;
+  }
+  if (articleId) {
+    params.push(articleId);
+    categoryClause += ` AND a.cluster_id = (SELECT cluster_id FROM articles WHERE id = $${params.length})`;
   }
 
   // Издания, выключенные пользователем на странице настроек (см.
@@ -212,6 +229,17 @@ export async function getFeed(
     })
   );
   return after ? items.reverse() : items;
+}
+
+// Одна карточка для страницы поста (/post/<id>, DIS-20). В ссылке — номер
+// статьи, с которой карточка началась (он же clusterId в ленте), а ищем по
+// статье, а не по номеру карточки: если карточку позже приклеили к другой,
+// её статьи переехали, и старая ссылка открывает объединённую карточку.
+// Настройки читателя не учитываются: пост по ссылке одинаковый для всех,
+// включая издания, которые открывший выключил у себя в ленте.
+export async function getPost(articleId: number): Promise<FeedItem | null> {
+  const [item] = await getFeed({ articleId, limit: 1 });
+  return item ?? null;
 }
 
 // Сколько карточек появилось или обновилось после указанного момента — для
