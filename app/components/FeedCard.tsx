@@ -91,7 +91,11 @@ export default function FeedCard({
     const url = `${window.location.origin}/post/${item.clusterId}`;
     if (navigator.share && window.matchMedia("(pointer: coarse)").matches) {
       // Отказ пользователя (закрыл окно) приходит как ошибка — это не сбой.
-      await navigator.share({ url }).catch(() => {});
+      // title — подпись вверху системного окна вместо голого адреса сайта.
+      // text не передаём: мессенджеры вставляют его в сообщение рядом со
+      // ссылкой, а текст поста там и так покажет превью.
+      const lead = item.summary.length > 90 ? `${item.summary.slice(0, 90).trimEnd()}…` : item.summary;
+      await navigator.share({ title: `${item.primarySource}: ${lead}`, url }).catch(() => {});
       return;
     }
     try {
