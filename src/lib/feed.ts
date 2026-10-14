@@ -142,8 +142,25 @@ export async function getFeed(
   if (readOnly) havingClauses.push("bool_or(ar.user_id IS NOT NULL)");
   const direction = after ? "ASC" : "DESC";
 
+  // Два шага (DIS-54): сначала отбираем нужные карточки по одной дате на
+  // кластер — это дёшево, — и только для них собираем тексты, источники и
+  // картинки. В один шаг база собирала все ~4 тысячи карточек целиком (около
+  // секунды на запрос) и выбрасывала всё, кроме двадцати. Второй шаг
+  // повторяет условия первого (рубрика, видимость, настройки читателя), чтобы
+  // в карточку попали те же статьи, что и раньше.
   const { rows } = await pool.query(
     `
+    WITH picked AS (
+      SELECT a.cluster_id
+      FROM articles a
+      LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
+      LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $2
+      ${categoryClause}
+      GROUP BY a.cluster_id
+      HAVING ${havingClauses.join(" AND ")}
+      ORDER BY ${sortExpr} ${direction}, a.cluster_id ${direction}
+      LIMIT $1
+    )
     SELECT
       a.cluster_id,
       -- Главное и продолжение — ПАРОЙ с одной статьи: продолжение написано
@@ -194,14 +211,13 @@ export async function getFeed(
       ) AS image_urls,
       bool_or(ar.user_id IS NOT NULL) AS is_read
     FROM articles a
+    JOIN picked p ON p.cluster_id = a.cluster_id
     JOIN sources s ON s.id = a.source_id
     LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
     LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $2
     ${categoryClause}
     GROUP BY a.cluster_id
-    HAVING ${havingClauses.join(" AND ")}
     ORDER BY sort_at ${direction}, a.cluster_id ${direction}
-    LIMIT $1
     `,
     params
   );
