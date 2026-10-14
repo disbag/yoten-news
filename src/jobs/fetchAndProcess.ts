@@ -651,7 +651,14 @@ async function main() {
     // Прошлый прогон могли оборвать снаружи (таймаут джобы) — тогда его статьи
     // так и остались скрытыми.
     await revealBatch();
-    const sources = await pool.query("SELECT id, name, rss_url FROM sources");
+    // Каждый прогон начинает обход с другого издания (DIS-61): если квота
+    // Gemini кончится посреди прогона, недополучат не всегда одни и те же
+    // издания из конца списка. Сдвиг — по номеру получасового окна, без
+    // хранимого состояния: старт проходит по всем 55 лентам изданий примерно
+    // за сутки.
+    const { rows: allSources } = await pool.query("SELECT id, name, rss_url FROM sources ORDER BY id");
+    const shift = allSources.length ? Math.floor(Date.now() / (30 * 60_000)) % allSources.length : 0;
+    const sources = { rows: [...allSources.slice(shift), ...allSources.slice(0, shift)] };
     // FETCH_SOURCES="Dezeen,Esquire" — ручной прогон только по перечисленным
     // изданиям (вместе с FETCH_SINCE_DAYS — догрузить прошлые дни у только что
     // добавленного источника, не трогая остальные). По расписанию не задаётся.
@@ -662,8 +669,10 @@ async function main() {
       if (remaining.count <= 0) break;
       await processSource(source, remaining);
     }
-    await cleanupOld();
   } finally {
+    // Чистка — и при остановке прогона посередине (исчерпана квота Gemini):
+    // раньше она стояла после обхода и в таком прогоне не выполнялась.
+    await cleanupOld().catch((err) => console.error(`не удалось удалить старое: ${(err as Error).message}`));
     // И при ошибке посреди прогона (исчерпана квота, упала сеть): то, что уже
     // обработано, должно попасть в ленту сейчас, а не через полчаса.
     await revealBatch().catch((err) => console.error(`не удалось показать статьи: ${(err as Error).message}`));
