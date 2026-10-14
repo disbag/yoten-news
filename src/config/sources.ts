@@ -88,12 +88,10 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.wired.com/feed/rss",
     homepageUrl: "https://www.wired.com",
     gallery: "condenast",
-    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
-    // а слушать его негде.
-    // Выпуски лежат среди статей, адрес начинается с названия шоу и слова
-    // "podcast". Общее "-podcast-" не годится: так выглядят и адреса новостей
-    // о подкастах. Новое шоу Wired придётся дописать сюда.
-    skipLinkPattern: /^\/story\/(?:the-big-interview|uncanny-valley|gadget-lab)-podcast-/i,
+    // Выпуски подкастов (The Big Interview, Uncanny Valley) намеренно НЕ
+    // отсекаются, в отличие от других изданий (DIS-52): к ним Wired пишет
+    // полноценный текст, и пересказ выходит содержательным — решение
+    // пользователя 14 октября.
   },
   {
     name: "The Telegraph",
