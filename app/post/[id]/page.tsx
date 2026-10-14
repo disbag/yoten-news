@@ -35,7 +35,8 @@ export async function generateMetadata(props: { params: Promise<{ id: string }> 
   if (!post) return { title: "Пост не найден — Yoten", robots: { index: false } };
 
   const description = clip(post.summary, 300);
-  const cover = post.imageUrls?.[0] ?? post.imageUrl;
+  // Фото главного издания, а не галереи другого: в превью подписано издание.
+  const cover = post.primaryImageUrl ?? post.imageUrls?.[0] ?? post.imageUrl;
   // Обложка — через свой прокси и полным адресом: часть изданий не отдаёт
   // картинку чужому серверу напрямую (см. app/api/image-proxy/route.ts), а
   // относительный адрес мессенджеры не понимают.

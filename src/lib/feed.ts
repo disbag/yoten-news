@@ -14,6 +14,10 @@ export type FeedItem = {
   // src/config/sources.ts) — несколько кадров вместо одной картинки, показывается
   // каруселью в FeedCard.tsx. null/пусто у обычных статей с одной картинкой.
   imageUrls: string[] | null;
+  // Своя картинка главного издания — для превью ссылки на пост (og:image, см.
+  // app/post/[id]/page.tsx). Обложка карточки может быть с другой статьи, если
+  // галерея есть только у неё.
+  primaryImageUrl: string | null;
   summary: string;
   // Продолжение под кат "Читать" — дописывается сразу после summary, не
   // повторяя его. null — у тизеров без полного текста.
@@ -160,7 +164,7 @@ export async function getFeed(
       HAVING ${havingClauses.join(" AND ")}
       ORDER BY ${sortExpr} ${direction}, a.cluster_id ${direction}
       LIMIT $1
-    )
+    ), cards AS (
     SELECT
       a.cluster_id,
       -- Главное и продолжение — ПАРОЙ с одной статьи: продолжение написано
@@ -169,9 +173,19 @@ export async function getFeed(
       -- полный текст пришёл позже, см. fetchAndProcess.ts), иначе — первую.
       (array_agg(a.ai_summary ORDER BY a.ai_summary_more IS NULL, a.created_at ASC))[1] AS summary,
       (array_agg(a.ai_summary_more ORDER BY a.ai_summary_more IS NULL, a.created_at ASC))[1] AS summary_more,
-      -- картинку/дату/издание берём с первой статьи в кластере
-      -- (не все источники отдают og-теги — см. src/lib/ogTags.ts)
-      (array_agg(a.image_url ORDER BY a.image_url NULLS LAST))[1] AS image_url,
+      -- Статья, чьи обложка и галерея идут в карточку (DIS-62): та, что даёт
+      -- главное издание (порядок как у primary_source ниже), — если у неё
+      -- есть картинка; иначе следующая с картинкой. Галерея важнее: если она
+      -- есть хоть у одной статьи, берётся статья с галереей — иначе половина
+      -- карточек с галереей (104 из 206 на 14 октября) показывала бы одно
+      -- фото. Обложка и кадры всегда с одной статьи. Раньше обложка была
+      -- первой по алфавиту ссылкой кластера — часто от другого издания.
+      -- Выключенные читателем издания — в последнюю очередь, как и для текста.
+      (array_agg(a.id ORDER BY h.user_id IS NOT NULL, coalesce(cardinality(a.image_urls), 0) < 2,
+        a.image_url IS NULL, a.created_at ASC))[1] AS visual_id,
+      -- Своя картинка главного издания (может не быть) — для превью ссылки
+      -- в мессенджерах: там подписано издание, и фото должно быть его.
+      (array_agg(a.image_url ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_image_url,
       -- Дата карточки = дата САМОЙ СВЕЖЕЙ статьи в кластере — то же значение,
       -- по которому идёт сортировка ленты (см. ORDER BY ниже). Раньше дата
       -- бралась от первой добавленной в кластер статьи (ORDER BY created_at),
@@ -200,15 +214,6 @@ export async function getFeed(
         ORDER BY a2.created_at ASC
         LIMIT 1
       ) AS category,
-      -- Тот же 2D-массив-через-array_agg капкан, что и у category выше —
-      -- image_urls тоже TEXT[] на статью, коррелированный подзапрос вместо
-      -- array_agg(...)[1].
-      (
-        SELECT a2.image_urls FROM articles a2
-        WHERE a2.cluster_id = a.cluster_id AND a2.image_urls IS NOT NULL
-        ORDER BY a2.created_at ASC
-        LIMIT 1
-      ) AS image_urls,
       bool_or(ar.user_id IS NOT NULL) AS is_read
     FROM articles a
     JOIN picked p ON p.cluster_id = a.cluster_id
@@ -217,7 +222,14 @@ export async function getFeed(
     LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $2
     ${categoryClause}
     GROUP BY a.cluster_id
-    ORDER BY sort_at ${direction}, a.cluster_id ${direction}
+    )
+    -- image_urls — TEXT[] на статью, через array_agg его не достать (тот же
+    -- капкан, что у category выше), поэтому картинки берём отдельно по
+    -- visual_id.
+    SELECT c.*, v.image_url, v.image_urls
+    FROM cards c
+    LEFT JOIN articles v ON v.id = c.visual_id
+    ORDER BY c.sort_at ${direction}, c.cluster_id ${direction}
     `,
     params
   );
@@ -232,6 +244,7 @@ export async function getFeed(
       clusterId: row.cluster_id,
       imageUrl: row.image_url,
       imageUrls: row.image_urls,
+      primaryImageUrl: row.primary_image_url,
       summary: row.summary,
       summaryMore: row.summary_more,
       publishedAt: toIso(row.published_at),
