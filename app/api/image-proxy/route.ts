@@ -15,17 +15,26 @@ const BROWSER_HEADERS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 };
 
+// Ограничения на запрос к изданию (DIS-60). Без таймаута зависший ответ
+// держал функцию Vercel до её собственного лимита. 15 секунд — как у запросов
+// страниц при сборе (src/lib/ogTags.ts), и это предел на весь ответ вместе с
+// телом: по выборке из 300 картинок базы (14 октября) самая тяжёлая весила
+// 4,1 МБ, 99% — до 1,8 МБ, такие успевают с большим запасом. Предел размера —
+// с тем же запасом над самой тяжёлой: больше 15 МБ — уже не фото для ленты.
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
 // Telegraph — противоположный случай: браузерный User-Agent там как раз
 // триггерит анти-бот блокировку (402, тот же паттерн, что у Penske Media
 // выше, только наоборот), а обычный серверный запрос БЕЗ заголовков
 // проходит нормально. Пробуем сперва как для Penske (это большинство
 // изданий), и если не получилось — повторяем совсем без заголовков.
 async function fetchImage(url: string): Promise<Response> {
-  const withBrowserUA = await fetch(url, { headers: BROWSER_HEADERS });
+  const withBrowserUA = await fetch(url, { headers: BROWSER_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (withBrowserUA.ok) return withBrowserUA;
   console.error(`[image-proxy] browser UA -> ${withBrowserUA.status} для ${url}`);
   try {
-    const bare = await fetch(url);
+    const bare = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (bare.ok) return bare;
     console.error(`[image-proxy] bare -> ${bare.status} для ${url}`);
   } catch (err) {
@@ -73,7 +82,25 @@ export async function GET(request: NextRequest) {
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.startsWith("image/")) return new NextResponse(null, { status: 502 });
 
-  return new NextResponse(res.body, {
+  // Размер проверяем по заголовку, а если его нет (ответ частями) — по ходу
+  // передачи: поток обрывается на пределе, и <img> в ленте просто скроется.
+  const declared = Number(res.headers.get("content-length"));
+  if (declared > MAX_IMAGE_BYTES) {
+    console.error(`[image-proxy] ${declared} байт больше предела для ${url}`);
+    return new NextResponse(null, { status: 502 });
+  }
+  let received = 0;
+  const limited = res.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        received += chunk.byteLength;
+        if (received > MAX_IMAGE_BYTES) controller.error(new Error("image too large"));
+        else controller.enqueue(chunk);
+      },
+    })
+  );
+
+  return new NextResponse(limited, {
     headers: {
       "Content-Type": contentType,
       "X-Content-Type-Options": "nosniff",
