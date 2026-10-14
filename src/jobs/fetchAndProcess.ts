@@ -606,6 +606,17 @@ async function cleanupOld() {
         OR (cluster_id IS NULL AND ai_summary IS NULL AND created_at < now() - interval '${ORPHAN_HOURS} hours')`
   );
   if (orphans.rowCount) console.log(`Удалено статей без саммари от оборванных прогонов: ${orphans.rowCount}`);
+
+  // Отметки о прочитанном — после статей: карточки, у которой не осталось ни
+  // одной статьи, в ленте уже нет, а отметка о ней копилась бы вечно (на 14
+  // октября таких было 71%, DIS-56). Смотрим именно на cluster_id, а не на
+  // возраст отметки: при ручной склейке карточек отметки переносятся на
+  // объединённую, и живую карточку отметка не потеряет.
+  const reads = await pool.query(
+    `DELETE FROM article_reads r
+     WHERE NOT EXISTS (SELECT 1 FROM articles a WHERE a.cluster_id = r.cluster_id)`
+  );
+  if (reads.rowCount) console.log(`Удалено отметок о прочитанном у удалённых карточек: ${reads.rowCount}`);
 }
 
 // Отметка "уже смотрели и отбросили" — только для окончательных решений
