@@ -364,7 +364,9 @@ const FASTCOMPANY_IMAGE_PATH = /^\/image\/upload\/(?:[^/]+\/)*?(wp-cms[^/]*\/.+)
 const GALLERY_SITES: Record<
   GallerySite,
   {
-    selector: string;
+    // Несколько селекторов — по порядку, берётся первый, который нашёл хоть
+    // один кадр (у Hearst страница-галерея и обычная статья устроены по-разному).
+    selector: string | string[];
     // size — width/height из атрибутов <img>, если они есть (у обложки их нет).
     normalize: (url: URL, size?: { width: number; height: number }) => URL | null;
     // Своё правило для обложки, когда она приходит не тем файлом, что кадры
@@ -385,7 +387,14 @@ const GALLERY_SITES: Record<
   }
 > = {
   hearst: {
-    selector: 'a[href*="/photos"] img',
+    // Сначала — слайды самой галереи: у Car and Driver фотогалерея приходит в
+    // RSS отдельной статьёй (/photos/…-gallery/), её кадры лежат в
+    // .listicle-slides без ссылок. Ссылки на /photos на такой странице ведут
+    // на ДРУГИЕ галереи (блок "ещё фото" внизу), и раньше их кадры — чужие
+    // машины — попадали в карусель (реальный случай: Volvo EX60 13 октября
+    // с фото Corvette, Infiniti и Chrysler). У обычной статьи слайдов нет —
+    // тогда берём миниатюры её подгалереи по ссылкам.
+    selector: [".listicle-slides img", 'a[href*="/photos"] img'],
     // Убираем resize-параметры CDN из query (?w=...&format=webp).
     normalize: (url) => {
       url.search = "";
@@ -719,18 +728,25 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
     }
   };
   if (leadWithCover) add(cover);
-  $(selector).each((_, el) => {
-    // <source> и lazy-картинки с заглушкой в src держат настоящий URL в
-    // srcset — берём его первый вариант, только если src ничего не дал.
-    const width = Number($(el).attr("width"));
-    const height = Number($(el).attr("height"));
-    const size = width > 0 && height > 0 ? { width, height } : undefined;
-    const srcset = $(el).attr("srcset") ?? (lazy ? $(el).attr("data-srcset") : undefined);
-    if (srcsetMaxWidth && add(pickFromSrcset(srcset, srcsetMaxWidth), size)) return;
-    if (add($(el).attr("src"), size)) return;
-    if (lazy && add($(el).attr("data-src"), size)) return;
-    add(srcset?.trim().split(",")[0]?.trim().split(/\s+/)[0], size);
-  });
+  const collect = (sel: string) => {
+    $(sel).each((_, el) => {
+      // <source> и lazy-картинки с заглушкой в src держат настоящий URL в
+      // srcset — берём его первый вариант, только если src ничего не дал.
+      const width = Number($(el).attr("width"));
+      const height = Number($(el).attr("height"));
+      const size = width > 0 && height > 0 ? { width, height } : undefined;
+      const srcset = $(el).attr("srcset") ?? (lazy ? $(el).attr("data-srcset") : undefined);
+      if (srcsetMaxWidth && add(pickFromSrcset(srcset, srcsetMaxWidth), size)) return;
+      if (add($(el).attr("src"), size)) return;
+      if (lazy && add($(el).attr("data-src"), size)) return;
+      add(srcset?.trim().split(",")[0]?.trim().split(/\s+/)[0], size);
+    });
+  };
+  const before = urls.size;
+  for (const sel of Array.isArray(selector) ? selector : [selector]) {
+    collect(sel);
+    if (urls.size > before) break;
+  }
   return Array.from(urls);
 }
 
