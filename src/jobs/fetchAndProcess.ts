@@ -248,6 +248,7 @@ async function processSource(
     if (sourceConfig?.adTitlePattern?.test(item.title)) continue; // рекламный пост со скидками, см. sources.ts
     if (sourceConfig?.adLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // то же по адресу
     if (sourceConfig?.skipLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // вид материалов, который у издания не берём, см. sources.ts
+    if (sourceConfig?.skipTitlePattern?.test(item.title)) continue; // то же по заголовку
     const skipCategory = sourceConfig?.skipCategoryPattern;
     if (skipCategory && (item.categories ?? []).some((c) => typeof c === "string" && skipCategory.test(c))) continue; // рассылка или оплаченный материал, см. sources.ts
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость

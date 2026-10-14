@@ -59,6 +59,9 @@ type SourceConfig = {
   // Пропускать статьи по адресу (путь без домена и параметров) — когда целый
   // вид материалов издания в ленте не нужен и узнаётся по ссылке.
   skipLinkPattern?: RegExp;
+  // То же по заголовку — когда по адресу такой материал не узнать (выпуски
+  // подкастов 9to5Mac лежат по обычным адресам новостей).
+  skipTitlePattern?: RegExp;
   // Служебный хвост, который издание дописывает к тексту статьи в RSS
   // (призыв оформить подписку, блок "что почитать ещё") — срезается с конца
   // текста, чтобы не попадал ни в эмбеддинг, ни в пересказ. Стандартную
@@ -85,6 +88,12 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.wired.com/feed/rss",
     homepageUrl: "https://www.wired.com",
     gallery: "condenast",
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // Выпуски лежат среди статей, адрес начинается с названия шоу и слова
+    // "podcast". Общее "-podcast-" не годится: так выглядят и адреса новостей
+    // о подкастах. Новое шоу Wired придётся дописать сюда.
+    skipLinkPattern: /^\/story\/(?:the-big-interview|uncanny-valley|gadget-lab)-podcast-/i,
   },
   {
     name: "The Telegraph",
@@ -99,6 +108,10 @@ export const SOURCES: SourceConfig[] = [
     // "deal" в адресе для The Verge не годится — он часто пишет о сделках
     // компаний ("…-activision-deal-…").
     adLinkPattern: /-deal-sale(?:\/|$)/i,
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // Vergecast, Decoder, Version History — все в разделе /podcast/.
+    skipLinkPattern: /^\/podcast\//i,
   },
   {
     name: "TIME",
@@ -111,6 +124,10 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.newyorker.com/feed/everything",
     homepageUrl: "https://www.newyorker.com",
     gallery: "condenast",
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // Political Scene, Radio Hour, In the Dark и другие — раздел /podcast/.
+    skipLinkPattern: /^\/podcast\//i,
   },
   {
     // У nymag.com нет единого RSS на весь сайт — только по разделам.
@@ -127,6 +144,13 @@ export const SOURCES: SourceConfig[] = [
     name: "9to5Mac",
     rssUrl: "https://9to5mac.com/feed/",
     homepageUrl: "https://9to5mac.com",
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // Адреса у выпусков обычные, узнаются по заголовку: "9to5Mac Daily: …",
+    // "9to5Mac Overtime 085: …", "Apple @ Work Podcast: …", "Security Bite
+    // Podcast: …". "Podcast" только с двоеточием после названия шоу — иначе
+    // попали бы новости вроде "Apple TV’s new podcast explores…".
+    skipTitlePattern: /^(?:9to5Mac (?:Daily|Overtime)\b|[^:]*\bPodcast:)/i,
   },
   {
     // И RSS-описание, и страница статьи — не блокирует бота, минимум мусора
@@ -369,6 +393,10 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://www.dezeen.com",
     gallery: "dezeen",
     preferFeedContent: true,
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // Dezeen Weekly и другие — адрес оканчивается на "-podcast/".
+    skipLinkPattern: /-podcast\/?$/i,
   },
   {
     // Дизайн, архитектура, искусство (Италия, пишет по-английски). Полный
@@ -388,6 +416,11 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.theartnewspaper.com/rss.xml",
     homepageUrl: "https://www.theartnewspaper.com",
     gallery: "artnewspaper",
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // The Week in Art, A brush with… — заголовок оканчивается на "—podcast",
+    // адрес — на "podcast" (бывает и без дефиса: "…-vicunapodcast").
+    skipLinkPattern: /podcast\/?$/i,
   },
   {
     // Города, дизайн, международная повестка. Полный текст в content:encoded,
@@ -417,6 +450,10 @@ export const SOURCES: SourceConfig[] = [
     name: "Scientific American",
     rssUrl: "https://www.scientificamerican.com/platform/syndication/rss/",
     homepageUrl: "https://www.scientificamerican.com",
+    // Выпуски подкастов (DIS-52): в ленте пересказ разговора выходит пустым,
+    // а слушать его негде.
+    // Science Quickly — раздел /podcast/episode/.
+    skipLinkPattern: /^\/podcast\//i,
   },
   {
     // Hearst, как Car and Driver. Около половины фида — подборки покупок
