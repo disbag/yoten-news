@@ -360,6 +360,12 @@ export const SOURCES: SourceConfig[] = [
     ],
     homepageUrl: "https://www.theguardian.com",
     gallery: "guardian",
+    // Ежедневные дайджесты — «First Thing» (США) и «<день недели> briefing»
+    // (Великобритания): сразу несколько сюжетов в одном материале. Путали
+    // склейку и треды, а их галерея — фото всех новостей дня (16 октября в
+    // тред о стрельбе в школе в Орегоне попали фото других сюжетов). Не
+    // задевает обычные статьи о брифингах («…-press-briefing»).
+    skipLinkPattern: /\/first-thing-|\/(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)-briefing-/i,
   },
   {
     // Не блокирует бота, страница отдаёт чистый текст статьи без мусора в
