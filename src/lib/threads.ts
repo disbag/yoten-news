@@ -20,6 +20,14 @@ import { ensureImageHashes } from "./imageHash.js";
 
 const CANDIDATE_WINDOW_HOURS = 72;
 const CANDIDATE_TITLE_THRESHOLD = 0.55;
+// Карточка старше суток — кандидат только при сходстве заголовков или текстов
+// не ниже OLD_CANDIDATE_THRESHOLD. Реальный случай 16 октября: статья NYT
+// «Trump Squeezes Ukraine, Again» (13.10) попала в один тред с двумя
+// репортажами BBC о Зеленском в Брюсселе (16.10) — общий фон, но разные
+// события. Заголовки у всех трёх похожи одинаково (0,56–0,58), а тексты BBC
+// между собой — 0,72, с NYT — 0,53, и между ними 60 часов.
+const OLD_CANDIDATE_HOURS = 24;
+const OLD_CANDIDATE_THRESHOLD = 0.65;
 const MAX_CANDIDATES = 8;
 const MAX_CANDIDATE_THREADS = 3;
 // Сколько последних постов треда показывать модели — длинный тред не должен
@@ -33,7 +41,7 @@ const MAX_FRAMES_PER_CARD = 8;
 
 export const THREAD_PROMPT = `Ты — редактор новостной ленты. Тебе дают НОВУЮ новость и пронумерованный список тредов. Тред — это одна история: одно событие, его продолжение и развитие (новые подробности, реакции, последствия, следующий этап) или один информационный повод (например, в один день вышли новые версии нескольких систем одной компании).
 
-НЕ относи новость к треду, если общее только у темы, а события разные: одна компания, один человек, одна игра, одна страна или одна отрасль — ещё не одна история. Разные гайды, прохождения, обзоры и подборки об одной игре или продукте — разные истории.
+НЕ относи новость к треду, если общее только у темы или фона, а события разные: одна компания, один человек, одна игра, одна страна, одна отрасль или один затяжной конфликт (война, отношения двух политиков) — ещё не одна история. Для одной истории нужен конкретный общий повод: то же событие, заявление, решение, встреча, сделка или происшествие. Разные гайды, прохождения, обзоры и подборки об одной игре или продукте — разные истории. В скобках у каждой новости — дата: материалы, разделённые несколькими днями, относи к одному треду, только если новая прямо продолжает тот же повод.
 
 Ответь строго двумя строками, без пояснений:
 ТРЕД: номер подходящего треда из списка или 0, если новость не продолжает ни один
@@ -72,6 +80,9 @@ async function findCandidates(clusterId: number): Promise<Candidate[]> {
      LEFT JOIN thread_posts tp ON tp.cluster_id = d.id
      WHERE c.id = $1 AND c.title_embedding IS NOT NULL
        AND 1 - (d.title_embedding <=> c.title_embedding) >= $2
+       AND (d.created_at > c.created_at - interval '${OLD_CANDIDATE_HOURS} hours'
+         OR 1 - (d.title_embedding <=> c.title_embedding) >= ${OLD_CANDIDATE_THRESHOLD}
+         OR 1 - (d.embedding <=> c.embedding) >= ${OLD_CANDIDATE_THRESHOLD})
        AND EXISTS (SELECT 1 FROM articles s WHERE s.cluster_id = d.id AND s.ai_summary IS NOT NULL)
      ORDER BY similarity DESC
      LIMIT ${MAX_CANDIDATES}`,
@@ -116,6 +127,7 @@ async function cardImages(clusterId: number): Promise<string[]> {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const day = (d: Date) => d.toISOString().slice(5, 10).split("-").reverse().join(".");
 
 export type ThreadRunStats = { checked: number; joined: number; created: number; noCandidates: number; stoppedByQuota: boolean };
 
@@ -161,11 +173,11 @@ export async function assignThreads(options: { sinceHours: number; limit?: numbe
           .slice(-MAX_POSTS_IN_PROMPT)
           .map((cid) => cards.get(cid))
           .filter((p): p is CardText => Boolean(p))
-          .map((p) => `- ${p.title}: ${newDetails.get(p.clusterId) ?? p.summary}`);
+          .map((p) => `- (${day(p.createdAt)}) ${p.title}: ${newDetails.get(p.clusterId) ?? p.summary}`);
         return `Тред ${i + 1}:\n${posts.join("\n")}`;
       })
       .join("\n\n");
-    const text = `${card.summary}${card.more ? ` ${card.more}` : ""}\n\nТРЕДЫ:\n${threadsText}`;
+    const text = `(${day(card.createdAt)}) ${card.summary}${card.more ? ` ${card.more}` : ""}\n\nТРЕДЫ:\n${threadsText}`;
 
     let answer: string;
     try {
