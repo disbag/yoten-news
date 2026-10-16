@@ -165,6 +165,7 @@ Next.js App Router (`app/`):
 | `npm run backfill-categories` | Досчитать темы для статей без них |
 | `npm run resummarize` | Пересчитать пересказы (например, после правки промпта) |
 | `npm run upgrade-quality` | Пересчитать пересказы с полным текстом вместо анонса |
+| `npm run favicons` | Скачать иконки новых изданий в `public/favicons` (`-- --force` — все заново) |
 
 ## Известные ограничения
 

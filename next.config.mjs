@@ -27,6 +27,12 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // Иконки изданий (public/favicons, DIS-68) меняются редко — сутки в
+        // кеше браузера вместо проверки при каждом открытии ленты.
+        source: "/favicons/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=86400" }],
+      },
+      {
         source: "/:path*",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },

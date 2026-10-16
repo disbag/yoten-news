@@ -23,7 +23,9 @@ function faviconUrl(homepage: string | null): string | null {
   if (!homepage) return null;
   try {
     const { hostname } = new URL(homepage);
-    return `https://www.google.com/s2/favicons?domain=${hostname}&sz=64`;
+    // Своя копия иконки, а не запрос к Google из браузера читателя (DIS-68):
+    // файлы кладёт `npm run favicons` (src/jobs/fetchFavicons.ts).
+    return `/favicons/${hostname}.png`;
   } catch {
     return null;
   }
@@ -72,7 +74,10 @@ export default function FeedCard({
   useEffect(() => {
     if (coverRef.current?.complete) checkCoverUpright(coverRef.current);
   }, []);
-  const favicon = faviconUrl(item.primaryHomepage);
+  // Иконки нового издания может не оказаться, пока не запущен
+  // `npm run favicons` — тогда серый кружок, как у издания без сайта.
+  const [faviconMissing, setFaviconMissing] = useState(false);
+  const favicon = faviconMissing ? null : faviconUrl(item.primaryHomepage);
   const category = categoryLabels(item.category);
   // "Читать" раскрывает карточку на месте, без модалки, и только в одну
   // сторону — свернуть обратно нельзя намеренно: дописывает продолжение
@@ -175,11 +180,12 @@ export default function FeedCard({
       <div className="content">
         <div className="header">
           {favicon ? (
-            // eslint-disable-next-line @next/next/no-img-element -- фавиконки с произвольных доменов изданий
+            // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
             <img
               src={favicon}
               alt=""
               className={FAVICON_LIGHT_BACKING.has(item.primarySource) ? "favicon favicon-backing" : "favicon"}
+              onError={() => setFaviconMissing(true)}
             />
           ) : (
             <span className="favicon favicon-placeholder" />

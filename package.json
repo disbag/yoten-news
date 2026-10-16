@@ -13,7 +13,8 @@
     "upgrade-quality": "tsx src/jobs/upgradeQuality.ts",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "favicons": "tsx src/jobs/fetchFavicons.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
