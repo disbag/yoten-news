@@ -98,6 +98,9 @@ export async function getFeed(
     // Одна карточка — та, в которой сейчас лежит эта статья (страница поста,
     // см. getPost).
     articleId?: number;
+    // Только в ленте с тредами: одна позиция ленты — тред (номер со знаком
+    // минус) или карточка (см. getPost).
+    unit?: number;
   } = {}
 ): Promise<FeedItem[]> {
   const {
@@ -110,6 +113,7 @@ export async function getFeed(
     unreadOnly = false,
     readOnly = false,
     articleId,
+    unit,
   } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
@@ -130,6 +134,10 @@ export async function getFeed(
     ? "LEFT JOIN thread_posts tp ON tp.cluster_id = a.cluster_id AND tp.thread_id IS NOT NULL"
     : "";
   let categoryClause = "WHERE a.visible_at IS NOT NULL";
+  if (threads && unit) {
+    params.push(unit);
+    categoryClause += ` AND ${unitExpr} = $${params.length}`;
+  }
   if (category) {
     params.push(category);
     categoryClause += ` AND $${params.length} = ANY(a.category)`;
@@ -397,6 +405,18 @@ async function assembleThreads(
 // Настройки читателя не учитываются: пост по ссылке одинаковый для всех,
 // включая издания, которые открывший выключил у себя в ленте.
 export async function getPost(articleId: number): Promise<FeedItem | null> {
+  if (THREADS_VIEW) {
+    // В ленте с тредами пост — весь тред, в котором лежит карточка статьи.
+    const { rows } = await pool.query(
+      `SELECT COALESCE(-tp.thread_id, a.cluster_id) AS unit FROM articles a
+       LEFT JOIN thread_posts tp ON tp.cluster_id = a.cluster_id AND tp.thread_id IS NOT NULL
+       WHERE a.id = $1`,
+      [articleId]
+    );
+    if (!rows[0]) return null;
+    const [item] = await getFeed({ unit: rows[0].unit, limit: 1 });
+    return item ?? null;
+  }
   const [item] = await getFeed({ articleId, limit: 1 });
   return item ?? null;
 }
