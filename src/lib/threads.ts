@@ -122,7 +122,8 @@ export type ThreadRunStats = { checked: number; joined: number; created: number;
 // Проверяет непроверенные карточки последних sinceHours часов по порядку
 // появления, чтобы треды росли в хронологии. Карточка, у которой нет
 // кандидатов, отмечается проверенной без запроса к модели.
-export async function assignThreads(options: { sinceHours: number; limit?: number }): Promise<ThreadRunStats> {
+// clusterIds — проверить только эти карточки (ручная проверка конкретного случая).
+export async function assignThreads(options: { sinceHours: number; limit?: number; clusterIds?: number[] }): Promise<ThreadRunStats> {
   const stats: ThreadRunStats = { checked: 0, joined: 0, created: 0, noCandidates: 0, stoppedByQuota: false };
   await cleanupThreads();
   const { rows: pending } = await pool.query(
@@ -131,9 +132,10 @@ export async function assignThreads(options: { sinceHours: number; limit?: numbe
        AND a.created_at > now() - make_interval(hours => $1)
        AND EXISTS (SELECT 1 FROM articles s WHERE s.cluster_id = a.id AND s.ai_summary IS NOT NULL)
        AND NOT EXISTS (SELECT 1 FROM thread_posts tp WHERE tp.cluster_id = a.id)
+       AND ($3::int[] IS NULL OR a.id = ANY($3))
      ORDER BY a.created_at
      LIMIT $2`,
-    [options.sinceHours, options.limit ?? 100_000]
+    [options.sinceHours, options.limit ?? 100_000, options.clusterIds ?? null]
   );
 
   for (const { id } of pending) {

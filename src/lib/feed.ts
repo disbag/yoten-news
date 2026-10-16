@@ -311,8 +311,9 @@ export async function getFeed(
 
 // Собирает карточки одного треда в один элемент ленты (DIS-36): первая
 // карточка треда — сверху целиком, остальные — постами под ней. Галерея треда
-// — фото всех его карточек без повторов (по отпечаткам, см. imageHash.ts);
-// обложка — первое фото треда. Позиция в ленте — по самой свежей карточке.
+// — фото первой карточки и обложки остальных без повторов (по отпечаткам, см.
+// imageHash.ts); обложка — первое фото треда. Позиция в ленте — по самой
+// свежей карточке.
 async function assembleThreads(
   rows: { cluster_id: number; thread_id: number | null; new_details: string | null; first_created: Date; sort_at: Date | null }[],
   items: FeedItem[],
@@ -347,8 +348,16 @@ async function assembleThreads(
     );
     const [root, ...rest] = byAppearance;
     const newest = group.reduce((best, item) => (time(item) > time(best) ? item : best));
+    // От первой карточки — вся её галерея, от остальных — только обложка.
+    // Галерея у карточки бывает и не про её историю: у дайджеста Guardian
+    // «First Thing» это фото всех сюжетов дня (16 октября в тред о стрельбе в
+    // школе в Орегоне попали фото других новостей), а обложка — фото главного
+    // сюжета, того, по которому карточка и попала в тред.
     const images = dedupeImages(
-      byAppearance.flatMap((i) => i.imageUrls ?? (i.imageUrl ? [i.imageUrl] : [])),
+      [
+        ...(root.imageUrls ?? (root.imageUrl ? [root.imageUrl] : [])),
+        ...rest.flatMap((i) => (i.imageUrl ? [i.imageUrl] : [])),
+      ],
       hashes
     );
     result.push({
