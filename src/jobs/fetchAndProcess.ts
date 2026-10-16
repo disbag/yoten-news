@@ -66,10 +66,9 @@ const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 7);
 // Через сколько часов статья без саммари считается следом оборванного прогона
 // и удаляется (см. cleanupOld).
 const ORPHAN_HOURS = 3;
-// По умолчанию лента показывает только сегодняшние новости — RSS-фиды изданий
-// часто отдают материалы за последние несколько дней (особенно если давно не
-// забирали). FETCH_SINCE_DAYS=1 расширяет окно до "вчера и сегодня" — удобно
-// для разовой докатки после перерыва, без изменения дефолтного поведения.
+// Сбор берёт статьи за последние сутки (см. isWithinFetchWindow) — RSS-фиды
+// изданий часто отдают материалы за несколько дней. FETCH_SINCE_DAYS=1
+// расширяет окно ещё на сутки назад — для разовой докатки после перерыва.
 const FETCH_SINCE_DAYS = Number(process.env.FETCH_SINCE_DAYS ?? 0);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Свободный тариф Gemini ограничивает "-lite" модели 15 запросами в минуту
@@ -126,21 +125,22 @@ const LIVE_BLOG_LINK_PATTERN = /\/live\/\d{4}\/\w{3}\/\d{2}\//;
 // (/cartoons/daily-cartoon/...) до саммаризации, как и live-блоги выше.
 const DAILY_CARTOON_LINK_PATTERN = /\/cartoons\/daily-cartoon\//;
 
-// Сравниваем по UTC-дате (тот же принцип, что и в getFeed.ts/published_at) —
-// само сравнение дат, а не времени, поэтому не зависит от часового пояса
-// запуска пайплайна. FETCH_SINCE_DAYS=0 (дефолт) — только сегодня;
-// FETCH_SINCE_DAYS=1 — вчера и сегодня, и т.д.
+// Окно — последние 24 часа от момента прогона (DIS-66), а не "сегодня по
+// UTC", как было раньше. При окне по календарной дате статья, опубликованная
+// незадолго до полуночи UTC, но попавшая в фид уже после неё (CDN держит фид
+// в кеше: ArchitectureAU — 2 часа, Abduzeedo — 4), считалась вчерашней и
+// терялась насовсем; по прикидке 16 октября так пропадало 20–25 новостей в
+// сутки. Повторов скользящее окно не даёт: уже обработанные ссылки отсекает
+// проверка по articles и skipped_links. Дата в будущем (часовой пояс издания
+// указан с ошибкой) допускается в пределах тех же суток. FETCH_SINCE_DAYS=N
+// расширяет окно ещё на N суток назад — для ручной догрузки.
+const FETCH_WINDOW_MS = (1 + FETCH_SINCE_DAYS) * 24 * 60 * 60 * 1000;
 function isWithinFetchWindow(isoDate: string | undefined): boolean {
   if (!isoDate) return false;
-  const parsed = new Date(isoDate);
-  if (Number.isNaN(parsed.getTime())) return false;
-  const articleDay = parsed.toISOString().slice(0, 10);
-  for (let daysAgo = 0; daysAgo <= FETCH_SINCE_DAYS; daysAgo++) {
-    const day = new Date();
-    day.setUTCDate(day.getUTCDate() - daysAgo);
-    if (day.toISOString().slice(0, 10) === articleDay) return true;
-  }
-  return false;
+  const time = new Date(isoDate).getTime();
+  if (Number.isNaN(time)) return false;
+  const now = Date.now();
+  return time >= now - FETCH_WINDOW_MS && time <= now + 24 * 60 * 60 * 1000;
 }
 
 function stripHtml(html: string): string {
@@ -253,7 +253,7 @@ async function processSource(
     if (skipCategory && (item.categories ?? []).some((c) => typeof c === "string" && skipCategory.test(c))) continue; // рассылка или оплаченный материал, см. sources.ts
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
     if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
-    if (!isWithinFetchWindow(item.isoDate)) continue; // вне окна FETCH_SINCE_DAYS — не берём в ленту
+    if (!isWithinFetchWindow(item.isoDate)) continue; // старше суток (или FETCH_SINCE_DAYS) — не берём в ленту
 
     const exists = await pool.query(
       "SELECT 1 FROM articles WHERE link = $1 UNION ALL SELECT 1 FROM skipped_links WHERE link = $1",
