@@ -6,8 +6,9 @@ import { categoryLabels } from "../../src/config/categories";
 import { FAVICON_LIGHT_BACKING } from "../../src/config/faviconBacking";
 import Gallery from "./Gallery";
 import Lightbox from "./Lightbox";
+import ThreadPosts from "./ThreadPosts";
 
-function timeAgo(iso: string | null): string {
+export function timeAgo(iso: string | null): string {
   if (!iso) return "";
   const diffMs = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(diffMs / 60_000);
@@ -19,7 +20,7 @@ function timeAgo(iso: string | null): string {
   return `${days} дн назад`;
 }
 
-function faviconUrl(homepage: string | null): string | null {
+export function faviconUrl(homepage: string | null): string | null {
   if (!homepage) return null;
   try {
     const { hostname } = new URL(homepage);
@@ -119,11 +120,14 @@ export default function FeedCard({
     onRead?.();
     // Fire-and-forget: ошибка сети не должна мешать ленте — в худшем случае
     // статья снова придёт непрочитанной при следующей загрузке.
-    fetch("/api/reads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clusterId: item.clusterId }),
-    }).catch(() => {});
+    // У треда прочитанным становится весь тред — все его карточки.
+    for (const clusterId of [item.clusterId, ...(item.thread?.posts.map((p) => p.clusterId) ?? [])]) {
+      fetch("/api/reads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clusterId }),
+      }).catch(() => {});
+    }
   }
 
   // Прочитанной карточка становится, когда пробыла на экране READ_AFTER_MS —
@@ -280,6 +284,7 @@ export default function FeedCard({
           />
         )
       )}
+      {item.thread && item.thread.posts.length > 0 && <ThreadPosts posts={item.thread.posts} />}
       {lightboxIndex !== null && (
         <Lightbox
           urls={item.imageUrls && item.imageUrls.length > 1 ? item.imageUrls : item.imageUrl ? [item.imageUrl] : []}

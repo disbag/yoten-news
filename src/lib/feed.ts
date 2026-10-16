@@ -1,4 +1,23 @@
 import { pool } from "./db.js";
+import { dedupeImages } from "./imageDedupe.js";
+
+// Лента с тредами (DIS-36) — пока только на тестовой выкладке Vercel
+// (preview) и локально с THREADS_VIEW=1. На продакшене карточки идут как
+// раньше, по одной на инфоповод, хотя сбор уже раскладывает их по тредам.
+export const THREADS_VIEW = process.env.VERCEL_ENV === "preview" || process.env.THREADS_VIEW === "1";
+
+// Карточка, продолжающая тред (DIS-36): показывается под первой карточкой
+// треда — издание, время и только то новое, что она добавила к треду.
+export type ThreadPost = {
+  clusterId: number;
+  source: string;
+  homepage: string | null;
+  link: string;
+  publishedAt: string | null;
+  // Новое по сравнению с тредом; null — нового модель не нашла.
+  text: string | null;
+  isRead: boolean;
+};
 
 export type FeedSource = { name: string; homepage: string | null; link: string };
 
@@ -34,6 +53,12 @@ export type FeedItem = {
   sources: FeedSource[];
   category: string[] | null;
   isRead: boolean;
+  // Только в ленте с тредами (THREADS_VIEW): остальные карточки треда по
+  // порядку появления и номер позиции треда для курсора подгрузки
+  // (отрицательный — номер треда со знаком минус, чтобы не пересекаться с
+  // номерами карточек).
+  thread?: { id: number; posts: ThreadPost[] };
+  cursorId?: number;
 };
 
 export async function getFeed(
@@ -98,6 +123,12 @@ export async function getFeed(
   // visible_at IS NOT NULL — статьи идущего прямо сейчас прогона скрыты до его
   // конца и появляются одной пачкой (см. revealBatch в fetchAndProcess.ts).
   const params: unknown[] = [limit, userId];
+  // Позиция в ленте: тред целиком (номер треда со знаком минус) или карточка.
+  const threads = THREADS_VIEW && !articleId;
+  const unitExpr = threads ? "COALESCE(-tp.thread_id, a.cluster_id)" : "a.cluster_id";
+  const threadJoin = threads
+    ? "LEFT JOIN thread_posts tp ON tp.cluster_id = a.cluster_id AND tp.thread_id IS NOT NULL"
+    : "";
   let categoryClause = "WHERE a.visible_at IS NOT NULL";
   if (category) {
     params.push(category);
@@ -128,21 +159,32 @@ export async function getFeed(
   const sortExpr = readOnly ? "max(ar.read_at)" : "max(a.published_at)";
   if (before) {
     havingClauses.push(
-      `(${sortExpr}, a.cluster_id) < ($${params.push(before.cursor)}::timestamptz, $${params.push(before.clusterId)})`
+      `(${sortExpr}, ${unitExpr}) < ($${params.push(before.cursor)}::timestamptz, $${params.push(before.clusterId)})`
     );
   }
   if (after) {
     havingClauses.push(
-      `(${sortExpr}, a.cluster_id) > ($${params.push(after.cursor)}::timestamptz, $${params.push(after.clusterId)})`
+      `(${sortExpr}, ${unitExpr}) > ($${params.push(after.cursor)}::timestamptz, $${params.push(after.clusterId)})`
     );
   }
-  if (fromClusterId) {
+  if (fromClusterId && threads) {
+    // Запомненная карточка могла с тех пор попасть в тред — открываем с места
+    // треда.
+    const n = params.push(fromClusterId);
+    const unitOf = `COALESCE(-(SELECT thread_id FROM thread_posts WHERE cluster_id = $${n} AND thread_id IS NOT NULL), $${n})`;
+    havingClauses.push(
+      `(max(a.published_at), ${unitExpr}) <= ((SELECT max(x.published_at) FROM articles x
+         LEFT JOIN thread_posts t ON t.cluster_id = x.cluster_id AND t.thread_id IS NOT NULL
+         WHERE COALESCE(-t.thread_id, x.cluster_id) = ${unitOf}), ${unitOf})`
+    );
+  } else if (fromClusterId) {
     const n = params.push(fromClusterId);
     havingClauses.push(
       `(max(a.published_at), a.cluster_id) <= ((SELECT max(published_at) FROM articles WHERE cluster_id = $${n}), $${n})`
     );
   }
-  if (unreadOnly) havingClauses.push("NOT bool_or(ar.user_id IS NOT NULL)");
+  // Тред остаётся во "Новых", пока в нём есть непрочитанная карточка.
+  if (unreadOnly) havingClauses.push(threads ? "bool_or(ar.user_id IS NULL)" : "NOT bool_or(ar.user_id IS NOT NULL)");
   if (readOnly) havingClauses.push("bool_or(ar.user_id IS NOT NULL)");
   const direction = after ? "ASC" : "DESC";
 
@@ -155,18 +197,20 @@ export async function getFeed(
   const { rows } = await pool.query(
     `
     WITH picked AS (
-      SELECT a.cluster_id
+      SELECT ${unitExpr} AS unit
       FROM articles a
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $2
+      ${threadJoin}
       ${categoryClause}
-      GROUP BY a.cluster_id
+      GROUP BY ${unitExpr}
       HAVING ${havingClauses.join(" AND ")}
-      ORDER BY ${sortExpr} ${direction}, a.cluster_id ${direction}
+      ORDER BY ${sortExpr} ${direction}, ${unitExpr} ${direction}
       LIMIT $1
     ), cards AS (
     SELECT
       a.cluster_id,
+      ${threads ? "max(tp.thread_id) AS thread_id, max(tp.new_details) AS new_details, min(a.created_at) AS first_created," : ""}
       -- Главное и продолжение — ПАРОЙ с одной статьи: продолжение написано
       -- как дополнение именно к своему главному, с чужим оно бы повторялось.
       -- Предпочитаем статью с продолжением (кластер мог начаться с тизера, а
@@ -216,12 +260,16 @@ export async function getFeed(
       ) AS category,
       bool_or(ar.user_id IS NOT NULL) AS is_read
     FROM articles a
-    JOIN picked p ON p.cluster_id = a.cluster_id
     JOIN sources s ON s.id = a.source_id
     LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
     LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $2
+    ${threadJoin}
+    JOIN picked p ON p.unit = ${unitExpr}
     ${categoryClause}
     GROUP BY a.cluster_id
+    -- В треде отбор был по треду целиком — карточку без текста или только из
+    -- выключенных изданий внутри треда отсекаем здесь.
+    ${threads ? "HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)" : ""}
     )
     -- image_urls — TEXT[] на статью, через array_agg его не достать (тот же
     -- капкан, что у category выше), поэтому картинки берём отдельно по
@@ -257,7 +305,80 @@ export async function getFeed(
       isRead: row.is_read,
     })
   );
-  return after ? items.reverse() : items;
+  const ordered = threads ? await assembleThreads(rows, items, direction) : items;
+  return after ? ordered.reverse() : ordered;
+}
+
+// Собирает карточки одного треда в один элемент ленты (DIS-36): первая
+// карточка треда — сверху целиком, остальные — постами под ней. Галерея треда
+// — фото всех его карточек без повторов (по отпечаткам, см. imageHash.ts);
+// обложка — первое фото треда. Позиция в ленте — по самой свежей карточке.
+async function assembleThreads(
+  rows: { cluster_id: number; thread_id: number | null; new_details: string | null; first_created: Date; sort_at: Date | null }[],
+  items: FeedItem[],
+  direction: "ASC" | "DESC"
+): Promise<FeedItem[]> {
+  const meta = new Map(rows.map((r) => [r.cluster_id, r]));
+  const units = new Map<number, FeedItem[]>();
+  for (const item of items) {
+    const threadId = meta.get(item.clusterId)?.thread_id;
+    const key = threadId ? -threadId : item.clusterId;
+    units.set(key, [...(units.get(key) ?? []), item]);
+  }
+
+  const threadImages = [...units.values()]
+    .filter((group) => group.length > 1)
+    .flatMap((group) => group.flatMap((i) => i.imageUrls ?? (i.imageUrl ? [i.imageUrl] : [])));
+  const hashes = new Map<string, string | null>();
+  if (threadImages.length) {
+    const { rows: hashRows } = await pool.query("SELECT url, hash FROM image_hashes WHERE url = ANY($1)", [threadImages]);
+    for (const r of hashRows) hashes.set(r.url, r.hash);
+  }
+
+  const time = (item: FeedItem) => meta.get(item.clusterId)?.sort_at?.getTime() ?? 0;
+  const result: { item: FeedItem; sort: number; unit: number }[] = [];
+  for (const [unit, group] of units) {
+    if (group.length === 1) {
+      result.push({ item: group[0], sort: time(group[0]), unit });
+      continue;
+    }
+    const byAppearance = [...group].sort(
+      (a, b) => meta.get(a.clusterId)!.first_created.getTime() - meta.get(b.clusterId)!.first_created.getTime()
+    );
+    const [root, ...rest] = byAppearance;
+    const newest = group.reduce((best, item) => (time(item) > time(best) ? item : best));
+    const images = dedupeImages(
+      byAppearance.flatMap((i) => i.imageUrls ?? (i.imageUrl ? [i.imageUrl] : [])),
+      hashes
+    );
+    result.push({
+      unit,
+      sort: time(newest),
+      item: {
+        ...root,
+        imageUrl: images[0] ?? null,
+        imageUrls: images.length > 1 ? images : null,
+        publishedAt: newest.publishedAt,
+        cursor: newest.cursor,
+        cursorId: unit,
+        isRead: group.every((i) => i.isRead),
+        thread: {
+          id: -unit,
+          posts: rest.map((i) => ({
+            clusterId: i.clusterId,
+            source: i.primarySource,
+            homepage: i.primaryHomepage,
+            link: i.primaryLink,
+            publishedAt: i.publishedAt,
+            text: meta.get(i.clusterId)?.new_details ?? null,
+            isRead: i.isRead,
+          })),
+        },
+      },
+    });
+  }
+  const sign = direction === "DESC" ? -1 : 1;
+  return result.sort((a, b) => sign * (a.sort - b.sort) || sign * (a.unit - b.unit)).map((r) => r.item);
 }
 
 // Одна карточка для страницы поста (/post/<id>, DIS-20). В ссылке — номер

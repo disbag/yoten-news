@@ -167,6 +167,39 @@ CREATE TABLE IF NOT EXISTS user_hidden_sources (
   PRIMARY KEY (user_id, source_id)
 );
 
+-- Треды (DIS-36): карточки (кластеры) об одном сюжете или его развитии —
+-- уровень над склейкой дублей. Пока в теневом режиме: сбор раскладывает
+-- карточки по тредам, рабочая лента это не показывает, видно только на
+-- тестовой выкладке (Vercel preview).
+CREATE TABLE IF NOT EXISTS threads (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Решение о треде для каждой проверенной карточки: cluster_id — первая статья
+-- карточки. thread_id NULL — карточку проверили, треда нет (чтобы не
+-- проверять снова). new_details — что в карточке нового по сравнению с тем,
+-- что уже было в треде, когда она в него попала (пересказ модели); у первой
+-- карточки треда — NULL, она показывается целиком. Удаляется вместе со
+-- статьёй (срок хранения).
+CREATE TABLE IF NOT EXISTS thread_posts (
+  cluster_id INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+  thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+  new_details TEXT,
+  checked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_thread_posts_thread_id ON thread_posts (thread_id);
+
+-- Отпечатки картинок (dHash, 64 бита в 16 hex-символах) — чтобы в галерее
+-- треда одно и то же фото разных изданий (агентский снимок по разным адресам
+-- и в разных размерах) показывалось один раз. hash NULL — картинку не удалось
+-- скачать. Считаются только для карточек в тредах.
+CREATE TABLE IF NOT EXISTS image_hashes (
+  url TEXT PRIMARY KEY,
+  hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- RLS без политик на всех таблицах: Supabase автоматически открывает схему
 -- public через REST API (PostgREST), и без RLS любой с anon-ключом проекта мог
 -- читать/удалять всё, включая users.email и passkeys. Само приложение ходит
@@ -181,6 +214,9 @@ ALTER TABLE article_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_login_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE skipped_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_hidden_sources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE threads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE thread_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE image_hashes ENABLE ROW LEVEL SECURITY;
 
 -- Второй слой к RLS: у публичных ролей Data API нет вообще никаких прав на
 -- наши таблицы — даже если на какой-то таблице RLS случайно выключат, anon-

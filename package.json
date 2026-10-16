@@ -14,7 +14,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "favicons": "tsx src/jobs/fetchFavicons.ts"
+    "favicons": "tsx src/jobs/fetchFavicons.ts",
+    "threads": "tsx src/jobs/assignThreads.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
@@ -27,7 +28,8 @@
     "pg": "^8.12.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "rss-parser": "^3.13.0"
+    "rss-parser": "^3.13.0",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

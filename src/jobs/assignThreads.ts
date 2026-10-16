@@ -1,0 +1,24 @@
+import "dotenv/config";
+import { pool } from "../lib/db.js";
+import { assignThreads } from "../lib/threads.js";
+
+// Раскладка карточек по тредам (DIS-36) отдельным прогоном — для теневого
+// режима и догрузки за прошлые часы. THREADS_SINCE_HOURS — за сколько часов
+// брать непроверенные карточки (по умолчанию 24), THREADS_LIMIT — не больше N
+// карточек за прогон.
+async function main() {
+  const sinceHours = Number(process.env.THREADS_SINCE_HOURS ?? 24);
+  const limit = process.env.THREADS_LIMIT ? Number(process.env.THREADS_LIMIT) : undefined;
+  const stats = await assignThreads({ sinceHours, limit });
+  console.log(
+    `Треды: проверено ${stats.checked}, без кандидатов ${stats.noCandidates}, присоединено ${stats.joined}, новых тредов ${stats.created}` +
+      (stats.stoppedByQuota ? " — остановлено: квота Gemini исчерпана" : "")
+  );
+}
+
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(() => pool.end());

@@ -22,7 +22,7 @@ const TABS_HEIGHT = 40;
 const usedPayloads = new Set<string>();
 
 type Page = { items: FeedItem[]; hasMore: boolean; now: string; unreadCount?: number };
-type Cursor = { cursor: string | null; clusterId: number };
+type Cursor = { cursor: string | null; clusterId: number; cursorId?: number };
 
 function newLabel(count: number): string {
   const mod10 = count % 10;
@@ -177,7 +177,7 @@ export default function FeedList({
         feedUrl({
           limit: String(FEED_PAGE_SIZE),
           beforeCursor: cursor.cursor ?? "",
-          beforeClusterId: String(cursor.clusterId),
+          beforeClusterId: String(cursor.cursorId ?? cursor.clusterId),
         })
       );
       const page: Page = await res.json();
@@ -202,7 +202,7 @@ export default function FeedList({
         feedUrl({
           limit: String(FEED_PAGE_SIZE),
           afterCursor: cursor.cursor ?? "",
-          afterClusterId: String(cursor.clusterId),
+          afterClusterId: String(cursor.cursorId ?? cursor.clusterId),
         })
       );
       const page: Page = await res.json();

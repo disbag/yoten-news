@@ -15,6 +15,7 @@ import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
 import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
 import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
+import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
@@ -668,6 +669,17 @@ async function main() {
       if (only?.length && !only.includes(source.name)) continue;
       if (remaining.count <= 0) break;
       await processSource(source, remaining);
+    }
+    // Теневой режим тредов (DIS-36): новые карточки раскладываются по тредам,
+    // рабочая лента этого пока не показывает. Только после показа пачки —
+    // раскладка берёт видимые карточки. THREADS_SHADOW=0 отключает.
+    if (process.env.THREADS_SHADOW !== "0") {
+      await revealBatch();
+      const t = await assignThreads({ sinceHours: 24 });
+      console.log(
+        `Треды: проверено ${t.checked}, присоединено ${t.joined}, новых тредов ${t.created}` +
+          (t.stoppedByQuota ? " — остановлено: квота Gemini исчерпана" : "")
+      );
     }
   } finally {
     // Чистка — и при остановке прогона посередине (исчерпана квота Gemini):
