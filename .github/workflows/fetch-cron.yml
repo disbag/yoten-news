@@ -53,6 +53,14 @@ jobs:
           restore-keys: gemini-state-
 
       - run: npm ci
+        env:
+          # onnxruntime-node (его тянет @huggingface/transformers) на Linux при
+          # установке скачивает с NuGet пакет Microsoft.ML.OnnxRuntime.Gpu.Linux
+          # (236 МБ) ради библиотек для видеокарт NVIDIA (CUDA, TensorRT). Нам
+          # они не нужны: эмбеддинги считаются на процессоре, его библиотека
+          # уже лежит в самом npm-пакете. Без этой настройки — 236 МБ на каждый
+          # прогон, и 16.10.2026 прогон упал, когда скачивание оборвалось.
+          ONNXRUNTIME_NODE_INSTALL: skip
 
       - run: npm run fetch
         env:
