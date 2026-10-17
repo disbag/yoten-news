@@ -144,8 +144,24 @@ function isWithinFetchWindow(isoDate: string | undefined): boolean {
   return time >= now - FETCH_WINDOW_MS && time <= now + 24 * 60 * 60 * 1000;
 }
 
+// Заголовки The Verge приходят с кодами символов («Apple&#8217;s HomeView»),
+// и так они попадали в базу, промпты и заголовок страницы поста (23 статьи
+// за неделю, DIS-36). Раскодируем одним проходом, чтобы «&amp;#8217;»
+// осталось текстом «&#8217;», а не превратилось в апостроф.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " ", hellip: "…",
+  mdash: "—", ndash: "–", lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”",
+};
+function decodeEntities(text: string): string {
+  return text.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (entity, code: string) => {
+    if (code[0] !== "#") return NAMED_ENTITIES[code.toLowerCase()] ?? entity;
+    const point = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+    return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : entity;
+  });
+}
+
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return decodeEntities(html.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
 function isGif(url: string): boolean {

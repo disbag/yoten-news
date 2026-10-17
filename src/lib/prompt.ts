@@ -112,7 +112,9 @@ const MORE_MAX_WORDS = 200;
 const LEAD_MIN_CHARS = 150;
 const LEAD_MAX_CHARS = 650;
 export function splitLeadAndMore(text: string): { lead: string; more: string | null } {
-  let [leadRaw, ...rest] = text.split(/\n\s*===\s*(?:\n|$)/);
+  // Изредка модель начинает ответ с разделителя («===\nглавное\n===\n…»): он
+  // не после переноса строки, и без этой строки оставался в начале главного.
+  let [leadRaw, ...rest] = text.replace(/^\s*===\s*\n/, "").split(/\n\s*===\s*(?:\n|$)/);
   if (!rest.length) {
     const [first, ...others] = leadRaw.trim().split(/\n\s*\n/);
     if (others.length && first.length >= LEAD_MIN_CHARS && first.length <= LEAD_MAX_CHARS) {
