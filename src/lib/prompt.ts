@@ -104,8 +104,22 @@ ${NOISE_HANDLING_INSTRUCTIONS}`;
 // Продолжение длиннее 200 слов (модель не всегда держит лимит) подрезаем до
 // последнего целого предложения в пределах лимита.
 const MORE_MAX_WORDS = 200;
+// Изредка (34 из ~3800 пересказов за неделю до 17 октября) модель отделяет
+// вторую часть пустой строкой, а не ===. Без разделителя такой ответ целиком
+// шёл в главное — в ленте стена текста на 1000+ знаков без «Читать». Если
+// === нет, а первый абзац по длине похож на главное (до LEAD_MAX_CHARS), режем
+// по нему.
+const LEAD_MIN_CHARS = 150;
+const LEAD_MAX_CHARS = 650;
 export function splitLeadAndMore(text: string): { lead: string; more: string | null } {
-  const [leadRaw, ...rest] = text.split(/\n\s*===\s*(?:\n|$)/);
+  let [leadRaw, ...rest] = text.split(/\n\s*===\s*(?:\n|$)/);
+  if (!rest.length) {
+    const [first, ...others] = leadRaw.trim().split(/\n\s*\n/);
+    if (others.length && first.length >= LEAD_MIN_CHARS && first.length <= LEAD_MAX_CHARS) {
+      leadRaw = first;
+      rest = [others.join("\n\n")];
+    }
+  }
   // Строку темы модель иногда повторяет и в начале второй части.
   const strip = (t: string) =>
     t
