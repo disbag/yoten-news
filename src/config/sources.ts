@@ -218,12 +218,17 @@ export const SOURCES: SourceConfig[] = [
   },
   {
     // WordPress (PMC), не блокирует бота. Страница отдаёт много paywall-
-    // заглушек ("Subscribe for full access") ПЕРЕД реальным текстом — но он
-    // есть, AI надёжно находит его дальше (проверено на реальной статье:
-    // конкретные детали сюжета, не выдумка и не отказ).
+    // заглушек ("Subscribe for full access") ПЕРЕД реальным текстом. Общий
+    // каскад достаёт текст не всегда: ~20% карточек за неделю (DIS-36)
+    // получили только анонс из og:description, ~200 знаков. Тело статьи —
+    // в .pmc-paywall внутри .a-content (это обёртка текста, а не заглушка;
+    // без .pmc-paywall в начало попадает строка кнопок "Share on…").
+    // Проверено на 14 статьях: 3,8-12 тыс. знаков, в т.ч. там, где каскад
+    // брал 209.
     name: "The Hollywood Reporter",
     rssUrl: "https://www.hollywoodreporter.com/feed/",
     homepageUrl: "https://www.hollywoodreporter.com",
+    contentSelector: ".a-content .pmc-paywall",
   },
   {
     // Ziff Davis (как Lifehacker) — полный чистый текст в content:encoded
