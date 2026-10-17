@@ -54,8 +54,12 @@ export default function FeedCard({
   const [copied, setCopied] = useState(false);
   const [isRead, setIsRead] = useState(item.isRead);
   // Некоторые издания (Telegraph — известный случай) отдают 402/битые байты
-  // даже через прокси (см. коммент в app/api/image-proxy/route.ts) — вместо
-  // сломанной иконки картинки в ленте просто скрываем блок с ней целиком.
+  // даже через прокси (см. коммент в app/api/image-proxy/route.ts). Тогда
+  // пробуем загрузить картинку напрямую из браузера читателя: Telegraph
+  // блокирует адреса серверов Vercel, но не браузеры (DIS-36, 17 октября: через
+  // прокси не открылась ни одна из 15 обложек, напрямую — открываются). Если
+  // не вышло и так — вместо сломанной иконки скрываем блок с картинкой целиком.
+  const [imageDirect, setImageDirect] = useState(false);
   const [imageBroken, setImageBroken] = useState(false);
   // Вертикальная или квадратная обложка (у The NY Times они все квадратные) в
   // рамке 16:9 при обрезке теряла почти половину кадра — такую вписываем
@@ -70,9 +74,13 @@ export default function FeedCard({
     if (img.naturalWidth > 0 && img.naturalWidth <= img.naturalHeight) setCoverUpright(true);
   }
   // Обложка приходит в серверном HTML и у верхних карточек успевает
-  // загрузиться до гидрации — тогда onLoad React уже не увидит.
+  // загрузиться (или упасть) до гидрации — тогда onLoad/onError React уже не
+  // увидит. Упавшая до гидрации: complete, но без размеров.
   useEffect(() => {
-    if (coverRef.current?.complete) checkCoverUpright(coverRef.current);
+    const img = coverRef.current;
+    if (!img?.complete) return;
+    if (img.naturalWidth === 0) setImageDirect(true);
+    else checkCoverUpright(img);
   }, []);
   // Иконки нового издания может не оказаться, пока не запущен
   // `npm run favicons` — тогда серый кружок, как у издания без сайта.
@@ -269,13 +277,14 @@ export default function FeedCard({
           // прекрасно отдаётся на серверный запрос при сборе новостей.
           // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание)
           <img
-            src={`/api/image-proxy?url=${encodeURIComponent(item.imageUrl)}`}
+            src={imageDirect ? item.imageUrl : `/api/image-proxy?url=${encodeURIComponent(item.imageUrl)}`}
             alt=""
+            referrerPolicy="no-referrer"
             ref={coverRef}
             className={coverUpright ? "cover upright" : "cover"}
             loading="lazy"
             onLoad={(e) => checkCoverUpright(e.currentTarget)}
-            onError={() => setImageBroken(true)}
+            onError={() => (imageDirect ? setImageBroken(true) : setImageDirect(true))}
             onClick={() => setLightboxIndex(0)}
           />
         )

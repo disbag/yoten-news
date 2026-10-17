@@ -54,6 +54,9 @@ export default function Gallery({
   // исключаем из карусели по мере обнаружения, а не показываем битую иконку —
   // тот же принцип, что и для одиночной обложки в FeedCard.tsx.
   const [broken, setBroken] = useState<Set<string>>(new Set());
+  // Кадры, которые прокси не отдал: перед тем как исключить, пробуем загрузить
+  // их напрямую из браузера (см. imageDirect в FeedCard.tsx).
+  const [direct, setDirect] = useState<Set<string>>(new Set());
   // Вертикальные (и квадратные) кадры в широкой рамке 16:9 при cover
   // теряли бо́льшую часть кадра — их вписываем целиком, поля по бокам чёрные.
   // Ориентацию узнаём только после загрузки, по натуральным размерам.
@@ -107,7 +110,7 @@ export default function Gallery({
   useEffect(() => {
     const img = firstImgRef.current;
     if (!img?.complete) return;
-    if (img.naturalWidth === 0) setBroken((prev) => new Set(prev).add(urls[0]));
+    if (img.naturalWidth === 0) setDirect((prev) => new Set(prev).add(urls[0]));
     else checkUpright(urls[0], img);
     setFirstLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- только проверка состояния на момент гидрации
@@ -380,8 +383,9 @@ export default function Gallery({
                   // eslint-disable-next-line @next/next/no-img-element -- домены картинок непредсказуемы (любое издание), через /api/image-proxy как и одиночная обложка
                   <img
                     ref={isFirst ? firstImgRef : fullscreen && i === current ? currentImgRef : undefined}
-                    src={`/api/image-proxy?url=${encodeURIComponent(url)}`}
+                    src={direct.has(url) ? url : `/api/image-proxy?url=${encodeURIComponent(url)}`}
                     alt=""
+                    referrerPolicy="no-referrer"
                     draggable={false}
                     style={
                       zoomed
@@ -398,6 +402,10 @@ export default function Gallery({
                       if (isFirst) setFirstLoaded(true);
                     }}
                     onError={() => {
+                      if (!direct.has(url)) {
+                        setDirect((prev) => new Set(prev).add(url));
+                        return;
+                      }
                       markBroken(url);
                       // Иначе при битом первом кадре остальные не начали бы грузиться.
                       if (isFirst) setFirstLoaded(true);
