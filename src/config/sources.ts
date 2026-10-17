@@ -114,6 +114,10 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://time.com/feed/",
     homepageUrl: "https://time.com",
     gallery: "time",
+    // Статьи-карточки ежегодных списков (Best Inventions и т.п.): описание
+    // товара на ~100 знаков, каталог, а не новость. Приходят пачкой по 20
+    // штук и забивают ленту (DIS-36, решение пользователя 17 октября).
+    skipLinkPattern: /^\/collection\//i,
   },
   {
     name: "The New Yorker",
@@ -122,6 +126,10 @@ export const SOURCES: SourceConfig[] = [
     gallery: "condenast",
     // Выпуски подкастов намеренно НЕ отсекаются (DIS-52, решение
     // пользователя 14 октября): пересказы у них содержательные.
+    // Юмор (Shouts & Murmurs) отсекается: модель пересказывает сатиру как
+    // факт («I Used to Be a Horse» → «Я был сильным, изящным и
+    // великолепным.») (DIS-36, решение пользователя 17 октября).
+    skipLinkPattern: /^\/humor\//i,
   },
   {
     // У nymag.com нет единого RSS на весь сайт — только по разделам.
