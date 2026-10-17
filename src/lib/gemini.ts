@@ -18,9 +18,10 @@ const MAX_RETRIES_5XX = 2;
 // запрос держал весь прогон: реальный случай — запрос к Gemini висел 5 минут,
 // пока не упал с "fetch failed" (обычный ответ — секунды). Такой сбой, как и
 // обрыв сети, считаем недоступностью именно этой комбинации ключ+модель и
-// сразу переходим к следующей, без повторов: иначе худший случай — 3 × 60с
-// на одной комбинации.
-const REQUEST_TIMEOUT_MS = 60_000;
+// сразу переходим к другой модели, без повторов. 30 секунд, а не 60, как было
+// до 16 октября: обычный ответ приходит за секунды, а каждый таймаут стоил
+// прогону минуту (в прогоне #1638 два таймаута подряд — две минуты).
+const REQUEST_TIMEOUT_MS = 30_000;
 
 // Специальный тип ошибки — весь перебор моделей и ключей (см. ниже) исчерпан
 // (либо квота, либо стабильный 5xx на каждой комбинации) — дальше пытаться
@@ -185,12 +186,19 @@ export async function summarize(
       const noResponse = res instanceof Error;
 
       // 429 (квота), стабильный 5xx (после MAX_RETRIES_5XX попыток именно
-      // этой комбинации) и отсутствие ответа обрабатываются одинаково — эта
-      // комбинация ключ+модель сейчас нерабочая, переключаемся на следующую, а
-      // не бросаем всю статью как ошибку.
+      // этой комбинации) и отсутствие ответа — комбинация ключ+модель сейчас
+      // нерабочая, переключаемся (при 429 — на другой ключ, иначе — на другую
+      // модель, см. nextIndex), а не бросаем всю статью как ошибку.
       const quotaExceeded = !noResponse && res.status === 429;
       const serviceDown = noResponse || (res.status >= 500 && attempt >= MAX_RETRIES_5XX);
       if (quotaExceeded || serviceDown) {
+        // Квота считается на ключ (проект Google AI Studio) — при 429 пробуем
+        // следующий ключ той же модели. Таймаут и 5xx — перегрузка самой
+        // модели у Google, другой ключ на неё не помогает: в прогоне #1638
+        // (16.10) gemini-3.1-flash-lite отвечала 5xx на всех четырёх ключах
+        // подряд, а таймауты на 3.5-flash-lite шли на разных ключах. Поэтому
+        // сразу переходим к первой комбинации с другой моделью.
+        const nextIndex = quotaExceeded ? i + 1 : combos.findIndex((c, j) => j > i && c.model !== model);
         exhausted.push(
           noResponse
             ? `модель "${model}" (${res.name === "TimeoutError" ? "таймаут" : res.message})`
@@ -198,23 +206,26 @@ export async function summarize(
               ? describeQuotaError(model, await res.text())
               : `модель "${model}" (${res.status})`
         );
-        if (i === combos.length - 1) {
+        if (nextIndex === -1 || nextIndex >= combos.length) {
           throw new GeminiQuotaExhaustedError(
             quotaExceeded
               ? `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
-              : `Gemini: модели перегружены (5xx/таймаут, лимиты не исчерпаны) у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Временный сбой на стороне Google.`,
+              : `Gemini: модели перегружены (5xx/таймаут, лимиты не исчерпаны) на всех ${models.length} моделях (${exhausted.join(", ")}). Временный сбой на стороне Google.`,
             !quotaExceeded
           );
         }
-        const next = combos[i + 1];
+        const next = combos[nextIndex];
         const why = noResponse ? (res.name === "TimeoutError" ? "таймаут" : "нет ответа") : "5xx";
         const reason = quotaExceeded ? "исчерпана" : `недоступна (${why})`;
         const reasonKey = quotaExceeded ? "исчерпан" : `недоступен (${why})`;
         console.log(
-          next.model !== model
-            ? `  Gemini: модель "${model}" ${reason} на всех ключах, переключаюсь на модель "${next.model}"`
-            : `  Gemini: ключ #${keyIndex + 1} ${reasonKey} для "${model}", переключаюсь на ключ #${next.keyIndex + 1}`
+          next.model === model
+            ? `  Gemini: ключ #${keyIndex + 1} ${reasonKey} для "${model}", переключаюсь на ключ #${next.keyIndex + 1}`
+            : quotaExceeded
+              ? `  Gemini: модель "${model}" ${reason} на всех ключах, переключаюсь на модель "${next.model}"`
+              : `  Gemini: модель "${model}" недоступна (${why}, ключ #${keyIndex + 1}), переключаюсь на модель "${next.model}"`
         );
+        i = nextIndex - 1; // цикл прибавит единицу
         break; // следующая комбинация в перебор
       }
       if (noResponse) break; // недостижимо (обработано выше) — сужение типа для TypeScript
