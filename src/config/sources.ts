@@ -258,6 +258,10 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.gamespot.com/feeds/mashup/",
     homepageUrl: "https://www.gamespot.com",
     gallery: "gamespot",
+    // Видео (/videos/) не берутся: в RSS у них только пара строк описания, и
+    // пересказы видеообзоров и превью выходили пустыми («кампания увлекательная
+    // от начала до конца») (DIS-36, решение пользователя 17 октября).
+    skipLinkPattern: /^\/videos\//i,
   },
   {
     // Hearst, не блокирует бота. Проверено на реальной статье.
