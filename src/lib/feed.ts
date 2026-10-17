@@ -57,7 +57,9 @@ export type FeedItem = {
   // порядку появления и номер позиции треда для курсора подгрузки
   // (отрицательный — номер треда со знаком минус, чтобы не пересекаться с
   // номерами карточек).
-  thread?: { id: number; posts: ThreadPost[] };
+  // clusterIds — все карточки треда, включая склеенные с первой (без новых
+  // подробностей, см. assembleThreads): прочтение отмечает их все.
+  thread?: { id: number; posts: ThreadPost[]; clusterIds: number[] };
   cursorId?: number;
 };
 
@@ -355,6 +357,15 @@ async function assembleThreads(
       (a, b) => meta.get(a.clusterId)!.first_created.getTime() - meta.get(b.clusterId)!.first_created.getTime()
     );
     const [root, ...rest] = byAppearance;
+    // Карточка без новых подробностей — по сути ещё одна статья о том же:
+    // вместо пустого поста «Без новых подробностей» её издания идут в
+    // «Также пишут» первой карточки, как у обычной склейки.
+    const posts = rest.filter((i) => meta.get(i.clusterId)?.new_details);
+    const glued = rest.filter((i) => !meta.get(i.clusterId)?.new_details);
+    const sources = [...root.sources];
+    for (const source of glued.flatMap((i) => i.sources)) {
+      if (!sources.some((s) => s.link === source.link)) sources.push(source);
+    }
     const newest = group.reduce((best, item) => (time(item) > time(best) ? item : best));
     // От первой карточки — вся её галерея, от остальных — только обложка.
     // Галерея у карточки бывает и не про её историю: у дайджеста Guardian
@@ -378,10 +389,12 @@ async function assembleThreads(
         publishedAt: newest.publishedAt,
         cursor: newest.cursor,
         cursorId: unit,
+        sources,
         isRead: group.every((i) => i.isRead),
         thread: {
           id: -unit,
-          posts: rest.map((i) => ({
+          clusterIds: group.map((i) => i.clusterId),
+          posts: posts.map((i) => ({
             clusterId: i.clusterId,
             source: i.primarySource,
             homepage: i.primaryHomepage,
