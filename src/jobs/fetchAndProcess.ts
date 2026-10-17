@@ -672,14 +672,20 @@ async function main() {
     }
     // Теневой режим тредов (DIS-36): новые карточки раскладываются по тредам,
     // рабочая лента этого пока не показывает. Только после показа пачки —
-    // раскладка берёт видимые карточки. THREADS_SHADOW=0 отключает.
+    // раскладка берёт видимые карточки. THREADS_SHADOW=0 отключает. Ошибка
+    // раскладки не роняет прогон: статьи уже собраны и показаны, а
+    // непроверенные карточки раскладка возьмёт в следующий раз.
     if (process.env.THREADS_SHADOW !== "0") {
       await revealBatch();
-      const t = await assignThreads({ sinceHours: 24 });
-      console.log(
-        `Треды: проверено ${t.checked}, присоединено ${t.joined}, новых тредов ${t.created}` +
-          (t.stoppedByQuota ? " — остановлено: квота Gemini исчерпана" : "")
-      );
+      try {
+        const t = await assignThreads({ sinceHours: 24 });
+        console.log(
+          `Треды: проверено ${t.checked}, присоединено ${t.joined}, новых тредов ${t.created}` +
+            (t.stoppedByQuota ? " — остановлено: квота Gemini исчерпана" : "")
+        );
+      } catch (err) {
+        console.error(`Треды: ошибка раскладки — ${(err as Error).message}`);
+      }
     }
   } finally {
     // Чистка — и при остановке прогона посередине (исчерпана квота Gemini):

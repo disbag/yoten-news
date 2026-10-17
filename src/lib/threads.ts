@@ -158,77 +158,93 @@ export async function assignThreads(options: { sinceHours: number; limit?: numbe
   );
 
   for (const { id } of pending) {
-    const candidates = await findCandidates(id);
-    if (!candidates.length) {
-      await pool.query("INSERT INTO thread_posts (cluster_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);
-      stats.checked++;
-      stats.noCandidates++;
-      continue;
-    }
-
-    const cards = await loadCards([id, ...candidates.flatMap((c) => c.clusterIds)]);
-    const card = cards.get(id);
-    if (!card) continue;
-    const { rows: details } = await pool.query(
-      "SELECT cluster_id, new_details FROM thread_posts WHERE cluster_id = ANY($1)",
-      [candidates.flatMap((c) => c.clusterIds)]
-    );
-    const newDetails = new Map(details.map((d) => [d.cluster_id, d.new_details as string | null]));
-    const threadsText = candidates
-      .map((c, i) => {
-        const posts = c.clusterIds
-          .slice(-MAX_POSTS_IN_PROMPT)
-          .map((cid) => cards.get(cid))
-          .filter((p): p is CardText => Boolean(p))
-          .map((p) => `- (${day(p.createdAt)}) ${p.title}: ${newDetails.get(p.clusterId) ?? p.summary}`);
-        return `Тред ${i + 1}:\n${posts.join("\n")}`;
-      })
-      .join("\n\n");
-    const text = `(${day(card.createdAt)}) ${card.summary}${card.more ? ` ${card.more}` : ""}\n\nТРЕДЫ:\n${threadsText}`;
-
-    let answer: string;
     try {
-      answer = await summarize(card.title, text, THREAD_PROMPT);
+      if (!(await assignOne(id, stats))) break;
     } catch (err) {
-      if (err instanceof GeminiQuotaExhaustedError) {
-        stats.stoppedByQuota = true;
-        break;
-      }
-      console.error(`  тред для #${id}: ошибка модели — ${(err as Error).message}`);
-      continue;
+      // Карточку удалили, пока шла раскладка (список берётся один раз в
+      // начале): запись решения нарушает внешний ключ. Пропускаем её.
+      if ((err as { code?: string }).code !== FOREIGN_KEY_VIOLATION) throw err;
+      console.error(`  тред для #${id}: карточка удалена во время раскладки, пропущена`);
     }
-    await sleep(REQUEST_INTERVAL_MS);
-
-    const { thread, details: fresh } = parseAnswer(answer, candidates.length);
-    stats.checked++;
-    if (!thread) {
-      await pool.query("INSERT INTO thread_posts (cluster_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);
-      continue;
-    }
-    const chosen = candidates[thread - 1];
-    let threadId = chosen.threadId;
-    if (!threadId) {
-      // Карточка-кандидат ещё одна — с неё тред и начинается, целиком.
-      const { rows } = await pool.query("INSERT INTO threads DEFAULT VALUES RETURNING id");
-      threadId = rows[0].id as number;
-      await pool.query(
-        `INSERT INTO thread_posts (cluster_id, thread_id) VALUES ($1, $2)
-         ON CONFLICT (cluster_id) DO UPDATE SET thread_id = $2, new_details = NULL, checked_at = now()`,
-        [chosen.clusterIds[0], threadId]
-      );
-      stats.created++;
-      await ensureImageHashes(await cardImages(chosen.clusterIds[0]));
-    }
-    await pool.query(
-      `INSERT INTO thread_posts (cluster_id, thread_id, new_details) VALUES ($1, $2, $3)
-       ON CONFLICT (cluster_id) DO UPDATE SET thread_id = $2, new_details = $3, checked_at = now()`,
-      [id, threadId, fresh]
-    );
-    stats.joined++;
-    await ensureImageHashes(await cardImages(id));
-    console.log(`  тред #${threadId}: «${card.title.slice(0, 60)}» → ${fresh ? "с новыми подробностями" : "без новых подробностей"}`);
   }
   return stats;
+}
+
+const FOREIGN_KEY_VIOLATION = "23503";
+
+// Решение по одной карточке. false — квота Gemini исчерпана, раскладку пора
+// остановить.
+async function assignOne(id: number, stats: ThreadRunStats): Promise<boolean> {
+  const candidates = await findCandidates(id);
+  if (!candidates.length) {
+    await pool.query("INSERT INTO thread_posts (cluster_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);
+    stats.checked++;
+    stats.noCandidates++;
+    return true;
+  }
+
+  const cards = await loadCards([id, ...candidates.flatMap((c) => c.clusterIds)]);
+  const card = cards.get(id);
+  if (!card) return true;
+  const { rows: details } = await pool.query(
+    "SELECT cluster_id, new_details FROM thread_posts WHERE cluster_id = ANY($1)",
+    [candidates.flatMap((c) => c.clusterIds)]
+  );
+  const newDetails = new Map(details.map((d) => [d.cluster_id, d.new_details as string | null]));
+  const threadsText = candidates
+    .map((c, i) => {
+      const posts = c.clusterIds
+        .slice(-MAX_POSTS_IN_PROMPT)
+        .map((cid) => cards.get(cid))
+        .filter((p): p is CardText => Boolean(p))
+        .map((p) => `- (${day(p.createdAt)}) ${p.title}: ${newDetails.get(p.clusterId) ?? p.summary}`);
+      return `Тред ${i + 1}:\n${posts.join("\n")}`;
+    })
+    .join("\n\n");
+  const text = `(${day(card.createdAt)}) ${card.summary}${card.more ? ` ${card.more}` : ""}\n\nТРЕДЫ:\n${threadsText}`;
+
+  let answer: string;
+  try {
+    answer = await summarize(card.title, text, THREAD_PROMPT);
+  } catch (err) {
+    if (err instanceof GeminiQuotaExhaustedError) {
+      stats.stoppedByQuota = true;
+      return false;
+    }
+    console.error(`  тред для #${id}: ошибка модели — ${(err as Error).message}`);
+    return true;
+  }
+  await sleep(REQUEST_INTERVAL_MS);
+
+  const { thread, details: fresh } = parseAnswer(answer, candidates.length);
+  stats.checked++;
+  if (!thread) {
+    await pool.query("INSERT INTO thread_posts (cluster_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);
+    return true;
+  }
+  const chosen = candidates[thread - 1];
+  let threadId = chosen.threadId;
+  if (!threadId) {
+    // Карточка-кандидат ещё одна — с неё тред и начинается, целиком.
+    const { rows } = await pool.query("INSERT INTO threads DEFAULT VALUES RETURNING id");
+    threadId = rows[0].id as number;
+    await pool.query(
+      `INSERT INTO thread_posts (cluster_id, thread_id) VALUES ($1, $2)
+       ON CONFLICT (cluster_id) DO UPDATE SET thread_id = $2, new_details = NULL, checked_at = now()`,
+      [chosen.clusterIds[0], threadId]
+    );
+    stats.created++;
+    await ensureImageHashes(await cardImages(chosen.clusterIds[0]));
+  }
+  await pool.query(
+    `INSERT INTO thread_posts (cluster_id, thread_id, new_details) VALUES ($1, $2, $3)
+     ON CONFLICT (cluster_id) DO UPDATE SET thread_id = $2, new_details = $3, checked_at = now()`,
+    [id, threadId, fresh]
+  );
+  stats.joined++;
+  await ensureImageHashes(await cardImages(id));
+  console.log(`  тред #${threadId}: «${card.title.slice(0, 60)}» → ${fresh ? "с новыми подробностями" : "без новых подробностей"}`);
+  return true;
 }
 
 // Решения о карточках, которые склейка позже объединила с другими, больше не
