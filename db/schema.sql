@@ -168,9 +168,9 @@ CREATE TABLE IF NOT EXISTS user_hidden_sources (
 );
 
 -- Треды (DIS-36): карточки (кластеры) об одном сюжете или его развитии —
--- уровень над склейкой дублей. Пока в теневом режиме: сбор раскладывает
--- карточки по тредам, рабочая лента это не показывает, видно только на
--- тестовой выкладке (Vercel preview).
+-- уровень над склейкой дублей. Сбор раскладывает карточки по тредам при
+-- каждом прогоне (src/lib/threads.ts), лента показывает их с THREADS_VIEW
+-- (см. src/lib/feed.ts).
 CREATE TABLE IF NOT EXISTS threads (
   id SERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

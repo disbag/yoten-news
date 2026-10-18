@@ -4,8 +4,9 @@ import { ensureImageHashes } from "./imageHash.js";
 
 // Треды (DIS-36) — уровень над склейкой дублей: карточки об одной истории,
 // её развитии или об одном информационном поводе (несколько версий систем
-// Apple в один день). Пока в теневом режиме: решения пишутся в thread_posts,
-// рабочая лента их не показывает (см. THREADS_VIEW в src/lib/feed.ts).
+// Apple в один день). Решения пишутся в thread_posts при каждом прогоне сбора;
+// показывает их лента с тредами (THREADS_VIEW в src/lib/feed.ts — на рабочем
+// сайте включена 18 октября 2026).
 //
 // Как решается, что карточка — продолжение треда:
 // 1. Кандидаты — карточки последних CANDIDATE_WINDOW_HOURS с похожим
@@ -24,6 +25,12 @@ import { ensureImageHashes } from "./imageHash.js";
 //    присоединился) и отвечает, к какому треду она относится, и что в ней
 //    нового по сравнению с тредом. Это «новое» и показывается в треде вместо
 //    полного пересказа.
+// 3. Тред, в который добавилась карточка, сверяется с похожими тредами (см.
+//    mergeDuplicates): если модель считает их одной историей, они сливаются.
+//    Иначе однажды разошедшиеся треды так и шли бы отдельно: к 18 октября по
+//    два треда было у фильмов «Whalefall» и Street Fighter и у Apple HomeView.
+//    Просьба назвать в ответе несколько тредов сразу не сработала: при выборе
+//    треда для новой карточки модель всегда называла один.
 
 const CANDIDATE_WINDOW_HOURS = 72;
 const CANDIDATE_TITLE_THRESHOLD = 0.55;
@@ -37,22 +44,41 @@ const OLD_CANDIDATE_HOURS = 24;
 const OLD_CANDIDATE_THRESHOLD = 0.65;
 const MAX_CANDIDATES = 8;
 const MAX_CANDIDATE_THREADS = 3;
-// Сколько последних постов треда показывать модели — длинный тред не должен
-// раздувать запрос.
+// Сколько постов треда показывать модели — длинный тред не должен раздувать
+// запрос. Первая карточка показывается всегда: у остальных в треде только
+// короткое «что нового», и без начала модель не видела, о чём тред.
 const MAX_POSTS_IN_PROMPT = 4;
 // Пауза между запросами — тот же лимит Gemini, что и при сборе
 // (REQUEST_INTERVAL_MS в fetchAndProcess.ts).
 const REQUEST_INTERVAL_MS = 4000;
 // Сколько кадров галереи одной карточки считать для отпечатков.
 const MAX_FRAMES_PER_CARD = 8;
+// Похожие треды для сверки: в обоих есть карточки не дальше 72 часов друг от
+// друга со сходством заголовков не ниже MERGE_TITLE_THRESHOLD. По выборке 18
+// октября при 0,62 и выше попадались все известные дубли (0,63–0,74), а
+// разные истории отсеивала модель.
+const MERGE_TITLE_THRESHOLD = 0.62;
+const MAX_MERGE_CHECKS = 3;
 
-export const THREAD_PROMPT = `Ты — редактор новостной ленты. Тебе дают НОВУЮ новость и пронумерованный список тредов. Тред — это одна история: одно событие, его продолжение и развитие (новые подробности, реакции, последствия, следующий этап) или один информационный повод (например, в один день вышли новые версии нескольких систем одной компании).
+const THREAD_DEFINITION = `Тред — это одна история: одно событие, его продолжение и развитие (новые подробности, реакции, последствия, следующий этап) или один информационный повод (например, в один день вышли новые версии нескольких систем одной компании).`;
 
-НЕ относи новость к треду, если общее только у темы или фона, а события разные: одна компания, один человек, одна игра, одна страна, одна отрасль или один затяжной конфликт (война, отношения двух политиков) — ещё не одна история. Для одной истории нужен конкретный общий повод: то же событие, заявление, решение, встреча, сделка или происшествие. Выход фильма, сериала, игры или устройства — тоже один повод: рецензии разных изданий, интервью с создателями, рассказы о съёмках, новости о премьере, наградах и саундтреке одной картины относи к одному треду. Не относи к треду гайды, прохождения и советы по игре, а также подборки и списки. Ежедневные рыночные сводки (движение акций, валют, нефти, металлов за день) — разные истории, даже если рынок тот же и даже если обе объясняют движение одной причиной (данные по инфляции, заявление чиновника, общий обвал отрасли): реакция разных рынков или одного рынка в разные дни — не продолжение друг друга. Объединяй рыночные новости, только если обе — о самом событии (сделка, IPO, банкротство, решение регулятора по конкретной стране или компании), а не о движении цен. В скобках у каждой новости — дата: материалы, разделённые несколькими днями, относи к одному треду, только если новая прямо продолжает тот же повод.
+const THREAD_RULES = `НЕ относи новость к треду, если общее только у темы или фона, а события разные: одна компания, один человек, одна игра, одна страна, одна отрасль или один затяжной конфликт (война, отношения двух политиков) — ещё не одна история. Для одной истории нужен конкретный общий повод: то же событие, заявление, решение, встреча, сделка или происшествие. Выход фильма, сериала, игры или устройства — тоже один повод: рецензии разных изданий, интервью с создателями, рассказы о съёмках, новости о премьере, наградах и саундтреке одной картины относи к одному треду. Не относи к треду гайды, прохождения и советы по игре, а также подборки и списки. Ежедневные рыночные сводки (движение акций, валют, нефти, металлов за день) — разные истории, даже если рынок тот же и даже если обе объясняют движение одной причиной (данные по инфляции, заявление чиновника, общий обвал отрасли): реакция разных рынков или одного рынка в разные дни — не продолжение друг друга. Объединяй рыночные новости, только если обе — о самом событии (сделка, IPO, банкротство, решение регулятора по конкретной стране или компании), а не о движении цен. В скобках у каждой новости — дата: материалы, разделённые несколькими днями, относи к одному треду, только если новая прямо продолжает тот же повод.`;
+
+export const THREAD_PROMPT = `Ты — редактор новостной ленты. Тебе дают НОВУЮ новость и пронумерованный список тредов. ${THREAD_DEFINITION}
+
+${THREAD_RULES}
 
 Ответь строго двумя строками, без пояснений:
 ТРЕД: номер подходящего треда из списка или 0, если новость не продолжает ни один
 НОВОЕ: если ТРЕД не 0 — 1–3 предложения на русском только с фактами новой новости, которых ещё нет в треде: без повторов уже сказанного, без вводных слов, без «также сообщается». Если нового нет или ТРЕД 0 — напиши «нет».`;
+
+// Сверка двух тредов (см. mergeDuplicates) — те же правила, что при выборе
+// треда для новой карточки.
+export const MERGE_PROMPT = `Ты — редактор новостной ленты. Тебе дают два треда новостей. ${THREAD_DEFINITION} Реши, рассказывают ли оба треда одну и ту же историю, то есть их надо объединить в один. Правила те же, что для отнесения новости к треду:
+
+${THREAD_RULES}
+
+Ответь строго одним словом: ДА или НЕТ.`;
 
 type CardText = { clusterId: number; title: string; summary: string; more: string | null; createdAt: Date };
 
@@ -143,14 +169,21 @@ async function cardImages(clusterId: number): Promise<string[]> {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const day = (d: Date) => d.toISOString().slice(5, 10).split("-").reverse().join(".");
 
-export type ThreadRunStats = { checked: number; joined: number; created: number; noCandidates: number; stoppedByQuota: boolean };
+export type ThreadRunStats = {
+  checked: number;
+  joined: number;
+  created: number;
+  merged: number;
+  noCandidates: number;
+  stoppedByQuota: boolean;
+};
 
 // Проверяет непроверенные карточки последних sinceHours часов по порядку
 // появления, чтобы треды росли в хронологии. Карточка, у которой нет
 // кандидатов, отмечается проверенной без запроса к модели.
 // clusterIds — проверить только эти карточки (ручная проверка конкретного случая).
 export async function assignThreads(options: { sinceHours: number; limit?: number; clusterIds?: number[] }): Promise<ThreadRunStats> {
-  const stats: ThreadRunStats = { checked: 0, joined: 0, created: 0, noCandidates: 0, stoppedByQuota: false };
+  const stats: ThreadRunStats = { checked: 0, joined: 0, created: 0, merged: 0, noCandidates: 0, stoppedByQuota: false };
   await cleanupThreads();
   const { rows: pending } = await pool.query(
     `SELECT a.id FROM articles a
@@ -200,8 +233,11 @@ async function assignOne(id: number, stats: ThreadRunStats): Promise<boolean> {
   const newDetails = new Map(details.map((d) => [d.cluster_id, d.new_details as string | null]));
   const threadsText = candidates
     .map((c, i) => {
-      const posts = c.clusterIds
-        .slice(-MAX_POSTS_IN_PROMPT)
+      const shown =
+        c.clusterIds.length > MAX_POSTS_IN_PROMPT
+          ? [c.clusterIds[0], ...c.clusterIds.slice(-(MAX_POSTS_IN_PROMPT - 1))]
+          : c.clusterIds;
+      const posts = shown
         .map((cid) => cards.get(cid))
         .filter((p): p is CardText => Boolean(p))
         .map((p) => `- (${day(p.createdAt)}) ${p.title}: ${newDetails.get(p.clusterId) ?? p.summary}`);
@@ -251,7 +287,84 @@ async function assignOne(id: number, stats: ThreadRunStats): Promise<boolean> {
   stats.joined++;
   await ensureImageHashes(await cardImages(id));
   console.log(`  тред #${threadId}: «${card.title.slice(0, 60)}» → ${fresh ? "с новыми подробностями" : "без новых подробностей"}`);
+  return mergeDuplicates(threadId, stats);
+}
+
+// Сверяет тред с похожими (см. MERGE_TITLE_THRESHOLD) и сливает те, что модель
+// считает той же историей. Проверка 18 октября на известных парах: «да» у двух
+// тредов о «Whalefall», двух о фильме Street Fighter (сборы и рецензии) и двух
+// об Apple HomeView; «нет» у тредов о войне в Йемене, о фото Tesla Roadster и
+// Model Y L и у треда о кроссовере Street Fighter с Mortal Kombat. false —
+// квота Gemini исчерпана.
+export async function mergeDuplicates(threadId: number, stats: ThreadRunStats): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT t2.thread_id, max(1 - (a1.title_embedding <=> a2.title_embedding)) AS similarity
+     FROM thread_posts t1 JOIN articles a1 ON a1.id = t1.cluster_id
+     JOIN thread_posts t2 ON t2.thread_id IS NOT NULL AND t2.thread_id <> t1.thread_id
+     JOIN articles a2 ON a2.id = t2.cluster_id
+     WHERE t1.thread_id = $1
+       AND abs(extract(epoch FROM a1.created_at - a2.created_at)) < ${CANDIDATE_WINDOW_HOURS} * 3600
+       AND 1 - (a1.title_embedding <=> a2.title_embedding) >= ${MERGE_TITLE_THRESHOLD}
+     GROUP BY t2.thread_id ORDER BY similarity DESC LIMIT ${MAX_MERGE_CHECKS}`,
+    [threadId]
+  );
+  let current = threadId;
+  for (const { thread_id: other } of rows) {
+    let answer: string;
+    try {
+      answer = await summarize("Два треда", `Тред А:\n${await threadText(current)}\n\nТред Б:\n${await threadText(other)}`, MERGE_PROMPT);
+    } catch (err) {
+      if (err instanceof GeminiQuotaExhaustedError) {
+        stats.stoppedByQuota = true;
+        return false;
+      }
+      console.error(`  сверка тредов #${current} и #${other}: ошибка модели — ${(err as Error).message}`);
+      continue;
+    }
+    await sleep(REQUEST_INTERVAL_MS);
+    if (!/^\s*ДА/i.test(answer)) continue;
+    current = await mergeThreads(current, other);
+    stats.merged++;
+  }
   return true;
+}
+
+// Сливает два треда в тот, что начался раньше; возвращает его номер. Первая
+// карточка поздней ветки была показана целиком, а в общем треде она — пост:
+// без текста она склеилась бы с первой карточкой как «без новых подробностей»
+// (см. assembleThreads в feed.ts), поэтому её текстом становится её главное.
+async function mergeThreads(a: number, b: number): Promise<number> {
+  const { rows } = await pool.query(
+    `SELECT tp.thread_id, tp.cluster_id FROM thread_posts tp JOIN articles x ON x.id = tp.cluster_id
+     WHERE tp.thread_id IN ($1, $2) ORDER BY x.created_at`,
+    [a, b]
+  );
+  const target = rows[0].thread_id as number;
+  const source = target === a ? b : a;
+  const head = rows.find((r) => r.thread_id === source).cluster_id as number;
+  await pool.query(
+    `UPDATE thread_posts SET new_details = (SELECT x.ai_summary FROM articles x WHERE x.cluster_id = $1 AND x.ai_summary IS NOT NULL
+       ORDER BY x.ai_summary_more IS NULL, x.created_at LIMIT 1)
+     WHERE cluster_id = $1 AND new_details IS NULL`,
+    [head]
+  );
+  await pool.query("UPDATE thread_posts SET thread_id = $1 WHERE thread_id = $2", [target, source]);
+  await pool.query("DELETE FROM threads WHERE id = $1", [source]);
+  console.log(`  тред #${target}: влит тред #${source}`);
+  return target;
+}
+
+// Тред для сверки — как в запросе для новой карточки: первая карточка и
+// последние посты, у постов — «что нового».
+async function threadText(threadId: number): Promise<string> {
+  const { rows } = await pool.query(
+    `SELECT a.title, a.created_at, coalesce(tp.new_details, (SELECT x.ai_summary FROM articles x
+       WHERE x.cluster_id = a.id AND x.ai_summary IS NOT NULL ORDER BY x.ai_summary_more IS NULL, x.created_at LIMIT 1)) AS text
+     FROM thread_posts tp JOIN articles a ON a.id = tp.cluster_id WHERE tp.thread_id = $1 ORDER BY a.created_at`,
+    [threadId]
+  );
+  const shown = rows.length > MAX_POSTS_IN_PROMPT ? [rows[0], ...rows.slice(-(MAX_POSTS_IN_PROMPT - 1))] : rows;
+  return shown.map((r) => `- (${day(r.created_at)}) ${r.title}: ${r.text}`).join("\n");
 }
 
 // Решения о карточках, которые склейка позже объединила с другими, больше не

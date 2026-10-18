@@ -1,10 +1,18 @@
 import { pool } from "./db.js";
 import { dedupeImages } from "./imageDedupe.js";
 
-// Лента с тредами (DIS-36) — пока только на тестовой выкладке Vercel
-// (preview) и локально с THREADS_VIEW=1. На продакшене карточки идут как
-// раньше, по одной на инфоповод, хотя сбор уже раскладывает их по тредам.
+// Лента с тредами (DIS-36): на рабочем сайте — с переменной THREADS_VIEW=1 в
+// Vercel (включена 18 октября 2026), на тестовых выкладках (preview) — всегда.
+// Без неё карточки идут по одной на инфоповод, хотя сбор раскладывает их по
+// тредам всегда.
 export const THREADS_VIEW = process.env.VERCEL_ENV === "preview" || process.env.THREADS_VIEW === "1";
+
+// Позиция ленты с тредами: тред целиком (номер треда со знаком минус, чтобы не
+// пересекаться с номерами карточек) или карточка вне треда. Те же выражения —
+// в счётчиках (getNewCount, getUnreadCount), иначе тред из восьми карточек
+// считался бы там восемью.
+const THREAD_UNIT = "COALESCE(-tp.thread_id, a.cluster_id)";
+const THREAD_JOIN = "LEFT JOIN thread_posts tp ON tp.cluster_id = a.cluster_id AND tp.thread_id IS NOT NULL";
 
 // Карточка, продолжающая тред (DIS-36): показывается под первой карточкой
 // треда — издание, время и только то новое, что она добавила к треду.
@@ -131,10 +139,8 @@ export async function getFeed(
   const params: unknown[] = [limit, userId];
   // Позиция в ленте: тред целиком (номер треда со знаком минус) или карточка.
   const threads = THREADS_VIEW && !articleId;
-  const unitExpr = threads ? "COALESCE(-tp.thread_id, a.cluster_id)" : "a.cluster_id";
-  const threadJoin = threads
-    ? "LEFT JOIN thread_posts tp ON tp.cluster_id = a.cluster_id AND tp.thread_id IS NOT NULL"
-    : "";
+  const unitExpr = threads ? THREAD_UNIT : "a.cluster_id";
+  const threadJoin = threads ? THREAD_JOIN : "";
   let categoryClause = "WHERE a.visible_at IS NOT NULL";
   if (threads && unit) {
     params.push(unit);
@@ -450,16 +456,20 @@ export async function getNewCount(options: {
 }): Promise<number> {
   const params: unknown[] = [options.userId ?? null, options.since];
   const categoryClause = options.category ? `AND $${params.push(options.category)} = ANY(a.category)` : "";
+  // С тредами — по позициям ленты: новая карточка в треде поднимает весь тред
+  // одной позицией, и в нём есть что прочитать, даже если начало прочитано.
+  const unread = THREADS_VIEW ? "bool_or(ar.user_id IS NULL)" : "NOT bool_or(ar.user_id IS NOT NULL)";
   const { rows } = await pool.query(
     `
     SELECT count(*) AS count FROM (
-      SELECT a.cluster_id
+      SELECT ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
       FROM articles a
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
+      ${THREADS_VIEW ? THREAD_JOIN : ""}
       WHERE a.visible_at IS NOT NULL ${categoryClause}
-      GROUP BY a.cluster_id
-      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND NOT bool_or(ar.user_id IS NOT NULL)
+      GROUP BY ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
+      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND ${unread}
          AND max(a.visible_at) > $2::timestamptz
     ) fresh
     `,
@@ -478,13 +488,17 @@ export async function getUnreadCount(userId: number | null, category?: string): 
   const { rows } = await pool.query(
     `
     SELECT count(*) AS count FROM (
-      SELECT a.cluster_id
+      SELECT ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
       FROM articles a
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
+      ${THREADS_VIEW ? THREAD_JOIN : ""}
       WHERE a.visible_at IS NOT NULL ${categoryClause}
-      GROUP BY a.cluster_id
-      HAVING NOT bool_or(ar.user_id IS NOT NULL) AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
+      GROUP BY ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
+      -- С тредами — как во вкладке «Новые» (getFeed с unreadOnly): тред
+      -- считается, пока в нём есть непрочитанная карточка.
+      HAVING ${THREADS_VIEW ? "bool_or(ar.user_id IS NULL)" : "NOT bool_or(ar.user_id IS NOT NULL)"}
+        AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
     ) unread
     `,
     params
