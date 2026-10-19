@@ -123,6 +123,18 @@ export type ArticleSummary = { summary: string; more: string | null; category: C
 // источника, на котором сработало: откат с полного текста на короткий
 // og:description не должен давать продолжение из ничего.
 // summary === title — тот же сигнал "у статьи нет текста", что и раньше.
+// Русский ли ответ: доля кириллицы среди букв. У русских пересказов с
+// английскими названиями игр и компаний она не ниже 0,45 (по всей базе 20
+// октября), у английского ответа — 0. NO_CONTENT — не текст, его не проверяем.
+const MIN_CYRILLIC_SHARE = 0.3;
+function isRussian(text: string): boolean {
+  if (isNoContentSignal(text)) return true;
+  const letters = text.match(/\p{L}/gu) ?? [];
+  if (!letters.length) return true;
+  const cyrillic = letters.filter((ch) => /[А-Яа-яЁё]/.test(ch)).length;
+  return cyrillic / letters.length >= MIN_CYRILLIC_SHARE;
+}
+
 export async function summarizeArticle(
   title: string,
   sources: { excerpt?: string; description?: string; rawSummary: string }
@@ -133,7 +145,17 @@ export async function summarizeArticle(
 
   for (const input of candidates) {
     const withMore = input.length >= MIN_DETAIL_CONTEXT_LENGTH;
-    const result = await summarize(title, input, withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT);
+    const prompt = withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT;
+    let result = await summarize(title, input, prompt);
+    // Промпт требует русский, но модель изредка отвечает на языке статьи:
+    // 19 октября запасной Groq (пока Gemini был перегружен) пересказал статью
+    // Polygon целиком по-английски, и она так и ушла в ленту. Такой ответ
+    // запрашиваем ещё раз, а повторный не по-русски — ошибка: статья
+    // пересказывается заново в следующем прогоне (см. fetchAndProcess.ts).
+    if (!isRussian(result.summary)) {
+      result = await summarize(title, input, prompt);
+      if (!isRussian(result.summary)) throw new Error("ответ модели не на русском");
+    }
     if (isNoContentSignal(result.summary)) continue;
     if (!withMore) return { summary: result.summary, more: null, category: result.category };
     const { lead, more } = splitLeadAndMore(result.summary);
