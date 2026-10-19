@@ -226,7 +226,7 @@ export async function getFeed(
     ), cards AS (
     SELECT
       a.cluster_id,
-      ${threads ? "max(tp.thread_id) AS thread_id, max(tp.new_details) AS new_details, min(a.created_at) AS first_created," : ""}
+      ${threads ? "max(tp.thread_id) AS thread_id, max(tp.new_details) AS new_details, min(a.created_at) AS first_created, min(a.published_at) AS first_published," : ""}
       -- Главное и продолжение — ПАРОЙ с одной статьи: продолжение написано
       -- как дополнение именно к своему главному, с чужим оно бы повторялось.
       -- Предпочитаем статью с продолжением (кластер мог начаться с тизера, а
@@ -331,7 +331,14 @@ export async function getFeed(
 // imageHash.ts); обложка — первое фото треда. Позиция в ленте — по самой
 // свежей карточке.
 async function assembleThreads(
-  rows: { cluster_id: number; thread_id: number | null; new_details: string | null; first_created: Date; sort_at: Date | null }[],
+  rows: {
+    cluster_id: number;
+    thread_id: number | null;
+    new_details: string | null;
+    first_created: Date;
+    first_published: Date | null;
+    sort_at: Date | null;
+  }[],
   items: FeedItem[],
   direction: "ASC" | "DESC"
 ): Promise<FeedItem[]> {
@@ -366,7 +373,16 @@ async function assembleThreads(
     // Карточка без новых подробностей — по сути ещё одна статья о том же:
     // вместо пустого поста «Без новых подробностей» её издания идут в
     // «Также пишут» первой карточки, как у обычной склейки.
-    const posts = rest.filter((i) => meta.get(i.clusterId)?.new_details);
+    // Пост — это первая статья карточки (её «что нового» модель писала, когда
+    // карточка появилась), поэтому и время, и порядок постов — по первой
+    // публикации. Время карточки в ленте — по самой свежей статье: к ней могли
+    // позже приклеиться статьи других изданий, и в треде время скакало
+    // (21 ч, 1 дн, 21 ч, 41 мин, 3 ч — тред о Франции, 19 октября).
+    const firstPublished = (i: FeedItem) => {
+      const m = meta.get(i.clusterId)!;
+      return (m.first_published ?? m.first_created).getTime();
+    };
+    const posts = rest.filter((i) => meta.get(i.clusterId)?.new_details).sort((a, b) => firstPublished(a) - firstPublished(b));
     const glued = rest.filter((i) => !meta.get(i.clusterId)?.new_details);
     const sources = [...root.sources];
     for (const source of glued.flatMap((i) => i.sources)) {
@@ -405,7 +421,7 @@ async function assembleThreads(
             source: i.primarySource,
             homepage: i.primaryHomepage,
             link: i.primaryLink,
-            publishedAt: i.publishedAt,
+            publishedAt: new Date(firstPublished(i)).toISOString(),
             text: meta.get(i.clusterId)?.new_details ?? null,
             isRead: i.isRead,
           })),
