@@ -54,6 +54,8 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
   },
   // Motor1 в макете нет (добавлен позже).
   { label: "Авто", sources: ["Car and Driver", "Motor Trend", "InsideEVs", "Motor1"] },
+  // Добавлена 20 октября 2026 вместе с FLYING.
+  { label: "Авиация", sources: ["FLYING"] },
 ];
 
 export const OTHER_SOURCES_LABEL = "Другие";
