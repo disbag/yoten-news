@@ -584,6 +584,20 @@ export const SOURCES: SourceConfig[] = [
     contentSelector: ".article-body",
     gallery: "abduzeedo",
   },
+  {
+    // Авиация (США): новости FAA и NTSB, самолёты, пилотирование, история.
+    // Полный текст в content:encoded, страницы не закрыты. Рубрика «Aircraft
+    // For Sale Top Picks» — обзоры конкретных самолётов на продажу из
+    // объявлений сайта, по сути реклама (заголовок у них обычный, рубрика
+    // выдаёт). Галерея — картинки из текста RSS (у большинства новостей
+    // только обложка). Добавлено 20 октября 2026.
+    name: "FLYING",
+    rssUrl: "https://www.flyingmag.com/feed/",
+    homepageUrl: "https://www.flyingmag.com",
+    preferFeedContent: true,
+    gallery: "flying",
+    skipCategoryPattern: /aircraft\s*for\s*sale/i,
+  },
   // Top Gear: официального публичного RSS не нашлось (проверено ~10
   // стандартных путей — везде 404, автообнаружение на главной тоже пусто).
   // Похоже, его убрали, как и у National Geographic. Если найдёшь рабочую

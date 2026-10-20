@@ -348,7 +348,8 @@ export type GallerySite =
   | "architectureau"
   | "designwanted"
   | "abduzeedo"
-  | "guardian";
+  | "guardian"
+  | "flying";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -660,6 +661,23 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: false,
     coverFromFirstFrame: true,
+  },
+  flying: {
+    // FLYING (WordPress VIP): кадры — в тексте статьи в RSS. Оригиналы весят
+    // 1,1–1,5 МБ, а ?w=1280 у их CDN — 140–210 КБ (проверено 20 октября). В
+    // тексте бывает миниатюра обложки журнала (?w=222) — узкие картинки не
+    // кадры. Правило применяется и к обложке (og:image — тоже оригинал).
+    selector: "img",
+    normalize: (url, size) => {
+      if (!url.hostname.endsWith("flyingmag.com") || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      const width = Number(url.searchParams.get("w")) || size?.width;
+      if (width && width < 600) return null;
+      url.search = "?w=1280";
+      return url;
+    },
+    leadWithCover: true,
+    from: "rss",
   },
 };
 
