@@ -91,7 +91,16 @@ function looksNonRussian(text: string): boolean {
 // (новый процесс) в любом случае начинает с Gemini. Исчерпан и суточный
 // лимит Groq — бросаем GeminiQuotaExhaustedError без unavailable, и
 // fetchAndProcess.ts останавливает прогон сразу: дальше генерировать нечем.
-const GEMINI_PAUSE_MS = 10 * 60_000;
+//
+// Перегрузку (не квоту) сначала пережидаем: минута паузы и ещё одна попытка
+// Gemini, и только потом Groq — и Groq на GEMINI_PAUSE_MS, а не на 10 минут,
+// как было до 20 октября. Сбор объявлял Gemini недоступным уже после двух
+// неудачных запросов (по одному на модель) и на 10 минут уходил в Groq:
+// 20 октября с 14:00 до 15:00 так случилось четыре раза, суточный лимит Groq
+// (200 тыс. токенов) кончился, и следующие прогоны останавливались.
+const GEMINI_PAUSE_MS = 3 * 60_000;
+const GEMINI_RETRY_DELAY_MS = 60_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let geminiPausedUntil = 0;
 // Почему ушли в Groq — для понятного сообщения при остановке.
 let geminiDownReason = "";
@@ -105,14 +114,27 @@ function describeGeminiDown(err: GeminiQuotaExhaustedError): string {
 
 async function generate(title: string, rawSummary: string, systemPrompt: string): Promise<string> {
   if (Date.now() >= geminiPausedUntil) {
+    let down: GeminiQuotaExhaustedError;
     try {
       return await summarizeWithGemini(title, rawSummary, systemPrompt);
     } catch (err) {
-      if (!(err instanceof GeminiQuotaExhaustedError) || !hasGroqKey()) throw err;
-      geminiPausedUntil = Date.now() + GEMINI_PAUSE_MS;
-      geminiDownReason = describeGeminiDown(err);
-      console.log(`  Gemini: ${geminiDownReason} — переключаюсь на Groq на ${GEMINI_PAUSE_MS / 60_000} мин`);
+      if (!(err instanceof GeminiQuotaExhaustedError)) throw err;
+      down = err;
     }
+    if (down.unavailable) {
+      console.log(`  Gemini: ${describeGeminiDown(down)} — жду ${GEMINI_RETRY_DELAY_MS / 1000} с и пробую ещё раз`);
+      await sleep(GEMINI_RETRY_DELAY_MS);
+      try {
+        return await summarizeWithGemini(title, rawSummary, systemPrompt);
+      } catch (err) {
+        if (!(err instanceof GeminiQuotaExhaustedError)) throw err;
+        down = err;
+      }
+    }
+    if (!hasGroqKey()) throw down;
+    geminiPausedUntil = Date.now() + GEMINI_PAUSE_MS;
+    geminiDownReason = describeGeminiDown(down);
+    console.log(`  Gemini: ${geminiDownReason} — переключаюсь на Groq на ${GEMINI_PAUSE_MS / 60_000} мин`);
   }
   try {
     return await summarizeWithGroq(title, rawSummary, systemPrompt);
