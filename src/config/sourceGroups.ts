@@ -56,6 +56,17 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
   { label: "Авто", sources: ["Car and Driver", "Motor Trend", "InsideEVs", "Motor1"] },
   // Добавлена 20 октября 2026 вместе с FLYING.
   { label: "Авиация", sources: ["FLYING"] },
+  {
+    label: "Дом и сад",
+    sources: [
+      "Architectural Digest",
+      "The World of Interiors",
+      "House & Garden",
+      "Domino",
+      "Good Housekeeping",
+      "House Beautiful",
+    ],
+  },
 ];
 
 export const OTHER_SOURCES_LABEL = "Другие";

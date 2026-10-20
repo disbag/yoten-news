@@ -267,7 +267,10 @@ async function processSource(
     if (sourceConfig?.skipLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // вид материалов, который у издания не берём, см. sources.ts
     if (sourceConfig?.skipTitlePattern?.test(item.title)) continue; // то же по заголовку
     const skipCategory = sourceConfig?.skipCategoryPattern;
-    if (skipCategory && (item.categories ?? []).some((c) => typeof c === "string" && skipCategory.test(c))) continue; // рассылка или оплаченный материал, см. sources.ts
+    // Рубрика с атрибутом (<category domain="…">, так у Domino) приходит из
+    // rss-parser объектом { _: "Sponsored Content", $: {…} }, а не строкой.
+    const categoryName = (c: unknown) => (typeof c === "string" ? c : (c as { _?: unknown } | null)?._);
+    if (skipCategory && (item.categories ?? []).some((c) => { const n = categoryName(c); return typeof n === "string" && skipCategory.test(n); })) continue; // рассылка или оплаченный материал, см. sources.ts
     if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
     if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
     if (!isWithinFetchWindow(item.isoDate)) continue; // старше суток (или FETCH_SINCE_DAYS) — не берём в ленту

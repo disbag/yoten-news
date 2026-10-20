@@ -349,7 +349,8 @@ export type GallerySite =
   | "designwanted"
   | "abduzeedo"
   | "guardian"
-  | "flying";
+  | "flying"
+  | "domino";
 
 const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -677,6 +678,24 @@ const GALLERY_SITES: Record<
       return url;
     },
     leadWithCover: true,
+    from: "rss",
+  },
+  domino: {
+    // Domino (WordPress VIP): кадры — в тексте статьи в RSS, уже с ?w=768.
+    // Обложка (og:image) бывает анимированным GIF на 1,5 МБ, который CDN не
+    // уменьшает, — поэтому обложка — первый кадр текста (JPEG, ?w=1280 —
+    // проверено 20 октября).
+    selector: "img",
+    normalize: (url, size) => {
+      if (!url.hostname.endsWith("domino.com") || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      const width = Number(url.searchParams.get("w")) || size?.width;
+      if (width && width < 400) return null;
+      url.search = "?quality=85&w=1280";
+      return url;
+    },
+    leadWithCover: false,
+    coverFromFirstFrame: true,
     from: "rss",
   },
 };

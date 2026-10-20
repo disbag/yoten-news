@@ -598,6 +598,64 @@ export const SOURCES: SourceConfig[] = [
     gallery: "flying",
     skipCategoryPattern: /aircraft\s*for\s*sale/i,
   },
+  // Дом и сад (20 октября 2026). Condé Nast (AD, The World of Interiors, House
+  // & Garden) и Hearst (Good Housekeeping, House Beautiful) — те же платформы,
+  // что у GQ и Car and Driver: в RSS анонс, текст и галерея со страницы.
+  {
+    // Дома знаменитостей, интерьеры, архитектура (США). Рубрика Shopping —
+    // половина фида: «5 Best Platform Beds», обзоры товаров.
+    name: "Architectural Digest",
+    rssUrl: "https://www.architecturaldigest.com/feed/rss",
+    homepageUrl: "https://www.architecturaldigest.com",
+    gallery: "condenast",
+    skipCategoryPattern: /^shopping$/i,
+  },
+  {
+    // Интерьеры, исторические дома, выставки (Великобритания); ~1,5 статьи в день.
+    name: "The World of Interiors",
+    rssUrl: "https://www.worldofinteriors.com/feed/rss",
+    homepageUrl: "https://www.worldofinteriors.com",
+    gallery: "condenast",
+  },
+  {
+    // Интерьеры, сад, недвижимость (Великобритания). Рубрики Shopping и
+    // Recipes (рецепты, /recipe/) не берём.
+    name: "House & Garden",
+    rssUrl: "https://www.houseandgarden.co.uk/feed/rss",
+    homepageUrl: "https://www.houseandgarden.co.uk",
+    gallery: "condenast",
+    skipCategoryPattern: /^(?:shopping|recipes)$/i,
+    skipLinkPattern: /^\/recipe\//i,
+  },
+  {
+    // Интерьерные новинки и переделки «до и после» (США). Полный текст в
+    // content:encoded; рубрика Sponsored Content — оплаченные материалы.
+    name: "Domino",
+    rssUrl: "https://www.domino.com/feed/",
+    homepageUrl: "https://www.domino.com",
+    preferFeedContent: true,
+    gallery: "domino",
+    skipCategoryPattern: /sponsored/i,
+  },
+  {
+    // Дом, быт, еда, здоровье (США), ~16 статей в день. Рубрик в фиде нет;
+    // бо́льшая часть — подборки товаров: /what-to-buy/ и подарки
+    // (/holidays/gift-ideas/) — отсекаем по адресу, остальное ловят общий
+    // фильтр рекламы и тема shopping.
+    name: "Good Housekeeping",
+    rssUrl: "https://www.goodhousekeeping.com/rss/all.xml/",
+    homepageUrl: "https://www.goodhousekeeping.com",
+    gallery: "hearst",
+    skipLinkPattern: /^\/(?:what-to-buy|holidays\/gift-ideas)\//i,
+  },
+  {
+    // Интерьеры, туры по домам, сад (США). Раздел /shopping/ не берём.
+    name: "House Beautiful",
+    rssUrl: "https://www.housebeautiful.com/rss/all.xml/",
+    homepageUrl: "https://www.housebeautiful.com",
+    gallery: "hearst",
+    skipLinkPattern: /^\/shopping\//i,
+  },
   // Top Gear: официального публичного RSS не нашлось (проверено ~10
   // стандартных путей — везде 404, автообнаружение на главной тоже пусто).
   // Похоже, его убрали, как и у National Geographic. Если найдёшь рабочую

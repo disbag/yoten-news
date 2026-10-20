@@ -17,6 +17,7 @@ export const CATEGORIES = [
   { id: "film", label: "Кино и сериалы" },
   { id: "music", label: "Музыка" },
   { id: "design", label: "Дизайн" },
+  { id: "home", label: "Дом и сад" },
   { id: "games", label: "Игры" },
   { id: "auto", label: "Авто" },
   { id: "travel", label: "Путешествия" },
