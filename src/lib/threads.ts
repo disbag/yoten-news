@@ -13,6 +13,10 @@ import { ensureImageHashes } from "./imageHash.js";
 //    заголовком (по векторам заголовков, порог CANDIDATE_TITLE_THRESHOLD).
 //    Порог мягкий: по выборке 16 октября при сходстве заголовков 0,60–0,65
 //    одна история только в половине пар — отбор окончательно делает модель.
+//    Если тредов по заголовку меньше трёх, добавляются треды карточек с тем же
+//    редким именем в пересказе: пять статей о нападении на депутата Хелен
+//    Хейнс (20 октября) не нашли друг друга — «водитель задержан», «парикмахер
+//    помог», «призывы снизить напряжённость», сходство заголовков 0,21.
 //    Материалы об одном выходе фильма, игры или устройства (рецензии разных
 //    изданий, интервью, места съёмок, саундтрек) — один тред: так решил
 //    пользователь 16 октября по тредам «Разум и чувства», «Аватар: Семь
@@ -62,6 +66,15 @@ const MAX_FRAMES_PER_CARD = 8;
 // октября при 0,62 и выше попадались все известные дубли (0,63–0,74), а
 // разные истории отсеивала модель.
 const MERGE_TITLE_THRESHOLD = 0.62;
+// Кандидаты по общему имени (см. nameCandidates): имя из двух и больше слов с
+// заглавной буквы в пересказе, которое за окно встречается не больше чем в
+// MAX_NAME_CARDS карточках, — у частых имён (Трамп, Макрон) и так хватает
+// кандидатов по заголовку.
+const MAX_NAME_CARDS = 6;
+const NAME_PATTERN = /[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?(?:\s+[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?)+/g;
+// Первое слово с окончанием прилагательного — география, а не имя: «Ближнем
+// Востоке», «Северной Америке», «Южной Корее».
+const ADJECTIVE_ENDING = /(?:ой|ей|ий|ый|ая|яя|ом|ем|ых|их|ую|юю|ое|ее)$/;
 const MAX_MERGE_CHECKS = 3;
 
 const THREAD_DEFINITION = `Тред — это одна история: одно событие, его продолжение и развитие (новые подробности, реакции, последствия, следующий этап) или один информационный повод (например, в один день вышли новые версии нескольких систем одной компании).`;
@@ -113,6 +126,46 @@ type Candidate = { threadId: number | null; clusterIds: number[]; similarity: nu
 // однозначные признаки: «the best …» и «… explained» бывают и у новостей.
 const GUIDE_TITLE_PATTERN = String.raw`^(how to|where to (buy|watch|stream)) |\mwalkthrough\M|\mlocations in\M`;
 
+// Карточки окна с тем же редким именем в пересказе (см. MAX_NAME_CARDS).
+// Проверка 20 октября на 72 часах (1179 карточек): 65 новых пар, модель
+// отнесла к треду 22, из них неверно 2 — материалы о Египте и светская
+// хроника, — остальные действительно одна история (проверка Ильхан Омар,
+// «Whalefall», документальный фильм «You Can See Everything», дело Бо
+// Ламарра-Кондона).
+async function nameCandidates(clusterId: number): Promise<Candidate[]> {
+  const { rows: own } = await pool.query(
+    `SELECT a.created_at, (SELECT s.ai_summary FROM articles s WHERE s.cluster_id = a.id AND s.ai_summary IS NOT NULL
+       ORDER BY s.ai_summary_more IS NULL, s.created_at LIMIT 1) AS summary
+     FROM articles a WHERE a.id = $1 AND a.title !~* $2`,
+    [clusterId, GUIDE_TITLE_PATTERN]
+  );
+  if (!own[0]?.summary) return [];
+  const names = new Set(
+    [...(own[0].summary as string).matchAll(NAME_PATTERN)]
+      .map((m) => m[0])
+      .filter((n) => {
+        const words = n.split(/\s+/);
+        return words.every((w) => w.length >= 3) && !ADJECTIVE_ENDING.test(words[0]);
+      })
+  );
+  const found = new Map<number, number | null>();
+  for (const name of names) {
+    const { rows } = await pool.query(
+      `SELECT d.id, tp.thread_id FROM articles d
+       LEFT JOIN thread_posts tp ON tp.cluster_id = d.id
+       WHERE d.cluster_id = d.id AND d.id <> $1 AND d.visible_at IS NOT NULL AND d.title !~* $4
+         AND d.created_at < $2 AND d.created_at > $2::timestamptz - interval '${CANDIDATE_WINDOW_HOURS} hours'
+         AND EXISTS (SELECT 1 FROM articles s WHERE s.cluster_id = d.id AND strpos(s.ai_summary, $3) > 0)
+       ORDER BY d.created_at DESC
+       LIMIT ${MAX_NAME_CARDS + 1}`,
+      [clusterId, own[0].created_at, name, GUIDE_TITLE_PATTERN]
+    );
+    if (rows.length > MAX_NAME_CARDS) continue;
+    for (const r of rows) found.set(r.id, r.thread_id);
+  }
+  return [...found].map(([id, threadId]) => ({ threadId, clusterIds: [id], similarity: 0 }));
+}
+
 async function findCandidates(clusterId: number): Promise<Candidate[]> {
   const { rows } = await pool.query(
     `SELECT d.id AS cluster_id, 1 - (d.title_embedding <=> c.title_embedding) AS similarity, tp.thread_id
@@ -140,6 +193,15 @@ async function findCandidates(clusterId: number): Promise<Candidate[]> {
     else byThread.set(key, { threadId: r.thread_id, clusterIds: [r.cluster_id], similarity: r.similarity });
   }
   const candidates = [...byThread.values()].sort((a, b) => b.similarity - a.similarity).slice(0, MAX_CANDIDATE_THREADS);
+  if (candidates.length < MAX_CANDIDATE_THREADS) {
+    for (const extra of await nameCandidates(clusterId)) {
+      const key = extra.threadId ? `t${extra.threadId}` : `c${extra.clusterIds[0]}`;
+      if (byThread.has(key)) continue;
+      byThread.set(key, extra);
+      candidates.push(extra);
+      if (candidates.length >= MAX_CANDIDATE_THREADS) break;
+    }
+  }
   // У существующего треда модели показываем его последние посты, а не только
   // ту карточку, что совпала по заголовку.
   for (const c of candidates) {
