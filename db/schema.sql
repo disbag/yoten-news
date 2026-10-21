@@ -190,6 +190,21 @@ CREATE TABLE IF NOT EXISTS thread_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_thread_posts_thread_id ON thread_posts (thread_id);
 
+-- Ручные решения пользователя «эта карточка — не из этого треда» (DIS-36):
+-- раскладка не предлагает такой тред карточке, а сверка не сливает треды,
+-- если в одном есть карточка, исключённая из другого. Без этого убранные
+-- вручную карточки возвращались: 20 октября две убранные из треда о
+-- Зеленском в Брюсселе карточки собрали вокруг себя новые треды, и сверка
+-- влила их обратно. thread_id без внешнего ключа: при слиянии тредов
+-- исключения переносятся на итоговый тред (см. mergeThreads).
+CREATE TABLE IF NOT EXISTS thread_exclusions (
+  cluster_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  thread_id INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (cluster_id, thread_id)
+);
+CREATE INDEX IF NOT EXISTS idx_thread_exclusions_thread_id ON thread_exclusions (thread_id);
+
 -- Отпечатки картинок (dHash, 64 бита в 16 hex-символах) — чтобы в галерее
 -- треда одно и то же фото разных изданий (агентский снимок по разным адресам
 -- и в разных размерах) показывалось один раз. hash NULL — картинку не удалось
@@ -217,6 +232,7 @@ ALTER TABLE user_hidden_sources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE thread_posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE image_hashes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE thread_exclusions ENABLE ROW LEVEL SECURITY;
 
 -- Второй слой к RLS: у публичных ролей Data API нет вообще никаких прав на
 -- наши таблицы — даже если на какой-то таблице RLS случайно выключат, anon-

@@ -159,6 +159,7 @@ async function nameCandidates(clusterId: number): Promise<Candidate[]> {
       `SELECT d.id, tp.thread_id FROM articles d
        LEFT JOIN thread_posts tp ON tp.cluster_id = d.id
        WHERE d.cluster_id = d.id AND d.id <> $1 AND d.visible_at IS NOT NULL AND d.title !~* $4
+         AND NOT EXISTS (SELECT 1 FROM thread_exclusions x WHERE x.cluster_id = $1 AND x.thread_id = tp.thread_id)
          AND d.created_at < $2 AND d.created_at > $2::timestamptz - interval '${CANDIDATE_WINDOW_HOURS} hours'
          AND EXISTS (SELECT 1 FROM articles s WHERE s.cluster_id = d.id AND strpos(s.ai_summary, $3) > 0)
        ORDER BY d.created_at DESC
@@ -181,6 +182,7 @@ async function findCandidates(clusterId: number): Promise<Candidate[]> {
      LEFT JOIN thread_posts tp ON tp.cluster_id = d.id
      WHERE c.id = $1 AND c.title_embedding IS NOT NULL
        AND c.title !~* $3 AND d.title !~* $3
+       AND NOT EXISTS (SELECT 1 FROM thread_exclusions x WHERE x.cluster_id = c.id AND x.thread_id = tp.thread_id)
        AND 1 - (d.title_embedding <=> c.title_embedding) >= $2
        AND (d.created_at > c.created_at - interval '${OLD_CANDIDATE_HOURS} hours'
          OR 1 - (d.title_embedding <=> c.title_embedding) >= ${OLD_CANDIDATE_THRESHOLD}
@@ -375,12 +377,15 @@ export async function mergeDuplicates(threadId: number, stats: ThreadRunStats): 
      JOIN articles a2 ON a2.id = t2.cluster_id
      WHERE t1.thread_id = $1
        AND abs(extract(epoch FROM a1.created_at - a2.created_at)) < ${CANDIDATE_WINDOW_HOURS} * 3600
+       AND NOT EXISTS (SELECT 1 FROM thread_exclusions x JOIN thread_posts p ON p.cluster_id = x.cluster_id
+         WHERE (p.thread_id = t1.thread_id AND x.thread_id = t2.thread_id) OR (p.thread_id = t2.thread_id AND x.thread_id = t1.thread_id))
        AND 1 - (a1.title_embedding <=> a2.title_embedding) >= ${MERGE_TITLE_THRESHOLD}
      GROUP BY t2.thread_id ORDER BY similarity DESC LIMIT ${MAX_MERGE_CHECKS}`,
     [threadId]
   );
   let current = threadId;
   for (const { thread_id: other } of rows) {
+    if (await excluded(current, other)) continue;
     let answer: string;
     try {
       answer = await summarize("Два треда", `Тред А:\n${await threadText(current)}\n\nТред Б:\n${await threadText(other)}`, MERGE_PROMPT);
@@ -398,6 +403,17 @@ export async function mergeDuplicates(threadId: number, stats: ThreadRunStats): 
     stats.merged++;
   }
   return true;
+}
+
+// Есть ли в одном из тредов карточка, которую пользователь убрал из другого
+// (см. thread_exclusions в db/schema.sql).
+async function excluded(a: number, b: number): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `SELECT 1 FROM thread_exclusions x JOIN thread_posts p ON p.cluster_id = x.cluster_id
+     WHERE (p.thread_id = $1 AND x.thread_id = $2) OR (p.thread_id = $2 AND x.thread_id = $1) LIMIT 1`,
+    [a, b]
+  );
+  return Boolean(rowCount);
 }
 
 // Сливает два треда в тот, что начался раньше; возвращает его номер. Первая
@@ -420,6 +436,12 @@ async function mergeThreads(a: number, b: number): Promise<number> {
     [head]
   );
   await pool.query("UPDATE thread_posts SET thread_id = $1 WHERE thread_id = $2", [target, source]);
+  await pool.query(
+    `INSERT INTO thread_exclusions (cluster_id, thread_id) SELECT cluster_id, $1 FROM thread_exclusions WHERE thread_id = $2
+     ON CONFLICT DO NOTHING`,
+    [target, source]
+  );
+  await pool.query("DELETE FROM thread_exclusions WHERE thread_id = $1", [source]);
   await pool.query("DELETE FROM threads WHERE id = $1", [source]);
   console.log(`  тред #${target}: влит тред #${source}`);
   return target;
