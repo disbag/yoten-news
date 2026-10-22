@@ -655,6 +655,52 @@ export const SOURCES: SourceConfig[] = [
     gallery: "hearst",
     skipLinkPattern: /^\/shopping\//i,
   },
+  // Новости, политика, бизнес (22 октября 2026).
+  {
+    // Голливуд, светская хроника, королевская семья, политика (США).
+    // Condé Nast, как GQ: в RSS анонс, текст и галерея со страницы.
+    name: "Vanity Fair",
+    rssUrl: "https://www.vanityfair.com/feed/rss",
+    homepageUrl: "https://www.vanityfair.com",
+    gallery: "condenast",
+  },
+  {
+    // Объясняющая журналистика: политика США, здоровье, общество (США).
+    // Фид Atom: полный текст в <content>, который сбор не читает (только
+    // content:encoded) — но страницы открываются и дают тот же текст. Раздел
+    // /press-room/ — пресс-релизы самого Vox. Подкасты и рассылки (Today,
+    // Explained) оставлены: у них полноценный текст на одну тему.
+    name: "Vox",
+    rssUrl: "https://www.vox.com/rss/index.xml",
+    homepageUrl: "https://www.vox.com",
+    skipLinkPattern: /^\/press-room\//i,
+  },
+  {
+    // Deutsche Welle на английском: мир, Германия, ЕС. Главный фид (top,
+    // ~20 в день) — почти только политика, поэтому ещё разделы «Культура» и
+    // «Экономика» (по статье в день). В RSS анонс, текст со страницы.
+    name: "DW",
+    rssUrl: "https://rss.dw.com/rdf/rss-en-top",
+    extraFeeds: ["https://rss.dw.com/rdf/rss-en-cul", "https://rss.dw.com/rdf/rss-en-bus"],
+    homepageUrl: "https://www.dw.com/en/",
+  },
+  {
+    // Россия: политика, экономика, война, общество (англоязычное издание,
+    // редакция в Амстердаме). ~7 новостей в день, анонс в RSS, текст со
+    // страницы. Разделы «Мнения» и «Meanwhile» малы — не подключены.
+    name: "The Moscow Times",
+    rssUrl: "https://www.themoscowtimes.com/rss/news",
+    homepageUrl: "https://www.themoscowtimes.com",
+  },
+  {
+    // Бизнес, технологии, рынки, корпорации (США). Полный текст в
+    // content:encoded. Рубрика Newsletters оставлена: это полноценные
+    // материалы на одну тему, а не дайджесты.
+    name: "FORTUNE",
+    rssUrl: "https://fortune.com/feed/fortune-feeds/?id=3230629",
+    homepageUrl: "https://fortune.com",
+    preferFeedContent: true,
+  },
   // The Washington Post убран 22 октября 2026 (DIS-67): с 14 октября все фиды
   // feeds.washingtonpost.com отвечают 502, а сайт закрыт для бота (Akamai).
   // Пользы и раньше было мало: в RSS анонс на 100–150 знаков, страницы
