@@ -18,7 +18,6 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
       "The Telegraph",
       "TIME",
       "The New Yorker",
-      "The Washington Post",
       "NY Magazine",
       "The Wall Street Journal",
       "Bloomberg",

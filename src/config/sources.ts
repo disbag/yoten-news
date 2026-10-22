@@ -79,11 +79,6 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://www.nytimes.com",
   },
   {
-    name: "The Washington Post",
-    rssUrl: "https://feeds.washingtonpost.com/rss/national",
-    homepageUrl: "https://www.washingtonpost.com",
-  },
-  {
     name: "Wired",
     rssUrl: "https://www.wired.com/feed/rss",
     homepageUrl: "https://www.wired.com",
@@ -660,6 +655,10 @@ export const SOURCES: SourceConfig[] = [
     gallery: "hearst",
     skipLinkPattern: /^\/shopping\//i,
   },
+  // The Washington Post убран 22 октября 2026 (DIS-67): с 14 октября все фиды
+  // feeds.washingtonpost.com отвечают 502, а сайт закрыт для бота (Akamai).
+  // Пользы и раньше было мало: в RSS анонс на 100–150 знаков, страницы
+  // закрыты, картинок нет.
   // Top Gear: официального публичного RSS не нашлось (проверено ~10
   // стандартных путей — везде 404, автообнаружение на главной тоже пусто).
   // Похоже, его убрали, как и у National Geographic. Если найдёшь рабочую
