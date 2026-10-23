@@ -317,6 +317,17 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://feeds.bloomberg.com/markets/news.rss",
     homepageUrl: "https://www.bloomberg.com",
     skipLinkPattern: /^\/news\/(?:videos|audio)\//i,
+    // Ежедневные рыночные сводки («Gold Edges Lower as…», «European Stocks
+    // Fall as…», «…: Markets Wrap») и лайв-блоги («FTSE 100 Live: …»):
+    // движение цен за день, по анонсу на пару строк — и запрос к Gemini на
+    // каждую. По базе за 20–23 октября — 19 из 272 статей (~6 в сутки).
+    skipTitlePattern: new RegExp(
+      String.raw`^(?:FTSE 100 Live:|[^:]*\bMarkets Live\b)|: Markets Wrap$|` +
+        String.raw`^(?:(?:Asian?|European?|US|Emerging[- ]Market|Global|Japan(?:ese)?|China|Chinese|Hong Kong|India(?:n)?|Korea(?:n)?|Australia(?:n)?|UK|Gulf|Indonesia(?:n)?|Taiwan(?:ese)?|Brazil(?:ian)?)\s+(?:Stocks?|Shares|Equities|Bonds|Bond Yields|Stock Futures|Equity Futures|Currencies)` +
+        String.raw`|Oil|Brent|Gold|Silver|Copper|Aluminum|Iron Ore|Metals|Treasuries|Treasury Yields|Dollar|Yen|Euro|Pound|Rupee|Yuan|Won|Bitcoin|S&P 500|Nasdaq|Stocks|Stock Futures)\s+` +
+        String.raw`(?:Rise|Rises|Fall|Falls|Gain|Gains|Drop|Drops|Slip|Slips|Climb|Climbs|Edges? (?:Up|Down|Higher|Lower)|Steady|Steadies|Holds?|Rallies|Extends?|Snaps?|Tumbles?|Jumps?|Sinks?|Rebounds?|Advances?|Declines?|Slides?|Heads? for|Wavers?|Fluctuates?|Set for|Poised|Muted|Mixed)\b`,
+      "i"
+    ),
   },
   {
     // Тоже только по разделам — international ближе всего к общему профилю.

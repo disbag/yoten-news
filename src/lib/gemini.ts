@@ -169,9 +169,35 @@ export async function summarize(
 
   const combos = rotateToLastKnownGood(buildComboOrder(models, apiKeys), loadState());
   const exhausted: string[] = [];
+  // Каждая пара модель+ключ пробуется не больше раза. downModels — модели,
+  // которые ответили 5xx/таймаутом: к их остальным ключам возвращаемся только
+  // в крайнем случае (см. nextCombo). onlyQuota — все неудачи были 429: только
+  // тогда это исчерпанная квота, а не перегрузка.
+  const tried = new Set<number>();
+  const downModels = new Set<string>();
+  const lastResortUsed = new Set<string>();
+  let onlyQuota = true;
+  // Следующая пара: сначала непроверенная на работающей модели (при 429 — тот
+  // же модель, следующий ключ: квота считается на ключ), иначе — по одному
+  // непроверенному ключу на каждой перегруженной модели. До 23 октября при
+  // 5xx/таймауте на одном ключе модель бросалась целиком, и дальше первых
+  // ключей перебор не доходил: ключ #4 не получил ни одного запроса, а сбор
+  // писал «лимиты исчерпаны на всех ключах», если последней неудачей была 429.
+  const nextCombo = (from: number): number => {
+    const order = combos.map((_, k) => (from + 1 + k) % combos.length).filter((k) => !tried.has(k));
+    const sameModel = order.find((k) => combos[k].model === combos[from].model && !downModels.has(combos[k].model));
+    if (sameModel !== undefined) return sameModel;
+    const healthy = order.find((k) => !downModels.has(combos[k].model));
+    if (healthy !== undefined) return healthy;
+    const lastResort = order.find((k) => !lastResortUsed.has(combos[k].model));
+    if (lastResort !== undefined) lastResortUsed.add(combos[lastResort].model);
+    return lastResort ?? -1;
+  };
 
-  for (let i = 0; i < combos.length; i++) {
+  for (let i = 0; i < combos.length && i !== -1; ) {
+    tried.add(i);
     const { model, keyIndex } = combos[i];
+    let switchTo: number | null = null;
     const body = buildRequestBody(title, rawSummary, systemPrompt, model);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKeys[keyIndex]}`;
 
@@ -198,7 +224,11 @@ export async function summarize(
         // (16.10) gemini-3.1-flash-lite отвечала 5xx на всех четырёх ключах
         // подряд, а таймауты на 3.5-flash-lite шли на разных ключах. Поэтому
         // сразу переходим к первой комбинации с другой моделью.
-        const nextIndex = quotaExceeded ? i + 1 : combos.findIndex((c, j) => j > i && c.model !== model);
+        if (!quotaExceeded) {
+          downModels.add(model);
+          onlyQuota = false;
+        }
+        const nextIndex = nextCombo(i);
         exhausted.push(
           noResponse
             ? `модель "${model}" (${res.name === "TimeoutError" ? "таймаут" : res.message})`
@@ -206,12 +236,12 @@ export async function summarize(
               ? describeQuotaError(model, await res.text())
               : `модель "${model}" (${res.status})`
         );
-        if (nextIndex === -1 || nextIndex >= combos.length) {
+        if (nextIndex === -1) {
           throw new GeminiQuotaExhaustedError(
-            quotaExceeded
+            onlyQuota
               ? `Gemini: лимит исчерпан у всех ${apiKeys.length} ключей на всех ${models.length} моделях (${exhausted.join(", ")}). Добавь новый ключ в GEMINI_API_KEYS или подожди сброса лимита.`
-              : `Gemini: модели перегружены (5xx/таймаут, лимиты не исчерпаны) на всех ${models.length} моделях (${exhausted.join(", ")}). Временный сбой на стороне Google.`,
-            !quotaExceeded
+              : `Gemini: модели перегружены (5xx/таймаут) — не ответила ни одна из ${tried.size} проверенных пар модель+ключ (${exhausted.join(", ")}). Временный сбой на стороне Google.`,
+            !onlyQuota
           );
         }
         const next = combos[nextIndex];
@@ -225,7 +255,7 @@ export async function summarize(
               ? `  Gemini: модель "${model}" ${reason} на всех ключах, переключаюсь на модель "${next.model}"`
               : `  Gemini: модель "${model}" недоступна (${why}, ключ #${keyIndex + 1}), переключаюсь на модель "${next.model}"`
         );
-        i = nextIndex - 1; // цикл прибавит единицу
+        switchTo = nextIndex;
         break; // следующая комбинация в перебор
       }
       if (noResponse) break; // недостижимо (обработано выше) — сужение типа для TypeScript
@@ -252,6 +282,8 @@ export async function summarize(
       saveState({ model, keyIndex });
       return ensureCompleteSentence(text);
     }
+    if (switchTo === null) throw new Error("Gemini: превышено число повторов");
+    i = switchTo;
   }
 
   throw new Error("Gemini: превышено число повторов");
