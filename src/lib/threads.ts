@@ -81,6 +81,13 @@ const NAME_PATTERN = /[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?(?:\s+[А-ЯЁ
 // Востоке», «Северной Америке», «Южной Корее».
 const ADJECTIVE_ENDING = /(?:ой|ей|ий|ый|ая|яя|ом|ем|ых|их|ую|юю|ое|ее)$/;
 const MAX_MERGE_CHECKS = 3;
+// Сколько карточек (вместе с первой) может быть в треде. Полный тред новых
+// карточек не принимает — следующие собираются во второй тред, — и сверка не
+// сливает треды, если вместе выйдет больше. Решение пользователя 24 октября:
+// длинные треды начали подбирать всё подряд; число можно поменять.
+const MAX_THREAD_CARDS = 6;
+const THREAD_HAS_ROOM = (alias: string) =>
+  `(${alias}.thread_id IS NULL OR (SELECT count(*) FROM thread_posts z WHERE z.thread_id = ${alias}.thread_id) < ${MAX_THREAD_CARDS})`;
 
 const THREAD_DEFINITION = `Тред — это одна история: одно событие, его продолжение и развитие (новые подробности, реакции, последствия, следующий этап) или один информационный повод (например, в один день вышли новые версии нескольких систем одной компании).`;
 
@@ -160,6 +167,7 @@ async function nameCandidates(clusterId: number): Promise<Candidate[]> {
        LEFT JOIN thread_posts tp ON tp.cluster_id = d.id
        WHERE d.cluster_id = d.id AND d.id <> $1 AND d.visible_at IS NOT NULL AND d.title !~* $4
          AND NOT EXISTS (SELECT 1 FROM thread_exclusions x WHERE x.cluster_id = $1 AND x.thread_id = tp.thread_id)
+         AND ${THREAD_HAS_ROOM("tp")}
          AND d.created_at < $2 AND d.created_at > $2::timestamptz - interval '${CANDIDATE_WINDOW_HOURS} hours'
          AND EXISTS (SELECT 1 FROM articles s WHERE s.cluster_id = d.id AND strpos(s.ai_summary, $3) > 0)
        ORDER BY d.created_at DESC
@@ -183,6 +191,7 @@ async function findCandidates(clusterId: number): Promise<Candidate[]> {
      WHERE c.id = $1 AND c.title_embedding IS NOT NULL
        AND c.title !~* $3 AND d.title !~* $3
        AND NOT EXISTS (SELECT 1 FROM thread_exclusions x WHERE x.cluster_id = c.id AND x.thread_id = tp.thread_id)
+       AND ${THREAD_HAS_ROOM("tp")}
        AND 1 - (d.title_embedding <=> c.title_embedding) >= $2
        AND (d.created_at > c.created_at - interval '${OLD_CANDIDATE_HOURS} hours'
          OR 1 - (d.title_embedding <=> c.title_embedding) >= ${OLD_CANDIDATE_THRESHOLD}
@@ -379,6 +388,7 @@ export async function mergeDuplicates(threadId: number, stats: ThreadRunStats): 
        AND abs(extract(epoch FROM a1.created_at - a2.created_at)) < ${CANDIDATE_WINDOW_HOURS} * 3600
        AND NOT EXISTS (SELECT 1 FROM thread_exclusions x JOIN thread_posts p ON p.cluster_id = x.cluster_id
          WHERE (p.thread_id = t1.thread_id AND x.thread_id = t2.thread_id) OR (p.thread_id = t2.thread_id AND x.thread_id = t1.thread_id))
+       AND (SELECT count(*) FROM thread_posts z WHERE z.thread_id IN (t1.thread_id, t2.thread_id)) <= ${MAX_THREAD_CARDS}
        AND 1 - (a1.title_embedding <=> a2.title_embedding) >= ${MERGE_TITLE_THRESHOLD}
      GROUP BY t2.thread_id ORDER BY similarity DESC LIMIT ${MAX_MERGE_CHECKS}`,
     [threadId]
@@ -386,6 +396,8 @@ export async function mergeDuplicates(threadId: number, stats: ThreadRunStats): 
   let current = threadId;
   for (const { thread_id: other } of rows) {
     if (await excluded(current, other)) continue;
+    const { rows: size } = await pool.query("SELECT count(*)::int AS n FROM thread_posts WHERE thread_id IN ($1, $2)", [current, other]);
+    if (size[0].n > MAX_THREAD_CARDS) continue;
     let answer: string;
     try {
       answer = await summarize("Два треда", `Тред А:\n${await threadText(current)}\n\nТред Б:\n${await threadText(other)}`, MERGE_PROMPT);
