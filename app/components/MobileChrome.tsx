@@ -3,20 +3,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import CategoryNav from "./CategoryNav";
-import AuthMenuItem from "./AuthMenuItem";
 
 export default function MobileChrome({
   activeCategory,
-  isLoggedIn,
 }: {
   activeCategory?: string;
-  isLoggedIn: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
   // Без блокировки скролла body на iOS Safari прокрутка длинного меню
   // (fixed + overflow-y: auto) иногда не работает вовсе — тот же паттерн,
-  // что и в AuthModal.tsx.
+  // что и в Lightbox.tsx.
   //
   // Компенсация ширины скроллбара — без неё на десктопном браузере (виден
   // полосой справа, в отличие от настоящего мобильного) overflow:hidden
@@ -45,9 +42,8 @@ export default function MobileChrome({
         </button>
         {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
         <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
-        {/* Пустой спейсер вместо иконки авторизации — в макете справа в
-            шапке ленты ничего нет (вход/выход — только через меню), спейсер
-            лишь держит логотип по центру симметрично левой кнопке меню. */}
+        {/* Пустой спейсер — в макете справа в шапке ленты ничего нет, он
+            держит логотип по центру симметрично левой кнопке меню. */}
         <span className="spacer" />
       </div>
 
@@ -71,13 +67,9 @@ export default function MobileChrome({
             </nav>
             <div className="divider" />
             <div className="account">
-              {/* Настройки есть и у гостя — тема хранится в браузере (DIS-18), —
-                  но выбор изданий только у вошедшего: гостя ведём сразу в
-                  "Отображение". */}
-              <Link href={isLoggedIn ? "/settings" : "/settings/display"} onClick={() => setOpen(false)}>
+              <Link href="/settings" onClick={() => setOpen(false)}>
                 Настройки
               </Link>
-              <AuthMenuItem />
             </div>
           </div>
         </div>

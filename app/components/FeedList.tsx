@@ -53,7 +53,6 @@ export default function FeedList({
   loadedAt,
   category,
   tab,
-  trackReads,
   initialUnreadCount,
 }: {
   initialItems: FeedItem[];
@@ -65,8 +64,6 @@ export default function FeedList({
   category?: string;
   // "Прочитанные" — простой список: без запоминания места и без плашки.
   tab: "new" | "read";
-  // false у гостя: прочитанное хранить негде (см. /api/reads), вкладок нет.
-  trackReads: boolean;
   initialUnreadCount: number;
 }) {
   const live = tab === "new";
@@ -103,7 +100,7 @@ export default function FeedList({
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const topInset = trackReads ? TABS_HEIGHT : 0;
+  const topInset = TABS_HEIGHT;
   const scope = category ?? "all";
   const positionKey = `yoten:pos:${scope}`;
   const seenKey = `yoten:seen:${scope}`;
@@ -449,10 +446,10 @@ export default function FeedList({
 
   return (
     <>
-      {trackReads && <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />}
+      <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />
 
       {newCount > 0 && (
-        <div className={trackReads ? "new-anchor below-tabs" : "new-anchor"}>
+        <div className="new-anchor below-tabs">
           <button type="button" className="new-toast" onClick={showNew}>
             {newLabel(newCount)}
           </button>
@@ -464,7 +461,7 @@ export default function FeedList({
           <FeedCard
             key={item.clusterId}
             item={item}
-            trackReads={trackReads}
+            trackReads
             onRead={live ? () => setUnreadCount((count) => Math.max(0, count - 1)) : undefined}
           />
         ))}

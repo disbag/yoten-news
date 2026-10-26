@@ -672,6 +672,15 @@ async function cleanupOld() {
      WHERE NOT EXISTS (SELECT 1 FROM articles a WHERE a.cluster_id = r.cluster_id)`
   );
   if (reads.rowCount) console.log(`Удалено отметок о прочитанном у удалённых карточек: ${reads.rowCount}`);
+
+  // Браузеры, не заходившие больше года (DIS-65): от них остались только
+  // выключенные издания (удаляются каскадом). Аккаунты с passkey — со времён
+  // входа — не трогаем, пока таблица passkeys не убрана.
+  const stale = `SELECT id FROM users u WHERE last_seen_at < now() - interval '1 year'
+                 AND NOT EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id)`;
+  await pool.query(`DELETE FROM article_reads WHERE user_id IN (${stale})`);
+  const browsers = await pool.query(`DELETE FROM users WHERE id IN (${stale})`);
+  if (browsers.rowCount) console.log(`Удалено давно не заходивших браузеров: ${browsers.rowCount}`);
 }
 
 // Отметка "уже смотрели и отбросили" — только для окончательных решений

@@ -5,12 +5,13 @@ export type SettingsSource = { id: number; name: string; enabled: boolean };
 export type SettingsGroup = { label: string; sources: SettingsSource[] };
 
 // Все издания, разложенные по группам страницы настроек (см.
-// SOURCE_GROUPS), с текущим состоянием переключателя для пользователя.
+// SOURCE_GROUPS), с текущим состоянием переключателя у браузера (null —
+// строки браузера ещё нет, включено всё).
 //
 // У издания может быть несколько фидов — несколько строк sources с одним
 // названием (см. extraFeeds в src/config/sources.ts). В настройках это один
 // переключатель: id — любой из его фидов, выключено — если выключен хоть один.
-export async function getSettingsGroups(userId: number): Promise<SettingsGroup[]> {
+export async function getSettingsGroups(userId: number | null): Promise<SettingsGroup[]> {
   const { rows } = await pool.query<{ id: number; name: string; hidden: boolean }>(
     `SELECT min(s.id) AS id, s.name, bool_or(h.user_id IS NOT NULL) AS hidden
      FROM sources s

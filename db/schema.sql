@@ -102,6 +102,12 @@ CREATE TABLE IF NOT EXISTS article_reads (
 -- пользователей, которые зарегистрировались только через passkey.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE;
 
+-- Посетитель — браузер (DIS-65): SHA-256 случайного номера из куки
+-- yoten_browser (см. src/lib/viewer.ts). last_seen_at — для удаления
+-- браузеров, не заходивших больше года (см. cleanupOld).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS browser_token TEXT UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 -- Задел под вход по одноразовому коду на email. Сейчас не используется:
 -- эндпоинты /api/auth/email/request и /verify удалены, пока вход по почте
 -- не появится в интерфейсе (живой эндпоинт позволял любому заставить нас

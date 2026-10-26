@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFeed, getNewCount, getUnreadCount } from "../../../src/lib/feed";
-import { getSessionUserId } from "../../../src/lib/session";
+import { getViewerId } from "../../../src/lib/viewer";
 import { FEED_PAGE_SIZE } from "../../../src/lib/feedPosition";
 
 function cursor(searchParams: URLSearchParams, prefix: "before" | "after") {
@@ -18,10 +18,9 @@ function cursor(searchParams: URLSearchParams, prefix: "before" | "after") {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const category = searchParams.get("category") ?? undefined;
-  const userId = await getSessionUserId();
-  // tab=read — вкладка "Прочитанные", иначе "Новые" (непрочитанные). У гостя
-  // вкладок нет (см. app/page.tsx) — всегда вся лента.
-  const readOnly = userId !== null && searchParams.get("tab") === "read";
+  const userId = await getViewerId();
+  // tab=read — вкладка "Прочитанные", иначе "Новые" (непрочитанные).
+  const readOnly = searchParams.get("tab") === "read";
 
   const newSince = searchParams.get("newSince");
   if (newSince) {
@@ -47,7 +46,7 @@ export async function GET(request: NextRequest) {
 
   // Верх ленты запрашивают по плашке "N Новых" — заодно отдаём свежий
   // счётчик непрочитанных для вкладки.
-  const unreadCount = !before && !after && userId !== null ? await getUnreadCount(userId, category) : undefined;
+  const unreadCount = !before && !after ? await getUnreadCount(userId, category) : undefined;
 
   return NextResponse.json({ items, hasMore, now, unreadCount });
 }

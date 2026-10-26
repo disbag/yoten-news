@@ -2,14 +2,11 @@
 
 import Link from "next/link";
 import CategoryNav from "./CategoryNav";
-import AuthMenuItem from "./AuthMenuItem";
 
 export default function Sidebar({
   activeCategory,
-  isLoggedIn,
 }: {
   activeCategory?: string;
-  isLoggedIn: boolean;
 }) {
   return (
     <aside className="sidebar">
@@ -20,11 +17,7 @@ export default function Sidebar({
           <CategoryNav activeCategory={activeCategory} />
         </nav>
         <div className="account">
-          {/* Настройки есть и у гостя — тема хранится в браузере (DIS-18), —
-              но выбор изданий только у вошедшего: гостя ведём сразу в
-              "Отображение". */}
-          <Link href={isLoggedIn ? "/settings" : "/settings/display"}>Настройки</Link>
-          <AuthMenuItem />
+          <Link href="/settings">Настройки</Link>
         </div>
       </div>
 

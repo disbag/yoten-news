@@ -8,14 +8,14 @@ import type { ReactNode } from "react";
 // макете настройки ленты и переключение подразделов. Сетка та же, что у
 // ленты (колонка 240px слева + основная 600px, см. .shell в globals.css),
 // чтобы логотип не прыгал при переходе между лентой и настройками.
-// Подразделы: "Источники" (выбор изданий — только у вошедшего, настройки в
-// базе) и "Отображение" (тема — у всех, хранится в браузере). Отдельного
+// Подразделы: "Источники" (выбор изданий, в базе под номером браузера) и
+// "Отображение" (тема, в localStorage). Отдельного
 // макета для подразделов нет: на десктопе это меню в левой колонке в стиле
 // сайдбара ленты, на мобилке — табы под шапкой в стиле табов ленты.
-export default function SettingsShell({ isLoggedIn, children }: { isLoggedIn: boolean; children: ReactNode }) {
+export default function SettingsShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const sections = [
-    ...(isLoggedIn ? [{ href: "/settings", label: "Источники" }] : []),
+    { href: "/settings", label: "Источники" },
     { href: "/settings/display", label: "Отображение" },
   ];
   const nav = sections.map((s) => (
@@ -37,7 +37,7 @@ export default function SettingsShell({ isLoggedIn, children }: { isLoggedIn: bo
           {/* Пустой справа, как в макете, — держит логотип по центру. */}
           <span className="icon" />
         </div>
-        {sections.length > 1 && <nav className="tabs">{nav}</nav>}
+        <nav className="tabs">{nav}</nav>
       </div>
       <div className="desktop-only">
         <aside className="sidebar">

@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { getFeed, getUnreadCount } from "../src/lib/feed";
-import { getSessionUserId } from "../src/lib/session";
+import { getViewerId } from "../src/lib/viewer";
 import { CATEGORIES } from "../src/config/categories";
 import { FEED_PAGE_SIZE, positionCookieName } from "../src/lib/feedPosition";
 import FeedList from "./components/FeedList";
@@ -12,13 +12,11 @@ export const dynamic = "force-dynamic";
 export default async function HomePage(props: { searchParams: Promise<{ category?: string; tab?: string }> }) {
   const searchParams = await props.searchParams;
   const activeCategory = CATEGORIES.find((c) => c.id === searchParams.category);
-  const userId = await getSessionUserId();
-  const isLoggedIn = userId !== null;
+  // Номер браузера (DIS-65); null — браузер ещё ничего не отмечал, тогда
+  // всё непрочитано и все издания включены.
+  const userId = await getViewerId();
   const category = activeCategory?.id;
-  // Вкладки "Новые/Прочитанные" и отметка прочитанного — только для вошедших:
-  // гостю прочитанное негде хранить (/api/reads для userId=null — no-op).
-  // Гость видит просто всю ленту.
-  const tab: "new" | "read" = isLoggedIn && searchParams.tab === "read" ? "read" : "new";
+  const tab: "new" | "read" = searchParams.tab === "read" ? "read" : "new";
 
   // Момент ДО запроса ленты — см. такой же в app/api/feed/route.ts.
   const loadedAt = new Date().toISOString();
@@ -34,7 +32,7 @@ export default async function HomePage(props: { searchParams: Promise<{ category
   const savedId = tab === "new" ? Number((await cookies()).get(positionCookieName(category))?.value) : 0;
   const [restoredRows, unreadCount] = await Promise.all([
     savedId > 0 ? getFeed({ ...filter, fromClusterId: savedId }) : [],
-    isLoggedIn ? getUnreadCount(userId, category) : 0,
+    getUnreadCount(userId, category),
   ]);
   const restored = restoredRows.length > 0;
   const rows = restored ? restoredRows : await getFeed(filter);
@@ -42,10 +40,10 @@ export default async function HomePage(props: { searchParams: Promise<{ category
   return (
     <div className="shell">
       <div className="mobile-only">
-        <MobileChrome activeCategory={category} isLoggedIn={isLoggedIn} />
+        <MobileChrome activeCategory={category} />
       </div>
       <div className="desktop-only">
-        <Sidebar activeCategory={category} isLoggedIn={isLoggedIn} />
+        <Sidebar activeCategory={category} />
       </div>
 
       <main>
@@ -61,7 +59,6 @@ export default async function HomePage(props: { searchParams: Promise<{ category
           loadedAt={loadedAt}
           category={category}
           tab={tab}
-          trackReads={isLoggedIn}
           initialUnreadCount={unreadCount}
         />
       </main>

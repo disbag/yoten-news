@@ -3,8 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPost } from "../../../src/lib/feed";
-import { getSessionUserId } from "../../../src/lib/session";
-import { RP_ORIGIN } from "../../../src/lib/webauthn";
+import { SITE_ORIGIN } from "../../../src/lib/site";
 import FeedCard from "../../components/FeedCard";
 import Sidebar from "../../components/Sidebar";
 import MobileChrome from "../../components/MobileChrome";
@@ -40,7 +39,7 @@ export async function generateMetadata(props: { params: Promise<{ id: string }> 
   // Обложка — через свой прокси и полным адресом: часть изданий не отдаёт
   // картинку чужому серверу напрямую (см. app/api/image-proxy/route.ts), а
   // относительный адрес мессенджеры не понимают.
-  const images = cover ? [`${RP_ORIGIN}/api/image-proxy?url=${encodeURIComponent(cover)}`] : undefined;
+  const images = cover ? [`${SITE_ORIGIN}/api/image-proxy?url=${encodeURIComponent(cover)}`] : undefined;
   return {
     title: `${post.primarySource}: ${clip(post.summary, 70)} — Yoten`,
     description,
@@ -54,7 +53,7 @@ export async function generateMetadata(props: { params: Promise<{ id: string }> 
       // под ним текст.
       title: post.primarySource,
       description,
-      url: `${RP_ORIGIN}/post/${id}`,
+      url: `${SITE_ORIGIN}/post/${id}`,
       locale: "ru_RU",
       publishedTime: post.publishedAt ?? undefined,
       images,
@@ -65,19 +64,18 @@ export async function generateMetadata(props: { params: Promise<{ id: string }> 
 
 export default async function PostPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
-  const [post, userId] = await Promise.all([loadPost(id), getSessionUserId()]);
+  const post = await loadPost(id);
   if (!post) notFound();
-  const isLoggedIn = userId !== null;
 
   return (
     <div className="shell">
       <div className="mobile-only">
         {/* Рубрика "none" не совпадает ни с одной — в меню ничего не выделено
             (без рубрики выделилось бы "Все"). */}
-        <MobileChrome activeCategory="none" isLoggedIn={isLoggedIn} />
+        <MobileChrome activeCategory="none" />
       </div>
       <div className="desktop-only">
-        <Sidebar activeCategory="none" isLoggedIn={isLoggedIn} />
+        <Sidebar activeCategory="none" />
       </div>
 
       <main>
@@ -88,7 +86,7 @@ export default async function PostPage(props: { params: Promise<{ id: string }> 
             Вся лента
           </Link>
           {/* Пост открыт целиком, без ката. Прочитанное здесь не отмечается:
-              пост по ссылке одинаковый для вошедшего и для гостя. */}
+              пост по ссылке одинаковый для всех. */}
           <FeedCard item={post} trackReads={false} standalone />
         </div>
       </main>

@@ -5,7 +5,7 @@ import type { SettingsGroup as Group } from "../../src/lib/sourcePrefs";
 import { SettingsGroup, SettingsRow } from "./SettingsRows";
 
 // "Настройки → Источники" — издания по группам с переключателем у каждого
-// (макет DIS-28). Выключенные хранятся у пользователя в базе, лента их
+// (макет DIS-28). Выключенные хранятся в базе под номером браузера, лента их
 // прячет (см. getFeed в src/lib/feed.ts).
 export default function SourcesSettings({ groups: initialGroups }: { groups: Group[] }) {
   const [groups, setGroups] = useState(initialGroups);
@@ -39,6 +39,8 @@ export default function SourcesSettings({ groups: initialGroups }: { groups: Gro
 
   return (
     <>
+      {/* Аккаунтов нет (DIS-65): всё привязано к куке этого браузера. */}
+      <p className="note">Прочитанное и настройки хранятся в этом браузере.</p>
       {error && <p className="error">Не удалось сохранить — попробуйте ещё раз</p>}
       {groups.map((group) => (
         <SettingsGroup key={group.label} title={group.label}>
@@ -63,6 +65,11 @@ export default function SourcesSettings({ groups: initialGroups }: { groups: Gro
         </SettingsGroup>
       ))}
       <style jsx>{`
+        .note {
+          margin: 0;
+          font-size: 14px;
+          color: var(--text-muted);
+        }
         .error {
           margin: 0;
           font-size: 14px;
