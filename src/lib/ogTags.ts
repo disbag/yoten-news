@@ -35,8 +35,12 @@ async function fetchHtmlChunk(url: string, maxBytes = 500_000, attempts = 3): Pr
       // Отказ в доступе (401/403 у Bloomberg, WSJ, NYT — платный доступ или
       // защита от ботов) на повторе не меняется, а два повтора с паузами
       // стоили ~3 с на каждую статью закрытого издания. Повторяем только
-      // сетевые сбои и ответы 5xx/429.
-      if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new Error(`Status ${res.status}`, { cause: "final" });
+      // сетевые сбои и ответы 5xx/429. 202 — страница проверки на бота
+      // (AWS WAF у InsideEVs с 23 октября 2026): раньше она разбиралась как
+      // статья, и карточка выходила без текста со страницы и без фото.
+      if (res.status === 202 || (res.status >= 400 && res.status < 500 && res.status !== 429)) {
+        throw new Error(`Status ${res.status}`, { cause: "final" });
+      }
       if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
 
       const reader = res.body.getReader();
@@ -265,9 +269,7 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // "dezeen", "designboom", "maxim", "monocle" — WordPress с полной статьёй в
 // content:encoded: фото тела лежат прямо в RSS, как у GameSpot, страницу для
 // них разбирать не нужно.
-//  - Dezeen: кадры тела (…_dezeen_2364_col_N.jpg) в облегчённом размере 852px;
-//    готовые миниатюры из фида ("-852x852.jpg" — квадратная обложка,
-//    "-191x191" — превью ссылки на другую статью) не берём.
+//  - Dezeen: фото тела (img.wp-image-N), вариант 1024px из srcset.
 //  - designboom: кадры на www. и static. — один и тот же файл, приводим к
 //    одному хосту; анимированные GIF по 1800px пропускаем.
 //  - Maxim: кадры "-788xNNN" из тела; обложка — отдельная "Promo"-картинка.
@@ -355,7 +357,11 @@ export type GallerySite =
   | "flying"
   | "domino";
 
-const WALLPAPER_IMAGE_PATH = /^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
+// С 21 октября 2026 Dezeen отдаёт картинки с static-2026.dezeen.com (раньше —
+// static.dezeen.com), и галереи перестали собираться: правило принимало только
+// старый адрес. Год в имени хоста, видимо, будет меняться.
+const DEZEEN_IMAGE_HOST = /^static(?:-\d{4})?\.dezeen\.com$/;
+const WALLPAPER_IMAGE_PATH =/^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
 const MOTOR1_IMAGE_PATH = /^\/images\/mgl\/([A-Za-z0-9]+)\/s\d+\/([^/]+?)\.(?:jpe?g|webp|png)$/i;
 const CREATIVEBOOM_IMAGE_PATH = /^(.*\/conversions\/[a-f0-9]+)-(?:thumb|small|medium|large)\.webp$/i;
@@ -469,26 +475,24 @@ const GALLERY_SITES: Record<
     from: "rss",
   },
   dezeen: {
-    selector: "img",
-    normalize: (url, size) => {
-      if (url.hostname !== "static.dezeen.com" || !url.pathname.startsWith("/uploads/")) return null;
-      if (/-\d{2,4}x\d{2,4}(?:-\d+)?\.\w+$/.test(url.pathname)) return null;
+    // Фото тела — img с классом wp-image-N. Карусель .gallery-slider (до 47
+    // кадров) и превью ссылок на другие статьи не берём.
+    selector: 'img[class*="wp-image-"]',
+    // С 21 октября 2026 варианта 852px нет: в srcset 300, 1024 и 1536px.
+    srcsetMaxWidth: 1024,
+    normalize: (url) => {
+      if (!DEZEEN_IMAGE_HOST.test(url.hostname) || !url.pathname.startsWith("/uploads/")) return null;
+      // Миниатюра без srcset (300px и меньше) в карусели выглядела бы мыльной.
+      const size = url.pathname.match(/-(\d{2,4})x\d{2,4}(?:-\d+)?\.\w+$/);
+      if (size && Number(size[1]) < 600) return null;
       url.search = "";
-      // Оригинал — 2364px и ~650КБ на кадр. WordPress держит рядом вариант
-      // шириной 852px (~90КБ) с высотой в имени файла — она считается из
-      // пропорций (проверено на 79 кадрах: не совпало у одного, такой кадр
-      // карусель просто скроет как битый).
-      const file = url.pathname.match(/^(.*?)(?:-scaled)?\.(jpe?g|png)$/i);
-      if (file && size && size.width > 852) {
-        url.pathname = `${file[1]}-852x${Math.round((852 * size.height) / size.width)}.${file[2]}`;
-      }
       return url;
     },
     // Страницы статей с 7 октября 2026 закрыты от бота (403), og:image взять
     // неоткуда. В <enclosure> фида лежит квадратная миниатюра 411x411 того же
     // файла, что стоял в og:image: убираем размер из имени — получаем его.
     cover: (url) => {
-      if (url.hostname !== "static.dezeen.com" || !url.pathname.startsWith("/uploads/")) return null;
+      if (!DEZEEN_IMAGE_HOST.test(url.hostname) || !url.pathname.startsWith("/uploads/")) return null;
       url.protocol = "https:";
       url.search = "";
       url.pathname = url.pathname.replace(/-\d{2,4}x\d{2,4}(\.\w+)$/, "$1");
