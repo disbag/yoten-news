@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { ThreadPost } from "../../src/lib/feed";
 import { faviconUrl, timeAgo } from "./FeedCard";
+import { sourcePath } from "../../src/lib/sourceSlug";
 
 // Продолжение треда под первой карточкой (DIS-36): каждая следующая карточка
 // — издание, время и только то новое, что она добавила к треду. Ссылка на
@@ -37,12 +39,14 @@ function Post({ post }: { post: ThreadPost }) {
   return (
     <li className="post">
       <div className="head">
-        {favicon ? (
-          // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
-          <img src={favicon} alt="" className="favicon" />
-        ) : (
-          <span className="favicon placeholder" />
-        )}
+        <Link href={sourcePath(post.source)} className="favicon-link" aria-label={`Все посты ${post.source}`}>
+          {favicon ? (
+            // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
+            <img src={favicon} alt="" className="favicon" />
+          ) : (
+            <span className="favicon placeholder" />
+          )}
+        </Link>
         <a href={post.link} target="_blank" rel="noopener noreferrer" className="source">
           {post.source}
         </a>
@@ -59,6 +63,10 @@ function Post({ post }: { post: ThreadPost }) {
           display: flex;
           align-items: center;
           gap: 8px;
+        }
+        .head :global(.favicon-link) {
+          display: flex;
+          flex-shrink: 0;
         }
         .favicon {
           width: 18px;

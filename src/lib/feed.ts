@@ -110,6 +110,10 @@ export async function getFeed(
     // Только в ленте с тредами: одна позиция ленты — тред (номер со знаком
     // минус) или карточка (см. getPost).
     unit?: number;
+    // Страница издания (DIS-80): карточки, где есть статья этого издания
+    // (название из sources.name). Без тредов — тред собирает разные издания.
+    // Главным в карточке показывается само издание.
+    source?: string;
   } = {}
 ): Promise<FeedItem[]> {
   const {
@@ -123,6 +127,7 @@ export async function getFeed(
     readOnly = false,
     articleId,
     unit,
+    source,
   } = options;
 
   // category фильтрует статьи ДО группировки по cluster_id — т.к. все статьи
@@ -137,7 +142,7 @@ export async function getFeed(
   // конца и появляются одной пачкой (см. revealBatch в fetchAndProcess.ts).
   const params: unknown[] = [limit, userId];
   // Позиция в ленте: тред целиком (номер треда со знаком минус) или карточка.
-  const threads = THREADS_VIEW && !articleId;
+  const threads = THREADS_VIEW && !articleId && !source;
   const unitExpr = threads ? THREAD_UNIT : "a.cluster_id";
   const threadJoin = threads ? THREAD_JOIN : "";
   let categoryClause = "WHERE a.visible_at IS NOT NULL";
@@ -167,6 +172,13 @@ export async function getFeed(
   // саммаризации, см. fetchAndProcess.ts), и если прогон оборвался посередине
   // (реальный случай — пустая карточка Polygon от 24 сентября).
   const havingClauses: string[] = ["bool_or(h.user_id IS NULL)", "bool_or(a.ai_summary IS NOT NULL)"];
+  let preferSource = "";
+  if (source) {
+    const n = params.push(source);
+    const ofSource = `a.source_id IN (SELECT id FROM sources WHERE name = $${n})`;
+    havingClauses.push(`bool_or(${ofSource})`);
+    preferSource = `NOT (${ofSource}), `;
+  }
   // "Новые" идут по дате публикации, "Прочитанные" — по времени прочтения,
   // последнее прочитанное сверху. По дате публикации только что прочитанная
   // карточка вставала в список по своему возрасту и терялась среди сотен
@@ -240,11 +252,11 @@ export async function getFeed(
       -- фото. Обложка и кадры всегда с одной статьи. Раньше обложка была
       -- первой по алфавиту ссылкой кластера — часто от другого издания.
       -- Выключенные читателем издания — в последнюю очередь, как и для текста.
-      (array_agg(a.id ORDER BY h.user_id IS NOT NULL, coalesce(cardinality(a.image_urls), 0) < 2,
+      (array_agg(a.id ORDER BY h.user_id IS NOT NULL, ${preferSource}coalesce(cardinality(a.image_urls), 0) < 2,
         a.image_url IS NULL, a.created_at ASC))[1] AS visual_id,
       -- Своя картинка главного издания (может не быть) — для превью ссылки
       -- в мессенджерах: там подписано издание, и фото должно быть его.
-      (array_agg(a.image_url ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_image_url,
+      (array_agg(a.image_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_image_url,
       -- Дата карточки = дата САМОЙ СВЕЖЕЙ статьи в кластере — то же значение,
       -- по которому идёт сортировка ленты (см. ORDER BY ниже). Раньше дата
       -- бралась от первой добавленной в кластер статьи (ORDER BY created_at),
@@ -254,9 +266,9 @@ export async function getFeed(
       max(a.published_at) AS published_at,
       ${sortExpr} AS sort_at,
       to_char(${sortExpr} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
-      (array_agg(s.name ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_source,
-      (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_homepage,
-      (array_agg(a.link ORDER BY h.user_id IS NOT NULL, a.created_at ASC))[1] AS primary_link,
+      (array_agg(s.name ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_source,
+      (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_homepage,
+      (array_agg(a.link ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_link,
       jsonb_agg(DISTINCT jsonb_build_object('name', s.name, 'homepage', s.homepage_url, 'link', a.link))
         FILTER (WHERE h.user_id IS NULL) AS source_list,
       -- category — TEXT[] на статью (см. схему), поэтому паттерн

@@ -1,9 +1,11 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { FeedItem } from "../../src/lib/feed";
 import { categoryLabels } from "../../src/config/categories";
 import { FAVICON_LIGHT_BACKING } from "../../src/config/faviconBacking";
+import { sourcePath } from "../../src/lib/sourceSlug";
 import Gallery from "./Gallery";
 import Lightbox from "./Lightbox";
 import ThreadPosts from "./ThreadPosts";
@@ -189,17 +191,25 @@ export default function FeedCard({
     <article className="card" ref={cardRef} data-cluster-id={item.clusterId}>
       <div className="content">
         <div className="header">
-          {favicon ? (
-            // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
-            <img
-              src={favicon}
-              alt=""
-              className={FAVICON_LIGHT_BACKING.has(item.primarySource) ? "favicon favicon-backing" : "favicon"}
-              onError={() => setFaviconMissing(true)}
-            />
-          ) : (
-            <span className="favicon favicon-placeholder" />
-          )}
+          {/* Иконка ведёт на страницу издания (DIS-80), название — на статью. */}
+          <Link
+            href={sourcePath(item.primarySource)}
+            className="favicon-link"
+            aria-label={`Все посты ${item.primarySource}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {favicon ? (
+              // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
+              <img
+                src={favicon}
+                alt=""
+                className={FAVICON_LIGHT_BACKING.has(item.primarySource) ? "favicon favicon-backing" : "favicon"}
+                onError={() => setFaviconMissing(true)}
+              />
+            ) : (
+              <span className="favicon favicon-placeholder" />
+            )}
+          </Link>
           <div className="meta">
             <div className="source-row">
               <a
@@ -330,6 +340,10 @@ export default function FeedCard({
           display: flex;
           align-items: center;
           gap: 12px;
+        }
+        .header :global(.favicon-link) {
+          display: flex;
+          flex-shrink: 0;
         }
         .favicon {
           width: 24px;

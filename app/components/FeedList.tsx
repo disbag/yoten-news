@@ -54,6 +54,7 @@ export default function FeedList({
   category,
   tab,
   initialUnreadCount,
+  source,
 }: {
   initialItems: FeedItem[];
   initialHasOlder: boolean;
@@ -65,8 +66,11 @@ export default function FeedList({
   // "Прочитанные" — простой список: без запоминания места и без плашки.
   tab: "new" | "read";
   initialUnreadCount: number;
+  // Страница издания (DIS-80, slug из src/lib/sourceSlug.ts): все его
+  // карточки подряд — без вкладок, плашки "N Новых" и запоминания места.
+  source?: string;
 }) {
-  const live = tab === "new";
+  const live = tab === "new" && !source;
   const router = useRouter();
   // Лента собрана из ответа сервера, который уже показывали раньше. Так
   // бывает, когда Next.js при возврате на страницу достаёт её сохранённую
@@ -100,7 +104,7 @@ export default function FeedList({
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const topInset = TABS_HEIGHT;
+  const topInset = source ? 0 : TABS_HEIGHT;
   const scope = category ?? "all";
   const positionKey = `yoten:pos:${scope}`;
   const seenKey = `yoten:seen:${scope}`;
@@ -145,8 +149,11 @@ export default function FeedList({
 
   function feedUrl(params: Record<string, string>): string {
     const query = new URLSearchParams(params);
-    if (category) query.set("category", category);
-    if (tab === "read") query.set("tab", "read");
+    if (source) query.set("source", source);
+    else {
+      if (category) query.set("category", category);
+      if (tab === "read") query.set("tab", "read");
+    }
     return `/api/feed?${query}`;
   }
 
@@ -446,7 +453,7 @@ export default function FeedList({
 
   return (
     <>
-      <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />
+      {!source && <FeedTabs tab={tab} category={category} unreadCount={unreadCount} />}
 
       {newCount > 0 && (
         <div className="new-anchor below-tabs">
@@ -474,14 +481,15 @@ export default function FeedList({
            слева ещё сайдбар). */
         .new-anchor {
           position: sticky;
-          top: 12px;
+          top: calc(var(--chrome-offset, 0px) + 12px);
+          transition: top 0.2s ease;
           height: 0;
           z-index: 20;
           display: flex;
           justify-content: center;
         }
         .new-anchor.below-tabs {
-          top: 52px;
+          top: calc(var(--chrome-offset, 0px) + 52px);
         }
         .new-toast {
           height: 32px;

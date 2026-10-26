@@ -43,7 +43,9 @@ export default function FeedTabs({
              нужен, иначе карточки будут просвечивать сквозь табы, когда
              уезжают вверх под них. */
           position: sticky;
-          top: 0;
+          /* Под мобильной шапкой, когда она показана (см. MobileChrome.tsx). */
+          top: var(--chrome-offset, 0px);
+          transition: top 0.2s ease;
           z-index: 10;
           background: var(--bg);
         }

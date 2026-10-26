@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import CategoryNav from "./CategoryNav";
 
@@ -10,6 +10,56 @@ export default function MobileChrome({
   activeCategory?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Шапка закреплена сверху (DIS-80): при прокрутке вниз уезжает, при
+  // прокрутке вверх возвращается вместе с вкладками. Её видимая высота —
+  // в --chrome-offset: под ней прилипают вкладки и плашка "N Новых"
+  // (FeedTabs.tsx, FeedList.tsx). Сама шапка fixed, место в потоке держит
+  // распорка той же высоты.
+  const headerRef = useRef<HTMLDivElement>(null);
+  // 87 = 20 + логотип 55 + 12 (см. .header и .logo): распорка нужной высоты
+  // уже в серверной разметке, до замера, — иначе лента дёрнется при загрузке.
+  const [height, setHeight] = useState(87);
+  const [hidden, setHidden] = useState(false);
+
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const desktop = window.matchMedia("(min-width: 900px)");
+    const root = document.documentElement.style;
+    let last = window.scrollY;
+    let isHidden = false;
+    const apply = (nextHidden: boolean) => {
+      isHidden = nextHidden;
+      setHidden(nextHidden);
+      const h = header.offsetHeight;
+      root.setProperty("--chrome-offset", desktop.matches || nextHidden ? "0px" : `${h}px`);
+    };
+    const measure = () => {
+      setHeight(header.offsetHeight);
+      apply(isHidden);
+    };
+    // Порог в несколько пикселей — чтобы шапка не дёргалась от дрожания
+    // пальца и инерции на месте.
+    const onScroll = () => {
+      const y = window.scrollY;
+      const delta = y - last;
+      if (y <= header.offsetHeight) apply(false);
+      else if (delta > 6 && !isHidden) apply(true);
+      else if (delta < -6 && isHidden) apply(false);
+      if (Math.abs(delta) > 6 || y <= header.offsetHeight) last = y;
+    };
+    measure();
+    const resize = new ResizeObserver(measure);
+    resize.observe(header);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    desktop.addEventListener("change", measure);
+    return () => {
+      resize.disconnect();
+      window.removeEventListener("scroll", onScroll);
+      desktop.removeEventListener("change", measure);
+      root.removeProperty("--chrome-offset");
+    };
+  }, []);
 
   // Без блокировки скролла body на iOS Safari прокрутка длинного меню
   // (fixed + overflow-y: auto) иногда не работает вовсе — тот же паттерн,
@@ -34,7 +84,8 @@ export default function MobileChrome({
 
   return (
     <>
-      <div className="header">
+      <div className="header-space" style={{ height }} />
+      <div className={hidden ? "header top hidden" : "header top"} ref={headerRef}>
         <button className="icon-button" aria-label="Меню" onClick={() => setOpen(true)}>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
             <path d="M2.75 8.25H21.25M2.75 15.75H21.25" stroke="currentColor" strokeLinecap="round" />
@@ -82,6 +133,18 @@ export default function MobileChrome({
           justify-content: space-between;
           padding: 20px 20px 12px;
           width: 100%;
+        }
+        .top {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          z-index: 30;
+          background: var(--bg);
+          transition: transform 0.2s ease;
+        }
+        .top.hidden {
+          transform: translateY(-100%);
         }
         .icon-button {
           display: flex;

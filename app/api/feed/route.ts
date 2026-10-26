@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFeed, getNewCount, getUnreadCount } from "../../../src/lib/feed";
 import { getViewerId } from "../../../src/lib/viewer";
 import { FEED_PAGE_SIZE } from "../../../src/lib/feedPosition";
+import { sourceBySlug } from "../../../src/lib/sourceBySlug";
 
 function cursor(searchParams: URLSearchParams, prefix: "before" | "after") {
   const at = searchParams.get(`${prefix}Cursor`);
@@ -21,6 +22,10 @@ export async function GET(request: NextRequest) {
   const userId = await getViewerId();
   // tab=read — вкладка "Прочитанные", иначе "Новые" (непрочитанные).
   const readOnly = searchParams.get("tab") === "read";
+  // source=<slug> — страница издания (DIS-80): все его карточки, без вкладок.
+  const sourceSlug = searchParams.get("source");
+  const source = sourceSlug ? sourceBySlug(sourceSlug)?.name : undefined;
+  if (sourceSlug && !source) return NextResponse.json({ error: "source" }, { status: 404 });
 
   const newSince = searchParams.get("newSince");
   if (newSince) {
@@ -39,14 +44,18 @@ export async function GET(request: NextRequest) {
   // видел" (см. markSeen в FeedList.tsx), и статья, попавшая в базу во время
   // запроса, не должна потеряться для счётчика новых.
   const now = new Date().toISOString();
-  const rows = await getFeed({ category, limit: limit + 1, before, after, userId, unreadOnly: !readOnly, readOnly });
+  const rows = await getFeed(
+    source
+      ? { source, limit: limit + 1, before, after, userId }
+      : { category, limit: limit + 1, before, after, userId, unreadOnly: !readOnly, readOnly }
+  );
   const hasMore = rows.length > limit;
   // Лишняя карточка — самая дальняя от курсора: у подгрузки вверх она первая.
   const items = hasMore ? (after ? rows.slice(1) : rows.slice(0, limit)) : rows;
 
   // Верх ленты запрашивают по плашке "N Новых" — заодно отдаём свежий
   // счётчик непрочитанных для вкладки.
-  const unreadCount = !before && !after ? await getUnreadCount(userId, category) : undefined;
+  const unreadCount = !before && !after && !source ? await getUnreadCount(userId, category) : undefined;
 
   return NextResponse.json({ items, hasMore, now, unreadCount });
 }
