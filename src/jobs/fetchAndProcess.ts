@@ -17,6 +17,7 @@ import { GeminiQuotaExhaustedError } from "../lib/gemini.js";
 import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
+import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
 // Lifehacker — Ziff Davis) кладут туда ПОЛНЫЙ, уже чистый текст статьи прямо
@@ -71,7 +72,6 @@ const ORPHAN_HOURS = 3;
 // изданий часто отдают материалы за несколько дней. FETCH_SINCE_DAYS=1
 // расширяет окно ещё на сутки назад — для разовой докатки после перерыва.
 const FETCH_SINCE_DAYS = Number(process.env.FETCH_SINCE_DAYS ?? 0);
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Свободный тариф Gemini ограничивает "-lite" модели 15 запросами в минуту
 // НА КЛЮЧ — 4 секунды между запросами держит нас точно на этой границе.
 // Раньше пауза была 1с (~60 запросов/мин, вчетверо больше лимита), из-за
@@ -202,8 +202,7 @@ async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
     try {
       const res = await fetch(rssUrl, {
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent": BROWSER_USER_AGENT,
           Accept: "application/rss+xml, application/xml, text/xml, */*",
         },
         signal: AbortSignal.timeout(15_000),
@@ -218,8 +217,32 @@ async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
   throw new Error("unreachable"); // для TypeScript — цикл выше либо вернёт, либо бросит
 }
 
+// Ленты скачиваются заранее, по FEED_CONCURRENCY сразу: по одной это была
+// почти минута каждого прогона (~75 лент по 0,3–1,5 с), а обработка статей
+// всё равно идёт по очереди. Ответ ленты ждёт своей очереди в памяти — это
+// сотни килобайт на ленту.
+const FEED_CONCURRENCY = 8;
+function prefetchFeeds(urls: string[]): Map<string, Promise<string>> {
+  const tasks = urls.map((url) => {
+    let settle!: { resolve: (xml: string) => void; reject: (err: unknown) => void };
+    const promise = new Promise<string>((resolve, reject) => (settle = { resolve, reject }));
+    promise.catch(() => {}); // ошибку прочитает processSource; до тех пор она не "необработанная"
+    return { url, promise, settle };
+  });
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const task = tasks[next++];
+      await fetchFeedText(task.url).then(task.settle.resolve, task.settle.reject);
+    }
+  };
+  for (let i = 0; i < FEED_CONCURRENCY; i++) void worker();
+  return new Map(tasks.map((t) => [t.url, t.promise]));
+}
+
 async function processSource(
   source: { id: number; name: string; rss_url: string },
+  feedText: Promise<string>,
   remaining: { count: number }
 ) {
   // Ручной override контент-селектора для этого издания, если задан в
@@ -235,51 +258,63 @@ async function processSource(
   const contentSelector = sourceConfig?.contentSelector;
   let feed;
   try {
-    const xml = await fetchFeedText(source.rss_url);
+    const xml = await feedText;
     feed = await parser.parseString(xml);
   } catch (err) {
     console.error(`  не удалось получить RSS: ${(err as Error).message}`);
     return;
   }
 
-  let pageFailureLogged = false;
-  for (const item of feed.items) {
-    heartbeat(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
-    if (remaining.count <= 0) {
-      console.log(`  лимит статей достигнут, пропускаем остальное`);
-      return;
-    }
-    if (!item.link || !item.title) continue;
+  const fresh = feed.items.filter((item): item is typeof item & { link: string; title: string } => {
+    if (!item.link || !item.title) return false;
     // Заголовок идёт в эмбеддинг (в том числе отдельный вектор заголовка, см.
     // grouping.ts) и в промпт: Hearst (Esquire, Car and Driver) размечает в
     // нём названия фильмов тегами <i><em>, а The Art Newspaper оборачивает
     // заголовки в пробелы и переносы строк.
     item.title = stripHtml(item.title);
-    if (!item.title) continue;
+    if (!item.title) return false;
     // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
     // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
-    if (!/^https?:\/\//i.test(item.link)) continue;
+    if (!/^https?:\/\//i.test(item.link)) return false;
     // До проверки "уже обработана": в базе ссылка лежит уже без меток.
     if (sourceConfig?.stripLinkQuery) item.link = item.link.replace(/[?#].*$/, "");
-    if (isAd(item.title, item.link)) continue; // распродажа, подборка скидок, купон — общий фильтр для всех изданий
-    if (sourceConfig?.adTitlePattern?.test(item.title)) continue; // рекламный пост со скидками, см. sources.ts
-    if (sourceConfig?.adLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // то же по адресу
-    if (sourceConfig?.skipLinkPattern?.test(item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, ""))) continue; // вид материалов, который у издания не берём, см. sources.ts
-    if (sourceConfig?.skipTitlePattern?.test(item.title)) continue; // то же по заголовку
+    const path = item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, "");
+    if (isAd(item.title, item.link)) return false; // распродажа, подборка скидок, купон — общий фильтр для всех изданий
+    if (sourceConfig?.adTitlePattern?.test(item.title)) return false; // рекламный пост со скидками, см. sources.ts
+    if (sourceConfig?.adLinkPattern?.test(path)) return false; // то же по адресу
+    if (sourceConfig?.skipLinkPattern?.test(path)) return false; // вид материалов, который у издания не берём, см. sources.ts
+    if (sourceConfig?.skipTitlePattern?.test(item.title)) return false; // то же по заголовку
     const skipCategory = sourceConfig?.skipCategoryPattern;
     // Рубрика с атрибутом (<category domain="…">, так у Domino) приходит из
     // rss-parser объектом { _: "Sponsored Content", $: {…} }, а не строкой.
     const categoryName = (c: unknown) => (typeof c === "string" ? c : (c as { _?: unknown } | null)?._);
-    if (skipCategory && (item.categories ?? []).some((c) => { const n = categoryName(c); return typeof n === "string" && skipCategory.test(n); })) continue; // рассылка или оплаченный материал, см. sources.ts
-    if (LIVE_BLOG_LINK_PATTERN.test(item.link)) continue; // live-блог на несколько разных тем сразу, не единичная новость
-    if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) continue; // карикатура без текста, только шаблонное описание
-    if (!isWithinFetchWindow(item.isoDate)) continue; // старше суток (или FETCH_SINCE_DAYS) — не берём в ленту
+    if (skipCategory && (item.categories ?? []).some((c) => { const n = categoryName(c); return typeof n === "string" && skipCategory.test(n); })) return false; // рассылка или оплаченный материал, см. sources.ts
+    if (LIVE_BLOG_LINK_PATTERN.test(item.link)) return false; // live-блог на несколько разных тем сразу, не единичная новость
+    if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) return false; // карикатура без текста, только шаблонное описание
+    return isWithinFetchWindow(item.isoDate); // старше суток (или FETCH_SINCE_DAYS) — не берём в ленту
+  });
 
-    const exists = await pool.query(
-      "SELECT 1 FROM articles WHERE link = $1 UNION ALL SELECT 1 FROM skipped_links WHERE link = $1",
-      [item.link]
-    );
-    if (exists.rowCount) continue; // уже обработана (или отброшена, см. markSkipped) раньше
+  // Уже обработанные (или отброшенные, см. markSkipped) ссылки — одним
+  // запросом на ленту: база в Ирландии, сбор — в США, и запрос на каждую
+  // статью ленты стоил ~100 мс сети, около минуты на прогон.
+  if (!fresh.length) return;
+  const { rows: knownRows } = await pool.query<{ link: string }>(
+    "SELECT link FROM articles WHERE link = ANY($1) UNION SELECT link FROM skipped_links WHERE link = ANY($1)",
+    [fresh.map((item) => item.link)]
+  );
+  // Сюда же — ссылки, взятые в работу в этом прогоне: одна статья иногда
+  // стоит в ленте дважды.
+  const known = new Set(knownRows.map((r) => r.link));
+
+  let pageFailureLogged = false;
+  for (const item of fresh) {
+    heartbeat(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
+    if (remaining.count <= 0) {
+      console.log(`  лимит статей достигнут, пропускаем остальное`);
+      return;
+    }
+    if (known.has(item.link)) continue;
+    known.add(item.link);
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
     const feedFullHtml = item["dc:content"] ?? item["content:encoded"];
@@ -430,11 +465,9 @@ async function processSource(
     // src/lib/grouping.ts: об одном событии издания пишут с разницей и в
     // 13–24 часа.
     const { groupId: clusterId, matched: clusterMatched } = await findAndAssignGroup(
-      "cluster_id",
       newId,
       vectorLiteral,
       {
-        excludeSourceId: null,
         windowHours: 24,
         recentHours: 12,
         threshold: DEDUPE_THRESHOLD,
@@ -685,10 +718,11 @@ async function main() {
     // добавленного источника, не трогая остальные). По расписанию не задаётся.
     const only = process.env.FETCH_SOURCES?.split(",").map((name) => name.trim()).filter(Boolean);
     const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
-    for (const source of sources.rows) {
-      if (only?.length && !only.includes(source.name)) continue;
+    const selected = sources.rows.filter((source) => !only?.length || only.includes(source.name));
+    const feeds = prefetchFeeds(selected.map((source) => source.rss_url));
+    for (const source of selected) {
       if (remaining.count <= 0) break;
-      await processSource(source, remaining);
+      await processSource(source, feeds.get(source.rss_url)!, remaining);
     }
     // Треды (DIS-36): новые карточки раскладываются по тредам (показывает их
     // лента с THREADS_VIEW, см. src/lib/feed.ts). Только после показа пачки —

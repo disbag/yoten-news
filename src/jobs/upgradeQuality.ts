@@ -3,8 +3,7 @@ import { pool, toVectorLiteral } from "../lib/db.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle } from "../lib/summarizer.js";
 import { fetchOgTags } from "../lib/ogTags.js";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+import { sleep } from "../lib/http.js";
 
 // Пересчитывает саммари (главное + продолжение под кат) для последних N
 // статей с более богатым контекстом (JSON-LD articleBody / отфильтрованные

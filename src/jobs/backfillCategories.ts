@@ -2,8 +2,7 @@ import "dotenv/config";
 import { pool } from "../lib/db.js";
 import { summarize } from "../lib/summarizer.js";
 import { CATEGORY_ONLY_PROMPT, ALL_TAGS, PROMPT_TAG_ALIASES, normalizeTag } from "../lib/prompt.js";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+import { sleep } from "../lib/http.js";
 
 // "Рассуждающие" модели (напр. gemma-4-31b-it) не всегда следуют инструкции
 // ответить одним словом — вместо этого отдают цепочку рассуждений и называют

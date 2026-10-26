@@ -9,6 +9,7 @@ import {
   LEAD_AND_MORE_PROMPT,
   type Category,
 } from "./prompt.js";
+import { sleep } from "./http.js";
 
 export type SummaryResult = { summary: string; category: Category[] | null };
 
@@ -100,7 +101,6 @@ function looksNonRussian(text: string): boolean {
 // (200 тыс. токенов) кончился, и следующие прогоны останавливались.
 const GEMINI_PAUSE_MS = 3 * 60_000;
 const GEMINI_RETRY_DELAY_MS = 60_000;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let geminiPausedUntil = 0;
 // Почему ушли в Groq — для понятного сообщения при остановке.
 let geminiDownReason = "";

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { SUMMARY_PROMPT, ensureCompleteSentence } from "./prompt.js";
+import { sleep } from "./http.js";
 
 // Запасной провайдер на случай, когда Gemini недоступен целиком (перегрузка
 // всех моделей или исчерпанная квота на всех ключах) — см. summarize в
@@ -24,8 +25,6 @@ const MAX_RETRIES_5XX = 2;
 // 80 статей в сутки. Главное и продолжение под кат почти всегда
 // собираются из первой половины статьи. Gemini получает текст целиком.
 const MAX_INPUT_CHARS = 6000;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Обрезка по границе предложения (или хотя бы слова), чтобы модель не
 // получала оборванную на полуслове фразу.

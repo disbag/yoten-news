@@ -465,59 +465,43 @@ export async function getPost(articleId: number): Promise<FeedItem | null> {
 // ленте нет (см. getFeed). Прочитанные тоже: новая статья в уже прочитанном
 // кластере его не возвращает во вкладку "Новые", и плашка обещала бы больше
 // карточек, чем покажет.
-export async function getNewCount(options: {
-  since: string;
-  category?: string;
-  userId?: number | null;
-}): Promise<number> {
-  const params: unknown[] = [options.userId ?? null, options.since];
-  const categoryClause = options.category ? `AND $${params.push(options.category)} = ANY(a.category)` : "";
-  // С тредами — по позициям ленты: новая карточка в треде поднимает весь тред
-  // одной позицией, и в нём есть что прочитать, даже если начало прочитано.
+// Сколько позиций ленты (карточек или, с тредами, тредов целиком) видно
+// читателю и ещё не прочитано: те же условия, что у вкладки «Новые» (getFeed
+// с unreadOnly). С тредами тред считается, пока в нём есть непрочитанная
+// карточка: новая карточка поднимает весь тред одной позицией. since — только
+// позиции, где что-то появилось позже этого момента (плашка «N Новых»).
+async function countUnread(userId: number | null, category?: string, since?: string): Promise<number> {
+  const params: unknown[] = [userId];
+  const categoryClause = category ? `AND $${params.push(category)} = ANY(a.category)` : "";
+  const sinceClause = since ? `AND max(a.visible_at) > $${params.push(since)}::timestamptz` : "";
+  const unit = THREADS_VIEW ? THREAD_UNIT : "a.cluster_id";
   const unread = THREADS_VIEW ? "bool_or(ar.user_id IS NULL)" : "NOT bool_or(ar.user_id IS NOT NULL)";
   const { rows } = await pool.query(
     `
     SELECT count(*) AS count FROM (
-      SELECT ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
+      SELECT ${unit}
       FROM articles a
       LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
       LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
       ${THREADS_VIEW ? THREAD_JOIN : ""}
       WHERE a.visible_at IS NOT NULL ${categoryClause}
-      GROUP BY ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
-      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND ${unread}
-         AND max(a.visible_at) > $2::timestamptz
-    ) fresh
+      GROUP BY ${unit}
+      HAVING bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL) AND ${unread} ${sinceClause}
+    ) unread
     `,
     params
   );
   return Number(rows[0].count);
 }
 
+export function getNewCount(options: { since: string; category?: string; userId?: number | null }): Promise<number> {
+  return countUnread(options.userId ?? null, options.category, options.since);
+}
+
 // Счётчик рядом с вкладкой "Новые" (см. FeedTabs.tsx) — по открытой рубрике,
 // без рубрики — по всей ленте (DIS-38). Кластеры только из выключенных
 // изданий, без саммари и ещё скрытые до конца прогона не считаются — их в
 // ленте нет (см. getFeed).
-export async function getUnreadCount(userId: number | null, category?: string): Promise<number> {
-  const params: unknown[] = [userId];
-  const categoryClause = category ? `AND $${params.push(category)} = ANY(a.category)` : "";
-  const { rows } = await pool.query(
-    `
-    SELECT count(*) AS count FROM (
-      SELECT ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
-      FROM articles a
-      LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $1
-      LEFT JOIN user_hidden_sources h ON h.source_id = a.source_id AND h.user_id = $1
-      ${THREADS_VIEW ? THREAD_JOIN : ""}
-      WHERE a.visible_at IS NOT NULL ${categoryClause}
-      GROUP BY ${THREADS_VIEW ? THREAD_UNIT : "a.cluster_id"}
-      -- С тредами — как во вкладке «Новые» (getFeed с unreadOnly): тред
-      -- считается, пока в нём есть непрочитанная карточка.
-      HAVING ${THREADS_VIEW ? "bool_or(ar.user_id IS NULL)" : "NOT bool_or(ar.user_id IS NOT NULL)"}
-        AND bool_or(h.user_id IS NULL) AND bool_or(a.ai_summary IS NOT NULL)
-    ) unread
-    `,
-    params
-  );
-  return Number(rows[0].count);
+export function getUnreadCount(userId: number | null, category?: string): Promise<number> {
+  return countUnread(userId, category);
 }

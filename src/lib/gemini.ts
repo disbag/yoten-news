@@ -2,8 +2,8 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { SUMMARY_PROMPT, ensureCompleteSentence } from "./prompt.js";
+import { sleep } from "./http.js";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAX_RETRIES = 4;
 // 503 (UNAVAILABLE) обычно значит перегрузку конкретной модели у Google, а не
 // проблему с конкретным ключом — ретраить ту же комбинацию ключ+модель 4 раза

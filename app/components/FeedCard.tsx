@@ -129,13 +129,11 @@ export default function FeedCard({
     // Fire-and-forget: ошибка сети не должна мешать ленте — в худшем случае
     // статья снова придёт непрочитанной при следующей загрузке.
     // У треда прочитанным становится весь тред — все его карточки.
-    for (const clusterId of item.thread?.clusterIds ?? [item.clusterId]) {
-      fetch("/api/reads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clusterId }),
-      }).catch(() => {});
-    }
+    fetch("/api/reads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clusterIds: item.thread?.clusterIds ?? [item.clusterId] }),
+    }).catch(() => {});
   }
 
   // Прочитанной карточка становится, когда пробыла на экране READ_AFTER_MS —

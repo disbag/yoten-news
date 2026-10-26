@@ -1,6 +1,7 @@
 import { pool } from "./db.js";
 import { summarize, GeminiQuotaExhaustedError } from "./gemini.js";
 import { ensureImageHashes } from "./imageHash.js";
+import { sleep } from "./http.js";
 
 // Треды (DIS-36) — уровень над склейкой дублей: карточки об одной истории,
 // её развитии или об одном информационном поводе (несколько версий систем
@@ -248,7 +249,6 @@ async function cardImages(clusterId: number): Promise<string[]> {
   return rows.flatMap((r) => [r.image_url, ...((r.image_urls as string[] | null) ?? []).slice(0, MAX_FRAMES_PER_CARD)]);
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const day = (d: Date) => d.toISOString().slice(5, 10).split("-").reverse().join(".");
 
 export type ThreadRunStats = {
@@ -484,7 +484,12 @@ async function cleanupThreads(): Promise<void> {
     `DELETE FROM threads t WHERE (SELECT count(*) FROM thread_posts tp WHERE tp.thread_id = t.id) < 2`
   );
   await pool.query(
+    // Адреса из обеих колонок сводятся в один список: с условием
+    // «image_url = url OR url = ANY(image_urls)» база сверяла каждую строку с
+    // каждой статьёй (~1,9 с на 26 октября), список сверяется хешем (~0,1 с).
     `DELETE FROM image_hashes h WHERE created_at < now() - interval '1 day'
-       AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.image_url = h.url OR h.url = ANY(a.image_urls))`
+       AND NOT EXISTS (SELECT 1 FROM (SELECT image_url AS url FROM articles WHERE image_url IS NOT NULL
+                                      UNION ALL SELECT unnest(image_urls) FROM articles) used
+                       WHERE used.url = h.url)`
   );
 }

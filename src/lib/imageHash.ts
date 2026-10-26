@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { pool } from "./db.js";
+import { BROWSER_USER_AGENT } from "./http.js";
 
 // Отпечатки картинок для галереи треда (DIS-36): одно и то же фото у разных
 // изданий (агентский снимок AP/Getty) лежит по разным адресам и в разных
@@ -10,8 +11,7 @@ import { pool } from "./db.js";
 // примерно на половину.
 
 const BROWSER_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "User-Agent": BROWSER_USER_AGENT,
 };
 // Те же пределы, что у прокси картинок (app/api/image-proxy/route.ts).
 const FETCH_TIMEOUT_MS = 15_000;

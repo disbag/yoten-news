@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { sleep } from "./http.js";
 
 // Один общий lock-файл на пайплайн — личный однопользовательский инструмент,
 // двух параллельных npm run fetch быть не должно (реальный случай: два
@@ -39,8 +40,6 @@ function isAlive(pid: number): boolean {
     return false;
   }
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Вызывается своим же процессом на каждой обработанной статье — "я жив и
 // продвигаюсь" для любого следующего запуска, который наткнётся на лок.

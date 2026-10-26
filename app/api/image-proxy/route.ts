@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "../../../src/lib/db";
+import { BROWSER_USER_AGENT } from "../../../src/lib/http";
 
 // Некоторые издания (Rolling Stone, Variety, Hollywood Reporter — все три на
 // инфраструктуре Penske Media) отдают картинку нормально на серверный
@@ -11,8 +12,7 @@ import { pool } from "../../../src/lib/db";
 // Проксируем через свой бэкенд — тот же серверный запрос, что уже работает
 // при сборе новостей, только теперь ещё и отдаёт байты клиенту сам.
 const BROWSER_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "User-Agent": BROWSER_USER_AGENT,
 };
 
 // Ограничения на запрос к изданию (DIS-60). Без таймаута зависший ответ

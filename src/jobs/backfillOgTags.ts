@@ -1,8 +1,7 @@
 import "dotenv/config";
 import { pool } from "../lib/db.js";
 import { fetchOgTags } from "../lib/ogTags.js";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+import { sleep } from "../lib/http.js";
 
 // Одноразовый докат image_url/full_description для статей, собранных до того,
 // как пайплайн начал их подтягивать. Best-effort: часть изданий (NYT,

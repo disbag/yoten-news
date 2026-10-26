@@ -1,14 +1,12 @@
 import * as cheerio from "cheerio";
 import type { CheerioAPI, Cheerio } from "cheerio";
 import type { AnyNode } from "domhandler";
+import { BROWSER_USER_AGENT, sleep } from "./http.js";
 
 const BROWSER_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "User-Agent": BROWSER_USER_AGENT,
   Accept: "text/html,application/xhtml+xml",
 };
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // og-теги в <head>, но реальный текст статьи — уже в <body>, поэтому читаем
 // заметно больше, чем раньше (когда останавливались на </head>). Всё ещё со

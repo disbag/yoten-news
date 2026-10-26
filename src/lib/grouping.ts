@@ -20,11 +20,9 @@ const OLD_BODY_TITLE = 0.6;
 // источник может быть любым, включая тот же самый — см. вызов в
 // fetchAndProcess.ts).
 export async function findAndAssignGroup(
-  column: "cluster_id",
   newId: number,
   vectorLiteral: string,
   options: {
-    excludeSourceId: number | null;
     // Сколько часов якорь остаётся кандидатом; обычные пороги действуют
     // первые recentHours, дальше — строгое правило (см. OLD_* выше).
     windowHours: number;
@@ -74,7 +72,7 @@ export async function findAndAssignGroup(
   // объединения в одну тему (так и произошло с 5 эпизодами подкаста при
   // первом прогоне бэкфилла).
   //
-  // AND ${column} = id — сравниваем только с "якорями" (статья сама себе
+  // AND cluster_id = id — сравниваем только с "якорями" (статья сама себе
   // группа), не с уже приклеенными участниками. Без этого возможна
   // транзитивная склейка: A похожа на B (0.76), B похожа на C (0.76), но A и
   // C — про совершенно разное (0.72, ниже порога) — раньше C всё равно
@@ -86,25 +84,24 @@ export async function findAndAssignGroup(
   // цепочку ценой чуть более строгого дедупа (не сливаем с последним
   // добавленным в группу, если он с исходной статьёй сам по себе непохож).
   const match = await pool.query(
-    `SELECT id, ${column}
+    `SELECT id
      FROM articles
      WHERE id < $1
-       AND ${column} = id
-       AND ($2::int IS NULL OR source_id != $2)
+       AND cluster_id = id
        AND created_at > now() - interval '${options.windowHours} hours'
        AND (
          (
            created_at > now() - interval '${options.recentHours} hours'
            AND (
-             1 - (embedding <=> $3::vector) > (
-               CASE WHEN $5::bool OR full_description IS NULL THEN $6::float8 ELSE $4::float8 END
+             1 - (embedding <=> $2::vector) > (
+               CASE WHEN $4::bool OR full_description IS NULL THEN $5::float8 ELSE $3::float8 END
              )
              OR (
                title_embedding IS NOT NULL AND (
-                 1 - (title_embedding <=> $7::vector) >= $8::float8
+                 1 - (title_embedding <=> $6::vector) >= $7::float8
                  OR (
-                   1 - (title_embedding <=> $7::vector) >= $9::float8
-                   AND 1 - (embedding <=> $3::vector) >= $10::float8
+                   1 - (title_embedding <=> $6::vector) >= $8::float8
+                   AND 1 - (embedding <=> $2::vector) >= $9::float8
                  )
                )
              )
@@ -112,29 +109,28 @@ export async function findAndAssignGroup(
          )
          OR (
            created_at <= now() - interval '${options.recentHours} hours'
-           AND source_id <> $11
+           AND source_id <> $10
            AND title_embedding IS NOT NULL
            AND (
-             1 - (title_embedding <=> $7::vector) >= ${OLD_TITLE}
+             1 - (title_embedding <=> $6::vector) >= ${OLD_TITLE}
              OR (
-               1 - (title_embedding <=> $7::vector) >= ${OLD_ASSIST_TITLE}
-               AND 1 - (embedding <=> $3::vector) >= ${OLD_ASSIST_BODY}
+               1 - (title_embedding <=> $6::vector) >= ${OLD_ASSIST_TITLE}
+               AND 1 - (embedding <=> $2::vector) >= ${OLD_ASSIST_BODY}
              )
              OR (
-               1 - (embedding <=> $3::vector) >= ${OLD_BODY}
-               AND 1 - (title_embedding <=> $7::vector) >= ${OLD_BODY_TITLE}
+               1 - (embedding <=> $2::vector) >= ${OLD_BODY}
+               AND 1 - (title_embedding <=> $6::vector) >= ${OLD_BODY_TITLE}
              )
            )
          )
        )
      ORDER BY GREATEST(
-       1 - (embedding <=> $3::vector),
-       COALESCE(1 - (title_embedding <=> $7::vector), 0)
+       1 - (embedding <=> $2::vector),
+       COALESCE(1 - (title_embedding <=> $6::vector), 0)
      ) DESC
      LIMIT 1`,
     [
       newId,
-      options.excludeSourceId,
       vectorLiteral,
       options.threshold,
       options.isThin,
@@ -153,8 +149,8 @@ export async function findAndAssignGroup(
       (await matchByMember(newId, vectorLiteral, options)) ??
       (await matchByNamePair(newId, vectorLiteral, options)) ??
       (await matchBySameImage(newId, vectorLiteral, options));
-  const groupId = match.rowCount ? match.rows[0][column] ?? match.rows[0].id : fallback ?? newId;
-  await pool.query(`UPDATE articles SET ${column} = $1 WHERE id = $2`, [groupId, newId]);
+  const groupId = match.rowCount ? match.rows[0].id : fallback ?? newId;
+  await pool.query("UPDATE articles SET cluster_id = $1 WHERE id = $2", [groupId, newId]);
   return { groupId, matched: !!match.rowCount || fallback !== null };
 }
 
