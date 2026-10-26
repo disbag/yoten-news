@@ -24,7 +24,7 @@ export const MIN_DETAIL_CONTEXT_LENGTH = Number(process.env.MIN_DETAIL_CONTEXT_L
 
 // Единая точка, через которую проходит любой сырой ответ модели — поэтому
 // разбор темы (см. extractCategory) делается здесь один раз, а не в каждом
-// вызывающем коде. Для промптов без разметки темы (CATEGORY_ONLY_PROMPT)
+// вызывающем коде. Для промптов без разметки темы
 // extractCategory просто вернёт text как есть с category: null — вызывающий
 // код сам решает, что делать с полем summary.
 export async function summarize(
@@ -67,8 +67,7 @@ export async function summarize(
 // по-английски, и буквенная проверка выше его пропустила. У русских
 // пересказов с английскими названиями игр и компаний эта доля не ниже 0,45
 // (все 6799 текстов базы на 20 октября), у английского ответа — 0. Короткие
-// ответы не проверяем: разметка темы (CATEGORY_ONLY_PROMPT) законно отвечает
-// одним английским словом, а NO_CONTENT — не текст.
+// ответы не проверяем: NO_CONTENT — не текст.
 const NON_RUSSIAN_LETTERS = /[әғқңөұүһіїєґўӘҒҚҢӨҰҮҺІЇЄҐЎ]/g;
 const MIN_CYRILLIC_SHARE = 0.3;
 const MIN_LETTERS_FOR_SHARE = 40;

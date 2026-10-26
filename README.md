@@ -188,10 +188,6 @@ Next.js App Router (`app/`):
 | `npm run feed` | Вывести ленту в консоль |
 | `npm run dev` / `build` / `start` | Сайт |
 | `npm run db:init` | Применить схему БД и добавить источники из конфига |
-| `npm run backfill-og` | Досчитать картинку и текст для уже собранных статей |
-| `npm run backfill-categories` | Досчитать темы для статей без них |
-| `npm run resummarize` | Пересчитать пересказы (например, после правки промпта) |
-| `npm run upgrade-quality` | Пересчитать пересказы с полным текстом вместо анонса |
 | `npm run threads` | Разложить по тредам непроверенные карточки (`THREADS_SINCE_HOURS`, по умолчанию 24) |
 | `npm run favicons` | Скачать иконки новых изданий в `public/favicons` (`-- --force` — все заново) |
 
