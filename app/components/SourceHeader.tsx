@@ -20,13 +20,15 @@ export default function SourceHeader({
   const favicon = faviconMissing ? null : faviconUrl(homepage);
   const host = homepage.replace(/^https?:\/\/(?:www\.)?/, "").replace(/\/$/, "");
 
+  // По макету Figma «Desktop : PageSource» (узел 41:209): стрелка 20 px, иконка
+  // 48 px, название жирным с доменом в строку, описание мелким серым.
   return (
     <div className="source-header">
-      <div className="row">
-        <Link href="/" className="back" aria-label="Назад в ленту">
-          {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG из макета */}
-          <img src="/back-desktop.svg" alt="" width={24} height={24} className="theme-invert" />
-        </Link>
+      <Link href="/" className="back" aria-label="Назад в ленту">
+        {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG из макета */}
+        <img src="/back-desktop.svg" alt="" width={20} height={20} className="theme-invert" />
+      </Link>
+      <div className="identity">
         {favicon ? (
           // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
           <img
@@ -38,75 +40,98 @@ export default function SourceHeader({
         ) : (
           <span className="icon placeholder" />
         )}
-        <div className="title">
-          <h1>{name}</h1>
-          <a href={homepage} target="_blank" rel="noopener noreferrer">
-            {host}
-          </a>
+        <div className="text">
+          <div className="title">
+            <h1>{name}</h1>
+            <a href={homepage} target="_blank" rel="noopener noreferrer">
+              {host}
+            </a>
+          </div>
+          {description && <p className="description">{description}</p>}
         </div>
       </div>
-      {description && <p className="description">{description}</p>}
       <style jsx>{`
         .source-header {
           display: flex;
-          flex-direction: column;
-          gap: 12px;
+          align-items: center;
+          gap: 16px;
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-weight: 400;
         }
-        .row {
+        .source-header :global(.back) {
+          display: flex;
+          flex-shrink: 0;
+          width: 20px;
+          height: 20px;
+        }
+        .source-header :global(.back img) {
+          width: 20px;
+          height: 20px;
+        }
+        .identity {
+          flex: 1 0 0;
+          min-width: 0;
           display: flex;
           align-items: center;
           gap: 12px;
         }
-        .row :global(.back) {
-          display: flex;
-          flex-shrink: 0;
-          margin-left: -4px;
-        }
         .icon {
-          width: 56px;
-          height: 56px;
+          width: 48px;
+          height: 48px;
           border-radius: 50%;
           flex-shrink: 0;
           object-fit: cover;
         }
         .icon.backing {
           background: #fff;
-          padding: 6px;
+          padding: 5px;
         }
         .icon.placeholder {
           display: block;
           background: var(--border);
         }
-        .title {
+        .text {
+          flex: 1 0 0;
+          min-width: 0;
           display: flex;
           flex-direction: column;
           gap: 2px;
-          min-width: 0;
+        }
+        .title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          white-space: nowrap;
         }
         h1 {
           margin: 0;
-          font-size: 22px;
-          line-height: 28px;
-          font-weight: 400;
+          font-size: 16px;
+          line-height: 20px;
+          font-weight: 700;
           color: var(--text);
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         a {
-          font-size: 13px;
-          line-height: 18px;
-          font-weight: 300;
-          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 12px;
+          color: var(--text-dim);
           text-decoration: none;
+          /* На узком экране первым сжимается домен, а не название. */
+          min-width: 0;
+          flex-shrink: 100;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         a:hover {
           color: var(--accent);
         }
         .description {
           margin: 0;
-          font-size: 15px;
-          line-height: 22px;
-          font-weight: 300;
-          color: var(--text-soft);
+          font-size: 12px;
+          line-height: 14px;
+          color: var(--text-dim);
         }
       `}</style>
     </div>

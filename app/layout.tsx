@@ -15,10 +15,11 @@ const lora = Lora({
 
 // Onest — гротеск для текста самой новости (см. .summary в FeedCard.tsx) и,
 // с редизайна 2026 года, для меню/табов/сайдбара (Light-начертание 300 —
-// см. Sidebar.tsx, MobileChrome.tsx, FeedTabs.tsx).
+// см. Sidebar.tsx, MobileChrome.tsx, FeedTabs.tsx). 700 — название издания на
+// его странице (SourceHeader.tsx).
 const onest = Onest({
   subsets: ["latin", "cyrillic"],
-  weight: ["300", "400", "500"],
+  weight: ["300", "400", "500", "700"],
   variable: "--font-news",
 });
 

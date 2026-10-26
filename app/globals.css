@@ -254,12 +254,21 @@ main {
   color: var(--link);
 }
 
-/* Страница издания (DIS-80): шапка издания над лентой. */
+/* Страница издания (DIS-80, макет «Desktop : PageSource»): шапка издания,
+   через 30 px линия, через 32 px первая карточка. */
 .source-top {
-  padding: 20px 20px 0;
+  padding: 20px 20px 30px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 20px;
+  padding-left: 0;
+  padding-right: 0;
+}
+.source-top + .card-list {
+  margin-top: 32px;
 }
 @media (min-width: 900px) {
   .source-top {
-    padding: 20px 0 0;
+    padding-top: 48px;
+    margin: 0;
   }
 }
