@@ -32,8 +32,10 @@ export default function SettingsShell({ children }: { children: ReactNode }) {
             {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG из макета */}
             <img src="/back-mobile.svg" alt="" width={24} height={24} className="theme-invert" />
           </Link>
-          {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-          <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
+          <Link href="/" className="home-link" aria-label="Yoten — на главную">
+            {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+            <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
+          </Link>
           {/* Пустой справа, как в макете, — держит логотип по центру. */}
           <span className="icon" />
         </div>
@@ -41,8 +43,10 @@ export default function SettingsShell({ children }: { children: ReactNode }) {
       </div>
       <div className="desktop-only">
         <aside className="sidebar">
-          {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-          <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
+          <Link href="/" className="home-link" aria-label="Yoten — на главную">
+            {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+            <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
+          </Link>
           <div className="menu">
             <Link href="/" className="back">
               {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG из макета */}

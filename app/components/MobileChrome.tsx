@@ -91,8 +91,10 @@ export default function MobileChrome({
             <path d="M2.75 8.25H21.25M2.75 15.75H21.25" stroke="currentColor" strokeLinecap="round" />
           </svg>
         </button>
-        {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-        <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
+        <Link href="/" className="home-link" aria-label="Yoten — на главную">
+          {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+          <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
+        </Link>
         {/* Пустой спейсер — в макете справа в шапке ленты ничего нет, он
             держит логотип по центру симметрично левой кнопке меню. */}
         <span className="spacer" />
@@ -106,8 +108,10 @@ export default function MobileChrome({
                 <path d="M6.25 6.25L17.75 17.75M17.75 6.25L6.25 17.75" stroke="currentColor" strokeLinecap="round" />
               </svg>
             </button>
-            {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-            <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
+            <Link href="/" className="home-link" aria-label="Yoten — на главную" onClick={() => setOpen(false)}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+              <img src="/logo-outlined.svg" alt="Yoten" className="logo theme-invert" />
+            </Link>
             {/* Пустой спейсер вместо иконки — держит логотип по центру
                 симметрично левой кнопке закрытия, как в макете. */}
             <span className="spacer" />

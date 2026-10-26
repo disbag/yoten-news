@@ -10,8 +10,10 @@ export default function Sidebar({
 }) {
   return (
     <aside className="sidebar">
-      {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
-      <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
+      <Link href="/" className="home-link" aria-label="Yoten — на главную">
+        {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG */}
+        <img src="/logo-desktop.svg" alt="Yoten" className="logo theme-invert" />
+      </Link>
       <div className="menu">
         <nav className="categories">
           <CategoryNav activeCategory={activeCategory} />
