@@ -97,12 +97,12 @@ function extractMetaContent($: CheerioAPI, name: string): string | undefined {
 // останавливал каскад раньше, чем до этих <p> вообще доходило дело.
 const MIN_JSONLD_BODY_LENGTH = 200;
 
-// Блок "похожих материалов", вшитый прямо в articleBody (Motor1, InsideEVs —
+// Блок "похожих материалов", вшитый прямо в articleBody (Motor1 —
 // "More From BMW:", "Related Articles", "More EV News" и т.п.): заголовки
 // чужих статей склеены в одну строку через длинные серии пробелов. Модель
 // принимала их за подробности текущей новости. В обычном тексте 8+ пробелов
 // подряд не бывает — проверено на JSON-LD всех изданий: строки убираются
-// только у Motor1/InsideEVs.
+// только у Motor1.
 const LINK_LIST_LINE = /\S\s{8,}\S/;
 function stripLinkListLines(text: string): string {
   return text
@@ -252,11 +252,11 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 // (/photos/{id}/16:9/w_1280,c_limit/… в og:image, /master/w_1600…/ в теле).
 // "time" (TIME): фото статьи — <figure> внутри <main>; ссылки на другие
 // материалы там без <figure>. В теле src с width=3840 — приводим к 1280.
-// "motor1" (InsideEVs и сам Motor1 — одна сеть): виджет .msnt-photo-thumb-gallery с
+// "motor1" (Motor1): виджет .msnt-photo-thumb-gallery с
 // превью фотогалереи, привязанной к статье (полная — на отдельной странице
 // /photos/{id}/…, там 20-40+ кадров; для карусели в ленте берём подборку из
 // виджета — главный кадр и 6 превью). Он есть примерно у трети статей;
-// обычные картинки в тексте InsideEVs — ссылки на другие статьи, их не берём.
+// обычные картинки в тексте — ссылки на другие статьи, их не берём.
 // У главного кадра в src заглушка /images/static/16x9-tr.png, настоящий URL —
 // в <source srcset>; превью — размер s5 (213px), поднимаем до s3 (1280x720).
 // "polygon" (Polygon): фото статьи — div.body-img; карточки "читайте также"
