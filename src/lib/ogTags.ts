@@ -34,6 +34,11 @@ async function fetchHtmlChunk(url: string, maxBytes = 500_000, attempts = 3): Pr
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(url, { headers: BROWSER_HEADERS, signal: AbortSignal.timeout(15_000) });
+      // Отказ в доступе (401/403 у Bloomberg, WSJ, NYT — платный доступ или
+      // защита от ботов) на повторе не меняется, а два повтора с паузами
+      // стоили ~3 с на каждую статью закрытого издания. Повторяем только
+      // сетевые сбои и ответы 5xx/429.
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new Error(`Status ${res.status}`, { cause: "final" });
       if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
 
       const reader = res.body.getReader();
@@ -50,7 +55,7 @@ async function fetchHtmlChunk(url: string, maxBytes = 500_000, attempts = 3): Pr
       reader.cancel().catch(() => {});
       return html;
     } catch (err) {
-      if (attempt === attempts) throw err;
+      if (attempt === attempts || (err as Error).cause === "final") throw err;
       await sleep(1000 * attempt);
     }
   }

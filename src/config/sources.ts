@@ -41,6 +41,11 @@ type SourceConfig = {
   // комментариев, которые иначе попадали в текст для модели и могли
   // просочиться в подробности под катом.
   preferFeedContent?: boolean;
+  // Страницу статьи не открывать вообще: она всегда закрыта для сбора
+  // (платный доступ или защита от ботов на адресах GitHub — 401/403 на
+  // каждой статье). Карточка строится по RSS: анонс, обложка из фида.
+  // Без флага на каждую статью уходил запрос с заведомым отказом.
+  skipArticlePage?: boolean;
   // Заголовки рекламных постов со скидками (подборки Amazon-скидок, Prime Day,
   // промо с кодом скидки) — такие статьи не берём в ленту вообще. Своё для
   // каждого издания: общий фильтр по слову "deal" резал бы и новости вроде
@@ -77,6 +82,7 @@ export const SOURCES: SourceConfig[] = [
     name: "The NY Times",
     rssUrl: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
     homepageUrl: "https://www.nytimes.com",
+    skipArticlePage: true, // страница статьи отвечает 403, см. skipArticlePage
   },
   {
     name: "Wired",
@@ -299,6 +305,7 @@ export const SOURCES: SourceConfig[] = [
     name: "The Wall Street Journal",
     rssUrl: "https://feeds.content.dowjones.io/public/rss/RSSWorldNews",
     homepageUrl: "https://www.wsj.com",
+    skipArticlePage: true, // страница статьи отвечает 401, см. skipArticlePage
   },
   // Financial Times: убран — тизера из RSS оказалось слишком мало для
   // подробного пересказа, из-за чего модель либо выдумывала факты
@@ -316,6 +323,7 @@ export const SOURCES: SourceConfig[] = [
     name: "Bloomberg",
     rssUrl: "https://feeds.bloomberg.com/markets/news.rss",
     homepageUrl: "https://www.bloomberg.com",
+    skipArticlePage: true, // страница статьи отвечает 403, см. skipArticlePage
     skipLinkPattern: /^\/news\/(?:videos|audio)\//i,
     // Ежедневные рыночные сводки («Gold Edges Lower as…», «European Stocks
     // Fall as…», «…: Markets Wrap») и лайв-блоги («FTSE 100 Live: …»):

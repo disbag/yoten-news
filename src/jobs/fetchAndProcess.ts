@@ -294,7 +294,8 @@ async function processSource(
     let imageUrl: string | undefined;
     let gallery: string[] | undefined;
     let excerpt: string | undefined;
-    try {
+    if (sourceConfig?.skipArticlePage) excerpt = feedContent; // страница всегда закрыта, см. sources.ts
+    else try {
       const og = await fetchOgTags(item.link, contentSelector, sourceConfig?.gallery);
       fullDescription = og.description;
       imageUrl = og.image;
