@@ -118,7 +118,7 @@ export default function SourceHeader({
           line-height: 12px;
           color: var(--text-dim);
           text-decoration: none;
-          /* На узком экране первым сжимается домен, а не название. */
+          /* Если строка тесна, первым сжимается домен, а не название. */
           min-width: 0;
           flex-shrink: 100;
           overflow: hidden;
@@ -132,6 +132,17 @@ export default function SourceHeader({
           font-size: 12px;
           line-height: 14px;
           color: var(--text-dim);
+        }
+        /* На телефоне домен — второй строкой под названием. */
+        @media (max-width: 899px) {
+          .title {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+          }
+          .title > * {
+            max-width: 100%;
+          }
         }
       `}</style>
     </div>
