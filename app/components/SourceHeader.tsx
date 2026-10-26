@@ -34,7 +34,7 @@ export default function SourceHeader({
           <img
             src={favicon}
             alt=""
-            className={FAVICON_LIGHT_BACKING.has(name) ? "icon backing" : "icon"}
+            className={FAVICON_LIGHT_BACKING.has(name) ? "icon favicon-backing" : "icon"}
             onError={() => setFaviconMissing(true)}
           />
         ) : (
@@ -81,10 +81,6 @@ export default function SourceHeader({
           border-radius: 50%;
           flex-shrink: 0;
           object-fit: cover;
-        }
-        .icon.backing {
-          background: #fff;
-          padding: 5px;
         }
         .icon.placeholder {
           display: block;

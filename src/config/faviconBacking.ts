@@ -2,4 +2,17 @@
 // фоне — тёмный знак на прозрачном фоне. Для них в тёмной теме под иконкой
 // белый круг (см. .favicon-backing в app/globals.css). Имена — как в
 // sources.ts / таблице sources.
-export const FAVICON_LIGHT_BACKING = new Set(["Variety", "Pitchfork", "IGN", "Wallpaper", "The Telegraph", "Design Milk"]);
+//
+// Проверять каждую новую иконку на фоне тёмной темы (#121315): чёрный или
+// тёмно-серый знак на прозрачном фоне — сюда (так пропустили Vanity Fair,
+// 26 октября 2026). Иконка на своём непрозрачном фоне (белый, цветной или
+// чёрный квадрат со светлым знаком) подложки не требует.
+export const FAVICON_LIGHT_BACKING = new Set([
+  "Variety",
+  "Pitchfork",
+  "IGN",
+  "Wallpaper",
+  "The Telegraph",
+  "Design Milk",
+  "Vanity Fair",
+]);

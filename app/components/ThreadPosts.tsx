@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ThreadPost } from "../../src/lib/feed";
 import { faviconUrl, timeAgo } from "./FeedCard";
 import { sourcePath } from "../../src/lib/sourceSlug";
+import { FAVICON_LIGHT_BACKING } from "../../src/config/faviconBacking";
 
 // Продолжение треда под первой карточкой (DIS-36): каждая следующая карточка
 // — издание, время и только то новое, что она добавила к треду. Ссылка на
@@ -42,7 +43,7 @@ function Post({ post }: { post: ThreadPost }) {
         <Link href={sourcePath(post.source)} className="favicon-link" aria-label={`Все посты ${post.source}`}>
           {favicon ? (
             // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
-            <img src={favicon} alt="" className="favicon" />
+            <img src={favicon} alt="" className={FAVICON_LIGHT_BACKING.has(post.source) ? "favicon favicon-backing" : "favicon"} />
           ) : (
             <span className="favicon placeholder" />
           )}

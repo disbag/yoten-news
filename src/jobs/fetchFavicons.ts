@@ -14,8 +14,24 @@ import { SOURCES } from "../config/sources.js";
 // sources.homepage_url в базе), как его строит FeedCard.tsx. Google отдаёт
 // иконку то в PNG, то в JPEG (TechCrunch, Fast Company…) — приводим всё к PNG,
 // чтобы адрес у всех был одного вида. sharp ставится вместе с Next.js.
+//
+// У части изданий Google знает только иконку 16×16 (Wired, House & Garden): в
+// карточке она размыта. Тогда берём apple-touch-icon с самого сайта и
+// уменьшаем до 64 px. Перекачать отдельные издания: `npm run favicons --
+// www.wired.com`. После скачивания — проверить иконку на тёмной теме (см.
+// FAVICON_LIGHT_BACKING в src/config/faviconBacking.ts).
 const DIR = path.join(process.cwd(), "public", "favicons");
 const force = process.argv.includes("--force");
+const only = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
+const MIN_SIZE = 32;
+const SIZE = 64;
+
+async function download(url: string): Promise<Buffer> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || !type.startsWith("image/")) throw new Error(`${res.status} ${type}`);
+  return Buffer.from(await res.arrayBuffer());
+}
 
 async function main() {
   fs.mkdirSync(DIR, { recursive: true });
@@ -24,14 +40,15 @@ async function main() {
   let failed = 0;
   for (const host of hosts) {
     const file = path.join(DIR, `${host}.png`);
-    if (!force && fs.existsSync(file)) continue;
+    if (only.length ? !only.includes(host) : !force && fs.existsSync(file)) continue;
     try {
-      const res = await fetch(`https://www.google.com/s2/favicons?domain=${host}&sz=64`, {
-        signal: AbortSignal.timeout(15_000),
-      });
-      const type = res.headers.get("content-type") ?? "";
-      if (!res.ok || !type.startsWith("image/")) throw new Error(`${res.status} ${type}`);
-      await sharp(Buffer.from(await res.arrayBuffer())).png().toFile(file);
+      let image = await download(`https://www.google.com/s2/favicons?domain=${host}&sz=${SIZE}`);
+      if (((await sharp(image).metadata()).width ?? 0) < MIN_SIZE) {
+        image = await download(`https://${host}/apple-touch-icon.png`)
+          .then((icon) => sharp(icon).resize(SIZE, SIZE).toBuffer())
+          .catch(() => image);
+      }
+      await sharp(image).png().toFile(file);
       fetched += 1;
     } catch (err) {
       failed += 1;
