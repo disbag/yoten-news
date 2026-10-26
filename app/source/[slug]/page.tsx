@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFeed } from "../../../src/lib/feed";
 import { getViewerId } from "../../../src/lib/viewer";
 import { sourceBySlug } from "../../../src/lib/sourceBySlug";
+import { SOURCE_DESCRIPTIONS } from "../../../src/config/sourceDescriptions";
 import { FEED_PAGE_SIZE } from "../../../src/lib/feedPosition";
 import FeedList from "../../components/FeedList";
 import SourceHeader from "../../components/SourceHeader";
@@ -14,7 +14,10 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const source = sourceBySlug((await props.params).slug);
-  return { title: source ? `${source.name} — Yoten` : "Yoten" };
+  return {
+    title: source ? `${source.name} — Yoten` : "Yoten",
+    description: source ? SOURCE_DESCRIPTIONS[source.name] : undefined,
+  };
 }
 
 // Страница издания (DIS-80): открывается по иконке издания в карточке.
@@ -38,12 +41,7 @@ export default async function SourcePage(props: { params: Promise<{ slug: string
 
       <main>
         <div className="source-top">
-          <Link href="/" className="post-back">
-            {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG из макета */}
-            <img src="/back-desktop.svg" alt="" width={24} height={24} className="theme-invert" />
-            Вся лента
-          </Link>
-          <SourceHeader name={source.name} homepage={source.homepageUrl} />
+          <SourceHeader name={source.name} homepage={source.homepageUrl} description={SOURCE_DESCRIPTIONS[source.name]} />
         </div>
         <FeedList
           key={`${slug}:${loadedAt}`}

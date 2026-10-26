@@ -1,65 +1,93 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { FAVICON_LIGHT_BACKING } from "../../src/config/faviconBacking";
 import { faviconUrl } from "./FeedCard";
 
-// Шапка страницы издания (DIS-80): иконка, название, адрес сайта.
-export default function SourceHeader({ name, homepage }: { name: string; homepage: string }) {
+// Шапка страницы издания (DIS-80): стрелка назад в ленту, крупная иконка,
+// название, адрес сайта и пара предложений о том, что это за издание.
+export default function SourceHeader({
+  name,
+  homepage,
+  description,
+}: {
+  name: string;
+  homepage: string;
+  description?: string;
+}) {
   const [faviconMissing, setFaviconMissing] = useState(false);
   const favicon = faviconMissing ? null : faviconUrl(homepage);
   const host = homepage.replace(/^https?:\/\/(?:www\.)?/, "").replace(/\/$/, "");
 
   return (
     <div className="source-header">
-      {favicon ? (
-        // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
-        <img
-          src={favicon}
-          alt=""
-          className={FAVICON_LIGHT_BACKING.has(name) ? "icon backing" : "icon"}
-          onError={() => setFaviconMissing(true)}
-        />
-      ) : (
-        <span className="icon placeholder" />
-      )}
-      <div className="text">
-        <h1>{name}</h1>
-        <a href={homepage} target="_blank" rel="noopener noreferrer">
-          {host}
-        </a>
+      <div className="row">
+        <Link href="/" className="back" aria-label="Назад в ленту">
+          {/* eslint-disable-next-line @next/next/no-img-element -- статичный локальный SVG из макета */}
+          <img src="/back-desktop.svg" alt="" width={24} height={24} className="theme-invert" />
+        </Link>
+        {favicon ? (
+          // eslint-disable-next-line @next/next/no-img-element -- маленькие статичные файлы из public/favicons
+          <img
+            src={favicon}
+            alt=""
+            className={FAVICON_LIGHT_BACKING.has(name) ? "icon backing" : "icon"}
+            onError={() => setFaviconMissing(true)}
+          />
+        ) : (
+          <span className="icon placeholder" />
+        )}
+        <div className="title">
+          <h1>{name}</h1>
+          <a href={homepage} target="_blank" rel="noopener noreferrer">
+            {host}
+          </a>
+        </div>
       </div>
+      {description && <p className="description">{description}</p>}
       <style jsx>{`
         .source-header {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        .row {
           display: flex;
           align-items: center;
           gap: 12px;
         }
+        .row :global(.back) {
+          display: flex;
+          flex-shrink: 0;
+          margin-left: -4px;
+        }
         .icon {
-          width: 40px;
-          height: 40px;
+          width: 56px;
+          height: 56px;
           border-radius: 50%;
           flex-shrink: 0;
           object-fit: cover;
         }
         .icon.backing {
           background: #fff;
-          padding: 4px;
+          padding: 6px;
         }
         .icon.placeholder {
           display: block;
           background: var(--border);
         }
-        .text {
+        .title {
           display: flex;
           flex-direction: column;
           gap: 2px;
-          font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          min-width: 0;
         }
         h1 {
           margin: 0;
-          font-size: 20px;
-          line-height: 26px;
+          font-size: 22px;
+          line-height: 28px;
           font-weight: 400;
           color: var(--text);
         }
@@ -72,6 +100,13 @@ export default function SourceHeader({ name, homepage }: { name: string; homepag
         }
         a:hover {
           color: var(--accent);
+        }
+        .description {
+          margin: 0;
+          font-size: 15px;
+          line-height: 22px;
+          font-weight: 300;
+          color: var(--text-soft);
         }
       `}</style>
     </div>

@@ -254,12 +254,9 @@ main {
   color: var(--link);
 }
 
-/* Страница издания (DIS-80): «Вся лента» и шапка издания над лентой. */
+/* Страница издания (DIS-80): шапка издания над лентой. */
 .source-top {
   padding: 20px 20px 0;
-}
-.source-top .post-back {
-  margin-bottom: 20px;
 }
 @media (min-width: 900px) {
   .source-top {
