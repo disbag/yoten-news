@@ -355,11 +355,27 @@ export type GallerySite =
   | "abduzeedo"
   | "guardian"
   | "flying"
-  | "domino";
+  | "domino"
+  | "remodelista"
+  | "azure"
+  | "hypebeast";
 
 // С 21 октября 2026 Dezeen отдаёт картинки с static-2026.dezeen.com (раньше —
 // static.dezeen.com), и галереи перестали собираться: правило принимало только
 // старый адрес. Год в имени хоста, видимо, будет меняться.
+//
+// Издания, добавленные 26 октября 2026 (фото из RSS):
+//  - "remodelista" (Remodelista и Gardenista — один издатель, один движок
+//    WordPress): фото тела в RSS уже в размере 733 px (~100 КБ), с www. или
+//    media. своего домена, у Gardenista бывают и кадры с remodelista.com.
+//    og:image — оригинал того же снимка, поэтому обложка — первый кадр.
+//  - "azure" (Azure): в src оригиналы 1600–1920 px — из srcset берём вариант
+//    до 1280 px; обложка — первый кадр по той же причине.
+//  - "hypebeast" (Hypebeast Design): страницы отвечают 202 (проверка на
+//    бота), в RSS одно-два фото: через их ресайзер image-cdn.hypb.st и тот же
+//    файл напрямую. Приводим к ресайзеру с w=1280 — один кадр вместо двух;
+//    это и обложка (media:content в фиде нет).
+const REMODELISTA_IMAGE_HOST = /^(?:www|media)\.(?:remodelista|gardenista)\.com$/;
 const DEZEEN_IMAGE_HOST = /^static(?:-\d{4})?\.dezeen\.com$/;
 const WALLPAPER_IMAGE_PATH =/^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
 const CONDENAST_IMAGE_PATH = /^\/photos\/([a-f0-9]+)\/[^/]+\/[^/]+\/([^/]+)$/i;
@@ -500,6 +516,46 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: true,
     from: "rss",
+  },
+  remodelista: {
+    selector: "img",
+    normalize: (url) => {
+      if (!REMODELISTA_IMAGE_HOST.test(url.hostname) || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.protocol = "https:";
+      url.search = "";
+      return url;
+    },
+    leadWithCover: false,
+    from: "rss",
+    coverFromFirstFrame: true,
+  },
+  azure: {
+    selector: "img",
+    normalize: (url) => {
+      if (url.hostname !== "www.azuremagazine.com" || !url.pathname.startsWith("/wp-content/uploads/")) return null;
+      if (/\.gif$/i.test(url.pathname)) return null;
+      url.search = "";
+      return url;
+    },
+    leadWithCover: false,
+    from: "rss",
+    srcsetMaxWidth: 1280,
+    coverFromFirstFrame: true,
+  },
+  hypebeast: {
+    selector: "img",
+    normalize: (url) => {
+      let original: string;
+      if (url.hostname === "image-cdn.hypb.st") original = decodeURIComponent(url.pathname.slice(1));
+      else if (url.hostname === "hypebeast.com" && url.pathname.startsWith("/image/")) original = `${url.origin}${url.pathname}`;
+      else return null;
+      if (!/^https:\/\/hypebeast\.com\/image\//.test(original)) return null;
+      return new URL(`https://image-cdn.hypb.st/${encodeURIComponent(original)}?w=1280&cbr=1&q=90&fit=max`);
+    },
+    leadWithCover: false,
+    from: "rss",
+    coverFromFirstFrame: true,
   },
   designboom: {
     selector: "img",

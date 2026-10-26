@@ -53,6 +53,9 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
       "DesignWanted",
       "Fast Company",
       "Abduzeedo",
+      "Azure",
+      "Hypebeast",
+      "Cool Hunting",
     ],
   },
   // Motor1 в макете нет (добавлен позже).
@@ -68,6 +71,8 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
       "Domino",
       "Good Housekeeping",
       "House Beautiful",
+      "Remodelista",
+      "Gardenista",
     ],
   },
 ];
