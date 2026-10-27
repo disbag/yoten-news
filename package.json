@@ -11,7 +11,8 @@
     "build": "next build",
     "start": "next start",
     "favicons": "tsx src/jobs/fetchFavicons.ts",
-    "threads": "tsx src/jobs/assignThreads.ts"
+    "threads": "tsx src/jobs/assignThreads.ts",
+    "health": "tsx src/jobs/healthReport.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
