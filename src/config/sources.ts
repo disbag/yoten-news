@@ -739,26 +739,10 @@ export const SOURCES: SourceConfig[] = [
     homepageUrl: "https://www.azuremagazine.com",
     gallery: "azure",
   },
-  {
-    // Раздел Design (Гонконг/США): новости архитектуры и дизайна, ~4 в
-    // неделю. Страницы отвечают 202 (проверка на бота) — всё из RSS: полный
-    // текст и одно фото, оно же обложка.
-    name: "Hypebeast",
-    rssUrl: "https://hypebeast.com/design/feed",
-    homepageUrl: "https://hypebeast.com",
-    gallery: "hypebeast",
-    skipArticlePage: true,
-  },
-  {
-    // Дизайн, путешествия, еда, культура (США), ~10 материалов в неделю.
-    // Страницы закрыты (403) — текст из content:encoded, обложка из
-    // media:content; в RSS 0–1 фото, галереи нет. Заметки о товарах отсекает
-    // тема shopping.
-    name: "Cool Hunting",
-    rssUrl: "https://coolhunting.com/feed/",
-    homepageUrl: "https://coolhunting.com",
-    skipArticlePage: true,
-  },
+  // Hypebeast (раздел Design) и Cool Hunting убраны 27 октября 2026, на
+  // следующий день после добавления: Hypebeast отвечает серверам GitHub 403 на
+  // сам RSS (11 прогонов из 12), Cool Hunting не дал ни одной статьи — на
+  // запрос с браузерным User-Agent отвечает проверкой на бота (403).
   // The Washington Post убран 22 октября 2026 (DIS-67): с 14 октября все фиды
   // feeds.washingtonpost.com отвечают 502, а сайт закрыт для бота (Akamai).
   // Пользы и раньше было мало: в RSS анонс на 100–150 знаков, страницы

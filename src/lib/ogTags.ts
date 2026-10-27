@@ -357,8 +357,7 @@ export type GallerySite =
   | "flying"
   | "domino"
   | "remodelista"
-  | "azure"
-  | "hypebeast";
+  | "azure";
 
 // С 21 октября 2026 Dezeen отдаёт картинки с static-2026.dezeen.com (раньше —
 // static.dezeen.com), и галереи перестали собираться: правило принимало только
@@ -371,10 +370,6 @@ export type GallerySite =
 //    og:image — оригинал того же снимка, поэтому обложка — первый кадр.
 //  - "azure" (Azure): в src оригиналы 1600–1920 px — из srcset берём вариант
 //    до 1280 px; обложка — первый кадр по той же причине.
-//  - "hypebeast" (Hypebeast Design): страницы отвечают 202 (проверка на
-//    бота), в RSS одно-два фото: через их ресайзер image-cdn.hypb.st и тот же
-//    файл напрямую. Приводим к ресайзеру с w=1280 — один кадр вместо двух;
-//    это и обложка (media:content в фиде нет).
 const REMODELISTA_IMAGE_HOST = /^(?:www|media)\.(?:remodelista|gardenista)\.com$/;
 const DEZEEN_IMAGE_HOST = /^static(?:-\d{4})?\.dezeen\.com$/;
 const WALLPAPER_IMAGE_PATH =/^\/([A-Za-z0-9]+)(?:-\d+-\d+)?\.(jpe?g|png|webp)$/i;
@@ -541,20 +536,6 @@ const GALLERY_SITES: Record<
     leadWithCover: false,
     from: "rss",
     srcsetMaxWidth: 1280,
-    coverFromFirstFrame: true,
-  },
-  hypebeast: {
-    selector: "img",
-    normalize: (url) => {
-      let original: string;
-      if (url.hostname === "image-cdn.hypb.st") original = decodeURIComponent(url.pathname.slice(1));
-      else if (url.hostname === "hypebeast.com" && url.pathname.startsWith("/image/")) original = `${url.origin}${url.pathname}`;
-      else return null;
-      if (!/^https:\/\/hypebeast\.com\/image\//.test(original)) return null;
-      return new URL(`https://image-cdn.hypb.st/${encodeURIComponent(original)}?w=1280&cbr=1&q=90&fit=max`);
-    },
-    leadWithCover: false,
-    from: "rss",
     coverFromFirstFrame: true,
   },
   designboom: {

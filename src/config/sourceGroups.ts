@@ -54,8 +54,6 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
       "Fast Company",
       "Abduzeedo",
       "Azure",
-      "Hypebeast",
-      "Cool Hunting",
     ],
   },
   // Motor1 в макете нет (добавлен позже).
