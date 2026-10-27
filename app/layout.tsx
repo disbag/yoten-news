@@ -1,7 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Lora, Onest } from "next/font/google";
 import "./globals.css";
-import { DISPLAY_INIT_SCRIPT } from "./components/theme";
+import { DISPLAY_INIT_SCRIPT, THEME_COLORS } from "./components/theme";
 
 // Lora — тёплая книжная антиква с поддержкой кириллицы, в духе редакторских
 // изданий вроде Kinfolk (в отличие от многих серифов на Google Fonts, не
@@ -29,7 +29,24 @@ export const metadata: Metadata = {
   // Подпись под иконкой при добавлении сайта на главный экран iPhone — без
   // неё iOS подставит начало title и обрежет его. Сами иконки — файлы
   // app/icon.png и app/apple-icon.png, Next подключает их сам.
-  appleWebApp: { title: "Yoten" },
+  // capable + black-translucent — открытый с экрана «Домой» Yoten идёт на весь
+  // экран под статус-бар, как приложение; отступы от выреза — через
+  // env(safe-area-inset-*) (см. globals.css, MobileChrome.tsx). Манифест —
+  // app/manifest.ts.
+  appleWebApp: { title: "Yoten", capable: true, statusBarStyle: "black-translucent" },
+};
+
+// viewport-fit=cover — страница рисуется до краёв экрана, под вырез и полосу
+// «Домой» (без него env(safe-area-inset-*) всегда 0). Масштабирование не
+// запрещаем: это проблема доступности. theme-color — по теме, см. theme.ts.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: THEME_COLORS.light },
+    { media: "(prefers-color-scheme: dark)", color: THEME_COLORS.dark },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

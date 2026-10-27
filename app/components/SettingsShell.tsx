@@ -67,7 +67,7 @@ export default function SettingsShell({ children }: { children: ReactNode }) {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 20px 20px 12px;
+          padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 12px;
         }
         .mobile-header :global(.icon) {
           display: flex;
@@ -134,9 +134,13 @@ export default function SettingsShell({ children }: { children: ReactNode }) {
           align-items: flex-start;
           gap: 12px;
         }
-        .menu :global(a:hover),
         .menu :global(a.active) {
           color: var(--accent);
+        }
+        @media (hover: hover) and (pointer: fine) {
+          .menu :global(a:hover) {
+            color: var(--accent);
+          }
         }
         .body {
           display: flex;

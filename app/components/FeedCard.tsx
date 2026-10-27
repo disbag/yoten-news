@@ -379,8 +379,10 @@ export default function FeedCard({
           color: var(--text-dim);
           cursor: pointer;
         }
-        .post-link:hover {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .post-link:hover {
+            color: var(--accent);
+          }
         }
         .copied {
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -403,8 +405,10 @@ export default function FeedCard({
           color: var(--text);
           text-decoration: none;
         }
-        .source-name:hover {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .source-name:hover {
+            color: var(--accent);
+          }
         }
         .badge {
           font-family: inherit;
@@ -426,8 +430,10 @@ export default function FeedCard({
         .sources a {
           color: inherit;
         }
-        .sources a:hover {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .sources a:hover {
+            color: var(--accent);
+          }
         }
         .date {
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

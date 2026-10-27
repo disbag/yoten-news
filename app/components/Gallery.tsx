@@ -499,8 +499,10 @@ export default function Gallery({
           align-items: center;
           justify-content: center;
         }
-        .arrow:hover {
-          background: rgba(0, 0, 0, 0.6);
+        @media (hover: hover) and (pointer: fine) {
+          .arrow:hover {
+            background: rgba(0, 0, 0, 0.6);
+          }
         }
         .arrow.left {
           left: 10px;

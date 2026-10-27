@@ -86,8 +86,10 @@ function Post({ post }: { post: ThreadPost }) {
           color: var(--text);
           text-decoration: none;
         }
-        .source:hover {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .source:hover {
+            color: var(--accent);
+          }
         }
         .date {
           font-family: var(--font-news), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

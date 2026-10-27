@@ -82,8 +82,10 @@ export default function Lightbox({
           align-items: center;
           justify-content: center;
         }
-        .close:hover {
-          background: rgba(255, 255, 255, 0.22);
+        @media (hover: hover) and (pointer: fine) {
+          .close:hover {
+            background: rgba(255, 255, 255, 0.22);
+          }
         }
         @keyframes fade {
           from {

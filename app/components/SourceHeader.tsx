@@ -120,8 +120,10 @@ export default function SourceHeader({
           overflow: hidden;
           text-overflow: ellipsis;
         }
-        a:hover {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          a:hover {
+            color: var(--accent);
+          }
         }
         .description {
           margin: 0;

@@ -32,7 +32,9 @@ export default function MobileChrome({
       isHidden = nextHidden;
       setHidden(nextHidden);
       const h = header.offsetHeight;
-      root.setProperty("--chrome-offset", desktop.matches || nextHidden ? "0px" : `${h}px`);
+      // Шапка уехала — вкладки встают под статус-бар, а не под него (у
+      // открытого с экрана «Домой» Yoten страница идёт до самого верха).
+      root.setProperty("--chrome-offset", desktop.matches ? "0px" : nextHidden ? "env(safe-area-inset-top, 0px)" : `${h}px`);
     };
     const measure = () => {
       setHeight(header.offsetHeight);
@@ -85,6 +87,10 @@ export default function MobileChrome({
   return (
     <>
       <div className="header-space" style={{ height }} />
+      {/* Фон под статус-баром, пока шапка спрятана: иначе в полноэкранном
+          режиме под часами и батареей просвечивала бы лента. В браузере
+          высота нулевая. */}
+      <div className="status-bar-backing" />
       <div className={hidden ? "header top hidden" : "header top"} ref={headerRef}>
         <button className="icon-button" aria-label="Меню" onClick={() => setOpen(true)}>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
@@ -135,8 +141,18 @@ export default function MobileChrome({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 20px 20px 12px;
+          /* Сверху — ещё и вырез/Dynamic Island (viewport-fit=cover). */
+          padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 12px;
           width: 100%;
+        }
+        .status-bar-backing {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: env(safe-area-inset-top, 0px);
+          background: var(--bg);
+          z-index: 29;
         }
         .top {
           position: fixed;
@@ -229,8 +245,10 @@ export default function MobileChrome({
           color: inherit;
           text-decoration: none;
         }
-        .account :global(a:hover) {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .account :global(a:hover) {
+            color: var(--accent);
+          }
         }
       `}</style>
     </>

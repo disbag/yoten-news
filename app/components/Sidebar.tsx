@@ -79,8 +79,10 @@ export default function Sidebar({
         .categories :global(a.active) {
           color: var(--accent);
         }
-        .categories :global(a:hover) {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .categories :global(a:hover) {
+            color: var(--accent);
+          }
         }
         .account {
           display: flex;
@@ -97,8 +99,10 @@ export default function Sidebar({
           color: inherit;
           text-decoration: none;
         }
-        .account :global(a:hover) {
-          color: var(--accent);
+        @media (hover: hover) and (pointer: fine) {
+          .account :global(a:hover) {
+            color: var(--accent);
+          }
         }
       `}</style>
     </aside>

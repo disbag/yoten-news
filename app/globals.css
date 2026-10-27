@@ -131,11 +131,66 @@
   box-sizing: border-box;
 }
 
+html {
+  /* Без серой вспышки поверх нажатой кнопки или ссылки на iPhone и Android —
+     самый заметный признак «это сайт». Отклик на нажатие — свой, см. :active
+     ниже. */
+  -webkit-tap-highlight-color: transparent;
+  /* Без увеличения шрифта при повороте телефона. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-serif), Georgia, "Times New Roman", serif;
+  /* Страница рисуется до краёв экрана (viewport-fit=cover, app/layout.tsx):
+     слева/справа — вырез в горизонтальном положении, снизу — полоса «Домой».
+     Сверху отступ у шапок (MobileChrome.tsx, SettingsShell.tsx). */
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* Элементы управления — как в приложении: нажатие срабатывает сразу, без
+   ожидания второго тапа (touch-action), долгое нажатие не выделяет подпись и
+   не открывает меню «Скопировать/Поделиться». Текст новостей выделяется как
+   обычно — правило только для кнопок и навигации. */
+button,
+[role="button"],
+[role="switch"],
+.tabs a,
+.categories a,
+.sections a,
+.account a,
+.home-link,
+.favicon-link,
+.post-back {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Отклик в момент касания, а не когда палец отпущен. */
+button,
+[role="button"],
+[role="switch"],
+.home-link,
+.favicon-link {
+  transition: opacity 100ms ease-out;
+}
+button:active,
+[role="button"]:active,
+[role="switch"]:active,
+.home-link:active,
+.favicon-link:active,
+.tabs a:active,
+.categories a:active,
+.sections a:active,
+.account a:active,
+.post-back:active {
+  opacity: 0.55;
 }
 
 .shell {
@@ -230,8 +285,12 @@ main {
   text-decoration: none;
 }
 
-.post-back:hover {
-  color: var(--accent);
+/* Наведение — только там, где есть мышь: на телефоне :hover после тапа
+   «залипает» до следующего касания. */
+@media (hover: hover) and (pointer: fine) {
+  .post-back:hover {
+    color: var(--accent);
+  }
 }
 
 .post-gone {
