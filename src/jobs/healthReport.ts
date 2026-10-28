@@ -41,10 +41,16 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
-// Строки лога одного прогона без служебных префиксов GitHub (джоба, шаг, время).
-async function runLog(id: number): Promise<string[]> {
+// Строки лога одного прогона: время и текст без служебных префиксов GitHub
+// (джоба, шаг, отметка времени).
+type LogLine = { at: number; text: string };
+async function runLog(id: number): Promise<LogLine[]> {
   const text = await gh(["run", "view", String(id), "--repo", REPO, "--log"]).catch(() => "");
-  return text.split("\n").map((line) => line.split("\t").slice(2).join("\t").replace(/^\S+Z /, ""));
+  return text.split("\n").map((line) => {
+    const rest = line.split("\t").slice(2).join("\t");
+    const stamp = rest.match(/^(\S+Z) /);
+    return { at: stamp ? Date.parse(stamp[1]) : NaN, text: stamp ? rest.slice(stamp[0].length) : rest };
+  });
 }
 
 type SourceLog = { runs: number; rssErrors: number; lastRssError?: string; pageErrors: number };
@@ -61,12 +67,15 @@ async function collectRuns() {
   const sources = new Map<string, SourceLog>();
   let groq = 0;
   let stops = 0;
-  let modelDown = 0;
+  // Сбои Gemini (таймаут или 5xx на паре модель+ключ — сбор при этом
+  // переключается на другую) — по времени, чтобы найти часы перегрузки.
+  const geminiFailures: number[] = [];
+  let postponed = 0;
   let threadErrors = 0;
   for (const lines of logs) {
     let source = "";
     const seen = new Set<string>();
-    for (const line of lines) {
+    for (const { at, text: line } of lines) {
       if (line.startsWith("→ ")) {
         source = line.slice(2).replace(/ \(.*\)$/, "");
         const s = sources.get(source) ?? { runs: 0, rssErrors: 0, pageErrors: 0 };
@@ -83,7 +92,8 @@ async function collectRuns() {
       if (s && line.includes("страница статьи не открылась")) s.pageErrors++;
       if (line.includes("переключаюсь на Groq")) groq++;
       if (line.includes("Останавливаю прогон")) stops++;
-      if (/модель .* недоступна/.test(line)) modelDown++;
+      if (/Gemini: (?:модель .* недоступна|ключ #\d+ недоступен)/.test(line) && !Number.isNaN(at)) geminiFailures.push(at);
+      if (line.includes("Gemini перегружен, статья пропущена")) postponed++;
       if (line.includes("Треды: ошибка раскладки")) threadErrors++;
     }
   }
@@ -97,7 +107,8 @@ async function collectRuns() {
     sources,
     groq,
     stops,
-    modelDown,
+    geminiFailures,
+    postponed,
     threadErrors,
   };
 }
@@ -150,6 +161,34 @@ async function checkSite(): Promise<string | null> {
     }
   }
   return null;
+}
+
+// Перегрузка Gemini — только заметная: часы (по Москве), где сбоев 5 и
+// больше. Одиночные таймауты за сутки — обычное дело, сбор их сам обходит;
+// голое «недоступны 34 раза» читалось как авария, хотя статьи не терялись
+// (28 октября: 36 из 44 сбоев — за два часа вечером 27-го).
+const OVERLOAD_PER_HOUR = 5;
+function geminiOverload(failures: number[], postponed: number): string | null {
+  const HOUR = 60 * 60 * 1000;
+  const byHour = new Map<number, number>();
+  for (const at of failures) byHour.set(Math.floor(at / HOUR), (byHour.get(Math.floor(at / HOUR)) ?? 0) + 1);
+  const busy = [...byHour].filter(([, n]) => n >= OVERLOAD_PER_HOUR).map(([h]) => h).sort((a, b) => a - b);
+  if (!busy.length) return null;
+  // Соседние часы — один промежуток: «17:00–19:00».
+  const ranges: [number, number][] = [];
+  for (const h of busy) {
+    const last = ranges[ranges.length - 1];
+    if (last && h === last[1] + 1) last[1] = h;
+    else ranges.push([h, h]);
+  }
+  const time = (hour: number) =>
+    new Date(hour * HOUR).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" });
+  const when = ranges.map(([a, b]) => `${time(a)}–${time(b + 1)}`).join(", ");
+  const count = busy.reduce((sum, h) => sum + byHour.get(h)!, 0);
+  const outcome = postponed
+    ? `${plural(postponed, "статья отложена", "статьи отложены", "статей отложено")} до следующего прогона`
+    : "статьи не потеряны";
+  return `перегрузка Gemini ${when} МСК (${plural(count, "сбой", "сбоя", "сбоев")}): сбор переключался между моделями, ${outcome}`;
 }
 
 const share = (part: number, whole: number) => (whole ? part / whole : 0);
@@ -223,8 +262,12 @@ async function main() {
   }
   const notes: string[] = [];
   if (runs.groq) notes.push(`Groq подменял Gemini ${plural(runs.groq, "раз", "раза", "раз")}`);
-  if (runs.modelDown) notes.push(`модели Gemini были недоступны ${plural(runs.modelDown, "раз", "раза", "раз")}, сбор переключался на другую`);
-  if (notes.length) lines.push("", `ℹ️ ${notes.join("; ")}.`);
+  const overload = geminiOverload(runs.geminiFailures, runs.postponed);
+  if (overload) notes.push(overload);
+  if (notes.length) {
+    const note = notes.join("; ");
+    lines.push("", `ℹ️ ${note[0].toUpperCase()}${note.slice(1)}.`);
+  }
   const text = lines.join("\n");
 
   console.log(text);
