@@ -23,6 +23,11 @@ import { SOURCES } from "../config/sources.js";
 const DIR = path.join(process.cwd(), "public", "favicons");
 const force = process.argv.includes("--force");
 const only = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
+// Иконки, собранные вручную, — --force их не трогает (только явный хост).
+// House & Garden: у сайта есть лишь favicon.ico 16×16, и Google отдаёт его же;
+// иконка 64 px — буква «H» из их логотипа logo-seo.png (1210×442), чёрная на
+// белом, как их фавиконка (28 октября 2026).
+const MANUAL = new Set(["www.houseandgarden.co.uk"]);
 const MIN_SIZE = 32;
 const SIZE = 64;
 
@@ -40,7 +45,7 @@ async function main() {
   let failed = 0;
   for (const host of hosts) {
     const file = path.join(DIR, `${host}.png`);
-    if (only.length ? !only.includes(host) : !force && fs.existsSync(file)) continue;
+    if (only.length ? !only.includes(host) : (!force || MANUAL.has(host)) && fs.existsSync(file)) continue;
     try {
       let image = await download(`https://www.google.com/s2/favicons?domain=${host}&sz=${SIZE}`);
       if (((await sharp(image).metadata()).width ?? 0) < MIN_SIZE) {
