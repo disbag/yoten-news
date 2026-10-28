@@ -1,10 +1,9 @@
 name: Health report
 
-# Ежедневный отчёт о состоянии ленты в Telegram (DIS-81, src/jobs/healthReport.ts).
-# 07:00 UTC = 10:00 по Москве. workflow_dispatch — ручной запуск.
+# Отчёт о состоянии ленты в Telegram (DIS-81, src/jobs/healthReport.ts) —
+# ручной запуск. Ежедневный в 10:00 МСК отправляет прогон сбора
+# (fetch-cron.yml): своё расписание GitHub пропускало запуски.
 on:
-  schedule:
-    - cron: "0 7 * * *"
   workflow_dispatch: {}
 
 permissions:

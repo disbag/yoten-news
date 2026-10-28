@@ -21,6 +21,11 @@ concurrency:
   group: fetch-cron
   cancel-in-progress: false
 
+# actions: read — отчёт о состоянии (шаг в конце) читает прогоны и их логи.
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -74,3 +79,42 @@ jobs:
           # кластеров вроде #1927 → "192***").
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS }}
           DEDUPE_THRESHOLD: ${{ vars.DEDUPE_THRESHOLD }}
+
+      # Ежедневный отчёт о состоянии в Telegram (DIS-81, src/jobs/healthReport.ts).
+      # Своё расписание GitHub ненадёжно — 28 октября запуск в 07:00 UTC он
+      # просто пропустил, — поэтому отчёт отправляет первый прогон сбора после
+      # 10:00 МСК (07:00 UTC), а сбор надёжно запускает cron-job.org. Метка в
+      # кэше на дату не даёт отправить второй раз; не получилось — отправит
+      # следующий прогон, до 13:00 МСК. Отчёт — и после неудачного сбора.
+      - name: Health report due?
+        id: health
+        if: always()
+        run: |
+          echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          hour=$(date -u +%H)
+          if [ "$hour" -ge 7 ] && [ "$hour" -lt 10 ]; then echo "due=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Health report already sent today?
+        id: sent
+        if: always() && steps.health.outputs.due == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: .health-report-sent
+          key: health-report-${{ steps.health.outputs.date }}
+          lookup-only: true
+
+      - name: Health report
+        if: always() && steps.health.outputs.due == 'true' && steps.sent.outputs.cache-hit != 'true'
+        run: npm run health && date -u > .health-report-sent
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GH_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Remember the report was sent
+        if: always() && hashFiles('.health-report-sent') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .health-report-sent
+          key: health-report-${{ steps.health.outputs.date }}
