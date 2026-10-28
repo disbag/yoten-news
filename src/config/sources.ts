@@ -83,6 +83,12 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
     homepageUrl: "https://www.nytimes.com",
     skipArticlePage: true, // страница статьи отвечает 403, см. skipArticlePage
+    // Отдельные обновления лайв-блога (/live/<дата>/world/<блог>/<запись>):
+    // заголовок «Here’s the latest.», анонс в одно предложение без места или
+    // пустой — в ленте выходила новость «непонятно откуда» (крушение поездов
+    // под Толедо, 28 октября 2026). Главная запись блога
+    // (/live/<дата>/world/<блог>) остаётся: у неё нормальные заголовок и анонс.
+    skipLinkPattern: /^\/live\/\d{4}\/\d{2}\/\d{2}\/[^/]+\/[^/]+\/[^/]+/,
   },
   {
     name: "Wired",
