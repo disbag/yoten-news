@@ -561,7 +561,7 @@ async function processSource(
       if (err instanceof GeminiQuotaExhaustedError) {
         await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
         if (!toleratesOverload(err)) throw err;
-        console.error(`  Gemini перегружен, статья пропущена до следующего прогона`);
+        console.error(`  Gemini перегружен, статья пропущена до следующего прогона (${item.link})`);
         continue;
       }
       console.error(`  ошибка саммаризации: ${(err as Error).message}`);

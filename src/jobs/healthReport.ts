@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pool } from "../lib/db.js";
 import { SOURCES } from "../config/sources.js";
+import { geminiOverload } from "./geminiOverload.js";
 
 // Ежедневный отчёт о состоянии ленты (DIS-81): работает ли сбор, отвечает ли
 // сайт и какие издания сломались. В отчёт попадают только проблемы — издания,
@@ -70,7 +71,7 @@ async function collectRuns() {
   // Сбои Gemini (таймаут или 5xx на паре модель+ключ — сбор при этом
   // переключается на другую) — по времени, чтобы найти часы перегрузки.
   const geminiFailures: number[] = [];
-  let postponed = 0;
+  const postponed: { at: number; article: string }[] = [];
   let threadErrors = 0;
   for (const lines of logs) {
     let source = "";
@@ -93,7 +94,8 @@ async function collectRuns() {
       if (line.includes("переключаюсь на Groq")) groq++;
       if (line.includes("Останавливаю прогон")) stops++;
       if (/Gemini: (?:модель .* недоступна|ключ #\d+ недоступен)/.test(line) && !Number.isNaN(at)) geminiFailures.push(at);
-      if (line.includes("Gemini перегружен, статья пропущена")) postponed++;
+      const postponedMatch = line.match(/Gemini перегружен, статья пропущена(?: до следующего прогона)?(?: \((https?:\/\/\S+)\))?/);
+      if (postponedMatch && !Number.isNaN(at)) postponed.push({ at, article: postponedMatch[1] ?? `legacy:${at}` });
       if (line.includes("Треды: ошибка раскладки")) threadErrors++;
     }
   }
@@ -161,34 +163,6 @@ async function checkSite(): Promise<string | null> {
     }
   }
   return null;
-}
-
-// Перегрузка Gemini — только заметная: часы (по Москве), где сбоев 5 и
-// больше. Одиночные таймауты за сутки — обычное дело, сбор их сам обходит;
-// голое «недоступны 34 раза» читалось как авария, хотя статьи не терялись
-// (28 октября: 36 из 44 сбоев — за два часа вечером 27-го).
-const OVERLOAD_PER_HOUR = 5;
-function geminiOverload(failures: number[], postponed: number): string | null {
-  const HOUR = 60 * 60 * 1000;
-  const byHour = new Map<number, number>();
-  for (const at of failures) byHour.set(Math.floor(at / HOUR), (byHour.get(Math.floor(at / HOUR)) ?? 0) + 1);
-  const busy = [...byHour].filter(([, n]) => n >= OVERLOAD_PER_HOUR).map(([h]) => h).sort((a, b) => a - b);
-  if (!busy.length) return null;
-  // Соседние часы — один промежуток: «17:00–19:00».
-  const ranges: [number, number][] = [];
-  for (const h of busy) {
-    const last = ranges[ranges.length - 1];
-    if (last && h === last[1] + 1) last[1] = h;
-    else ranges.push([h, h]);
-  }
-  const time = (hour: number) =>
-    new Date(hour * HOUR).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" });
-  const when = ranges.map(([a, b]) => `${time(a)}–${time(b + 1)}`).join(", ");
-  const count = busy.reduce((sum, h) => sum + byHour.get(h)!, 0);
-  const outcome = postponed
-    ? `${plural(postponed, "статья отложена", "статьи отложены", "статей отложено")} до следующего прогона`
-    : "статьи не потеряны";
-  return `перегрузка Gemini ${when} МСК (${plural(count, "сбой", "сбоя", "сбоев")}): сбор переключался между моделями, ${outcome}`;
 }
 
 const share = (part: number, whole: number) => (whole ? part / whole : 0);

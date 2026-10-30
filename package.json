@@ -9,6 +9,7 @@
     "db:init": "tsx src/jobs/initDb.ts",
     "dev": "next dev",
     "build": "next build",
+    "test": "node --import tsx --test src/jobs/*.test.ts",
     "start": "next start",
     "favicons": "tsx src/jobs/fetchFavicons.ts",
     "threads": "tsx src/jobs/assignThreads.ts",
