@@ -13,7 +13,7 @@ import type { GallerySite } from "../lib/ogTags.js";
 // каскад JSON-LD → крупнейший <article> → вся страница — большинству изданий
 // этого достаточно, override нужен только когда общий каскад демонстрирует
 // проблему на конкретном сайте, которую нельзя исправить универсально.
-type SourceConfig = {
+export type SourceConfig = {
   name: string;
   rssUrl: string;
   // Фиды других разделов того же издания: у крупных изданий раздел — отдельный
@@ -75,6 +75,8 @@ type SourceConfig = {
   // Отрезать от ссылок из фида всё после "?" — когда издание дописывает к
   // ним рекламные метки (utm_…), а сама статья открывается и без них.
   stripLinkQuery?: boolean;
+  // Часовой пояс ISO-дат без суффикса в RSS. Явный суффикс имеет приоритет.
+  feedDateOffset?: string;
 };
 
 export const SOURCES: SourceConfig[] = [
@@ -587,6 +589,7 @@ export const SOURCES: SourceConfig[] = [
     // закрыты от бота (DataDome), тогда пересказ строится по тексту из фида.
     // К ссылкам в фиде дописаны метки ?partner=rss&utm_…
     name: "Fast Company",
+    feedDateOffset: "+00:00",
     rssUrl: "https://www.fastcompany.com/co-design/rss",
     homepageUrl: "https://www.fastcompany.com/co-design",
     gallery: "fastcompany",

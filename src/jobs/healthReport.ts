@@ -1,16 +1,21 @@
 import "dotenv/config";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { pool } from "../lib/db.js";
 import { SOURCES } from "../config/sources.js";
 import { geminiOverload } from "./geminiOverload.js";
+import { sourceHealth, volumeBaseline, reportChunks, type VolumeDay } from "./healthDiagnostics.js";
+import type { SourceDiagnostic } from "./sourceDiagnostics.js";
 
 // Ежедневный отчёт о состоянии ленты (DIS-81): работает ли сбор, отвечает ли
 // сайт и какие издания сломались. В отчёт попадают только проблемы — издания,
 // у которых всё в порядке, не перечисляются.
 //
-// Данные: прогоны сбора за сутки и их логи (GitHub Actions, через gh) и
-// статьи в базе за сутки против предыдущих шести дней. Отправка — ботом
+// Данные: прогоны и их логи за сутки (GitHub Actions, через gh), диагностика
+// фидов и статьи за вчера по Москве. Объём сравнивается с сопоставимыми
+// днями за 56 дней. Отправка — ботом
 // Telegram (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID); без них или с --dry отчёт
 // только печатается.
 const exec = promisify(execFile);
@@ -115,11 +120,14 @@ async function collectRuns() {
   };
 }
 
-// Статьи по изданиям: последние сутки против среднего за предыдущие 6 дней.
+// Полный предыдущий день по Москве, без смешивания воскресенья с частью
+// понедельника. История суточных объёмов хранится отдельно от статей.
 // Сигналы — то, что ломалось на деле: пропали статьи (фид сломан или пуст),
 // обложки, галереи (Dezeen сменил адрес картинок 21 октября), продолжение
 // «Читать» (InsideEVs закрылся проверкой на бота 23 октября).
-async function collectArticles() {
+export async function collectArticles() {
+  const today = "(date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow')";
+  const yesterday = `${today} - interval '1 day'`;
   const { rows } = await pool.query<{
     name: string;
     n_day: number;
@@ -132,25 +140,42 @@ async function collectArticles() {
     more_week: number;
   }>(
     `SELECT s.name,
-       count(*) FILTER (WHERE a.created_at > now() - interval '1 day')::int AS n_day,
-       count(*) FILTER (WHERE a.created_at <= now() - interval '1 day')::int AS n_week,
-       count(*) FILTER (WHERE a.created_at > now() - interval '1 day' AND a.image_url IS NOT NULL)::int AS img_day,
-       count(*) FILTER (WHERE a.created_at <= now() - interval '1 day' AND a.image_url IS NOT NULL)::int AS img_week,
-       count(*) FILTER (WHERE a.created_at > now() - interval '1 day' AND cardinality(a.image_urls) > 1)::int AS gal_day,
-       count(*) FILTER (WHERE a.created_at <= now() - interval '1 day' AND cardinality(a.image_urls) > 1)::int AS gal_week,
-       count(*) FILTER (WHERE a.created_at > now() - interval '1 day' AND a.ai_summary_more IS NOT NULL)::int AS more_day,
-       count(*) FILTER (WHERE a.created_at <= now() - interval '1 day' AND a.ai_summary_more IS NOT NULL)::int AS more_week
+       count(a.id) FILTER (WHERE a.created_at >= ${yesterday})::int AS n_day,
+       count(a.id) FILTER (WHERE a.created_at < ${yesterday})::int AS n_week,
+       count(a.id) FILTER (WHERE a.created_at >= ${yesterday} AND a.image_url IS NOT NULL)::int AS img_day,
+       count(a.id) FILTER (WHERE a.created_at < ${yesterday} AND a.image_url IS NOT NULL)::int AS img_week,
+       count(a.id) FILTER (WHERE a.created_at >= ${yesterday} AND cardinality(a.image_urls) > 1)::int AS gal_day,
+       count(a.id) FILTER (WHERE a.created_at < ${yesterday} AND cardinality(a.image_urls) > 1)::int AS gal_week,
+       count(a.id) FILTER (WHERE a.created_at >= ${yesterday} AND a.ai_summary_more IS NOT NULL)::int AS more_day,
+       count(a.id) FILTER (WHERE a.created_at < ${yesterday} AND a.ai_summary_more IS NOT NULL)::int AS more_week
      FROM sources s
-     LEFT JOIN articles a ON a.source_id = s.id AND a.created_at > now() - interval '7 days' AND a.visible_at IS NOT NULL
+     LEFT JOIN articles a ON a.source_id = s.id AND a.created_at >= ${today} - interval '7 days' AND a.created_at < ${today} AND a.visible_at IS NOT NULL
      GROUP BY s.name`
   );
-  const { rows: totals } = await pool.query<{ day: number; week: number; oldest: Date }>(
-    `SELECT count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS day,
-            count(*) FILTER (WHERE created_at <= now() - interval '1 day')::int AS week,
-            min(created_at) AS oldest
-     FROM articles WHERE created_at > now() - interval '7 days' AND visible_at IS NOT NULL`
+  const { rows: totals } = await pool.query<{ day: number; week: number; target_day: string }>(
+    `SELECT count(*) FILTER (WHERE created_at >= ${yesterday})::int AS day,
+            count(*) FILTER (WHERE created_at < ${yesterday})::int AS week,
+            to_char((now() AT TIME ZONE 'Europe/Moscow')::date - 1, 'YYYY-MM-DD') AS target_day
+     FROM articles WHERE created_at >= ${today} - interval '7 days' AND created_at < ${today} AND visible_at IS NOT NULL`
   );
   return { rows, total: totals[0] };
+}
+
+export async function collectDiagnostics() {
+  try {
+    const { rows: [tables] } = await pool.query<{ runs: string | null; volumes: string | null }>(
+      "SELECT to_regclass('source_fetch_diagnostics')::text AS runs, to_regclass('source_volume_daily')::text AS volumes"
+    );
+    if (!tables.runs || !tables.volumes) return { records: [] as SourceDiagnostic[], history: [] as VolumeDay[], available: false };
+    const [runs, volumes] = await Promise.all([
+      pool.query<{ data: SourceDiagnostic }>("SELECT data FROM source_fetch_diagnostics WHERE observed_at > now() - interval '1 day' ORDER BY observed_at"),
+      pool.query<VolumeDay>("SELECT day::text, name, articles FROM source_volume_daily WHERE day >= (now() AT TIME ZONE 'Europe/Moscow')::date - 56"),
+    ]);
+    return { records: runs.rows.map(r => r.data), history: volumes.rows, available: true };
+  } catch (err) {
+    console.error(`Диагностика отчёта недоступна: ${(err as Error).message}`);
+    return { records: [] as SourceDiagnostic[], history: [] as VolumeDay[], available: false };
+  }
 }
 
 async function checkSite(): Promise<string | null> {
@@ -176,27 +201,27 @@ function plural(n: number, one: string, few: string, many: string): string {
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 async function main() {
-  const [runs, articles, siteProblem] = await Promise.all([collectRuns(), collectArticles(), checkSite()]);
+  const [runs, articles, siteProblem, diagnostics] = await Promise.all([collectRuns(), collectArticles(), checkSite(), collectDiagnostics()]);
   const sourceProblems: string[] = [];
+  const sourceNotes: string[] = [];
   const byName = new Map(articles.rows.map((r) => [r.name, r]));
   const empty = { n_day: 0, n_week: 0, img_day: 0, img_week: 0, gal_day: 0, gal_week: 0, more_day: 0, more_week: 0 };
 
-  // Дней в базовом периоде — у изданий, добавленных на неделе, их меньше.
-  const baseDays = Math.max(1, Math.min(6, (Date.now() - new Date(articles.total.oldest).getTime()) / DAY_MS - 1));
   // По изданиям из конфига — и тем, у кого статей в базе нет вовсе.
   for (const name of [...new Set(SOURCES.map((s) => s.name))]) {
     const r = { name, ...(byName.get(name) ?? empty) };
-    const perDay = r.n_week / baseDays;
     const log = runs.sources.get(r.name);
+    const records = diagnostics.records.filter(d => d.name === name);
+    const health = sourceHealth(records, Date.now());
+    const baseline = volumeBaseline(diagnostics.history, name, articles.total.target_day);
     const issues: string[] = [];
-    if (log && log.rssErrors > 0 && log.rssErrors >= log.runs / 2) {
+    issues.push(...health.problems.map(esc));
+    if (health.notes.length) sourceNotes.push(`• <b>${esc(name)}</b> — ${health.notes.map(esc).join("; ")}`);
+    else if (baseline !== null && baseline >= 2 && r.n_day < baseline * 0.5 && !health.problems.length) {
+      sourceNotes.push(`• <b>${esc(name)}</b> — за вчера ${r.n_day} статей; в сопоставимые дни ~${Math.round(baseline)}, техническая причина не подтверждена`);
+    }
+    if (!records.length && log && log.rssErrors >= 2 && log.rssErrors >= log.runs / 2) {
       issues.push(`RSS не открывается: ${esc(log.lastRssError ?? "ошибка")} в ${log.rssErrors} из ${log.runs} прогонов`);
-    } else if (r.n_day === 0 && perDay >= 2) {
-      issues.push(`ни одной статьи за сутки (обычно ~${Math.round(perDay)} в день)`);
-    } else if (r.n_day === 0 && r.n_week === 0) {
-      // Так выглядело издание, фид которого с GitHub отдаёт не то, что
-      // локально (Cool Hunting, 26 октября): ни ошибок, ни статей.
-      issues.push("ни одной статьи за неделю");
     }
     if (r.n_day >= 3) {
       const checks: [string, number, number, number][] = [
@@ -206,7 +231,7 @@ async function main() {
       ];
       for (const [what, day, week, min] of checks) {
         const before = share(week, r.n_week);
-        if (before >= min && day === 0) issues.push(`пропали ${what}: 0 из ${r.n_day} за сутки (было ${pct(before)})`);
+        if (before >= min && day === 0) issues.push(`пропали ${what}: 0 из ${r.n_day} за вчера (было ${pct(before)})`);
       }
     }
     if (issues.length) sourceProblems.push(`• <b>${esc(r.name)}</b> — ${issues.join("; ")}`);
@@ -219,14 +244,17 @@ async function main() {
   if (runs.failed) problems.push(`Прогонов с ошибкой: ${runs.failed} из ${runs.total}`);
   if (runs.stops) problems.push(`Прогон останавливался из-за лимитов моделей: ${plural(runs.stops, "раз", "раза", "раз")}`);
   if (runs.threadErrors) problems.push(`Ошибки раскладки по тредам: ${runs.threadErrors}`);
-  const usualPerDay = articles.total.week / baseDays;
-  if (usualPerDay > 0 && articles.total.day < usualPerDay * 0.5)
-    problems.push(`Статей за сутки ${articles.total.day} — вдвое меньше обычного (~${Math.round(usualPerDay)})`);
+  const dailyTotals = new Map<string, number>();
+  for (const row of diagnostics.history) dailyTotals.set(row.day, (dailyTotals.get(row.day) ?? 0) + row.articles);
+  const usualPerDay = volumeBaseline([...dailyTotals].map(([day, articles]) => ({ day, name: "total", articles })), "total", articles.total.target_day);
+  if (usualPerDay !== null && usualPerDay > 0 && articles.total.day < usualPerDay * 0.5)
+    problems.push(`За вчера статей ${articles.total.day} — вдвое меньше сопоставимых дней (~${Math.round(usualPerDay)})`);
   if (siteProblem) problems.push(`Сайт: ${esc(siteProblem)}`);
 
   const date = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", timeZone: "Europe/Moscow" });
   const lines = [`<b>Yoten — ${date}</b>`];
-  const summary = `${plural(runs.total, "прогон", "прогона", "прогонов")} сбора, статей за сутки ${articles.total.day} (обычно ~${Math.round(usualPerDay)})`;
+  const summary = `${plural(runs.total, "прогон", "прогона", "прогонов")} сбора за сутки; статей за вчера ${articles.total.day}` +
+    (usualPerDay !== null ? ` (в сопоставимые дни ~${Math.round(usualPerDay)})` : " (история для сравнения накапливается)");
   if (!problems.length && !sourceProblems.length) {
     lines.push(`✅ Всё работает: ${summary}, сайт отвечает.`);
   } else {
@@ -242,6 +270,8 @@ async function main() {
     const note = notes.join("; ");
     lines.push("", `ℹ️ ${note[0].toUpperCase()}${note.slice(1)}.`);
   }
+  if (!diagnostics.available) lines.push("", "ℹ️ Диагностика источников недоступна; проверка сбора выполнена по логам.");
+  if (sourceNotes.length) lines.push("", "<b>Наблюдения по источникам:</b>", ...sourceNotes);
   const text = lines.join("\n");
 
   console.log(text);
@@ -251,15 +281,17 @@ async function main() {
     if (!dry) console.log("\n(TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы — отчёт не отправлен)");
     return;
   }
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
-  });
-  if (!res.ok) throw new Error(`Telegram ответил ${res.status}: ${await res.text()}`);
+  for (const chunk of reportChunks(text)) {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chat, text: chunk, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    if (!res.ok) throw new Error(`Telegram ответил ${res.status}: ${await res.text()}`);
+  }
 }
 
-main()
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
   .catch((err) => {
     console.error(err);
     process.exitCode = 1;

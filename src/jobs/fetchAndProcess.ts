@@ -1,5 +1,8 @@
 import "dotenv/config";
 import Parser from "rss-parser";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { pool, toVectorLiteral } from "../lib/db.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
@@ -18,6 +21,8 @@ import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
 import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
+import { normalizeFeedDate, fetchWindowHours, inFetchWindow, freshFirst, claimRecoverySlot, type PreviousFetch } from "./fetchPolicy.js";
+import { diagnosticFor, fingerprint, initDiagnostics, outcome, persistDiagnostics, type SourceDiagnostic, type FeedResponse } from "./sourceDiagnostics.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
 // Lifehacker — Ziff Davis) кладут туда ПОЛНЫЙ, уже чистый текст статьи прямо
@@ -126,7 +131,7 @@ const LIVE_BLOG_LINK_PATTERN = /\/live\/\d{4}\/\w{3}\/\d{2}\//;
 // (/cartoons/daily-cartoon/...) до саммаризации, как и live-блоги выше.
 const DAILY_CARTOON_LINK_PATTERN = /\/cartoons\/daily-cartoon\//;
 
-// Окно — последние 24 часа от момента прогона (DIS-66), а не "сегодня по
+// Обычное окно — последние 24 часа от момента прогона (DIS-66), а не "сегодня по
 // UTC", как было раньше. При окне по календарной дате статья, опубликованная
 // незадолго до полуночи UTC, но попавшая в фид уже после неё (CDN держит фид
 // в кеше: ArchitectureAU — 2 часа, Abduzeedo — 4), считалась вчерашней и
@@ -135,15 +140,8 @@ const DAILY_CARTOON_LINK_PATTERN = /\/cartoons\/daily-cartoon\//;
 // проверка по articles и skipped_links. Дата в будущем (часовой пояс издания
 // указан с ошибкой) допускается в пределах тех же суток. FETCH_SINCE_DAYS=N
 // расширяет окно ещё на N суток назад — для ручной догрузки.
-const FETCH_WINDOW_MS = (1 + FETCH_SINCE_DAYS) * 24 * 60 * 60 * 1000;
-function isWithinFetchWindow(isoDate: string | undefined): boolean {
-  if (!isoDate) return false;
-  const time = new Date(isoDate).getTime();
-  if (Number.isNaN(time)) return false;
-  const now = Date.now();
-  return time >= now - FETCH_WINDOW_MS && time <= now + 24 * 60 * 60 * 1000;
-}
-
+// После первого диагностируемого прогона неизвестные ссылки проверяются
+// также в перекрытии до 72 часов; догрузка ограничена отдельно от свежих.
 // Заголовки The Verge приходят с кодами символов («Apple&#8217;s HomeView»),
 // и так они попадали в базу, промпты и заголовок страницы поста (23 статьи
 // за неделю, DIS-36). Раскодируем одним проходом, чтобы «&amp;#8217;»
@@ -197,7 +195,7 @@ function stripFeedFooter(text: string, sourceFooter?: RegExp): string {
 // первая попытка никогда не завершается. Реальный случай — весь прогон
 // зависал на одном источнике на десятки минут, пока не упирался в
 // timeout-minutes джобы или его не останавливали вручную.
-async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
+export async function fetchFeedText(rssUrl: string, attempts = 3): Promise<FeedResponse> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(rssUrl, {
@@ -207,10 +205,11 @@ async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
         },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!res.ok) throw new Error(`Status code ${res.status}`);
-      return await res.text();
+      if (!res.ok) throw Object.assign(new Error(`Status code ${res.status}`), { status: res.status });
+      return { xml: await res.text(), status: res.status, contentType: res.headers.get("content-type"), age: res.headers.get("age") };
     } catch (err) {
-      if (attempt === attempts) throw err;
+      const status = (err as { status?: number }).status;
+      if (attempt === attempts || (status && status >= 400 && status < 500 && status !== 408 && status !== 429)) throw err;
       await sleep(1000 * attempt);
     }
   }
@@ -222,10 +221,10 @@ async function fetchFeedText(rssUrl: string, attempts = 3): Promise<string> {
 // всё равно идёт по очереди. Ответ ленты ждёт своей очереди в памяти — это
 // сотни килобайт на ленту.
 const FEED_CONCURRENCY = 8;
-function prefetchFeeds(urls: string[]): Map<string, Promise<string>> {
+function prefetchFeeds(urls: string[]): Map<string, Promise<FeedResponse>> {
   const tasks = urls.map((url) => {
-    let settle!: { resolve: (xml: string) => void; reject: (err: unknown) => void };
-    const promise = new Promise<string>((resolve, reject) => (settle = { resolve, reject }));
+    let settle!: { resolve: (xml: FeedResponse) => void; reject: (err: unknown) => void };
+    const promise = new Promise<FeedResponse>((resolve, reject) => (settle = { resolve, reject }));
     promise.catch(() => {}); // ошибку прочитает processSource; до тех пор она не "необработанная"
     return { url, promise, settle };
   });
@@ -240,10 +239,15 @@ function prefetchFeeds(urls: string[]): Map<string, Promise<string>> {
   return new Map(tasks.map((t) => [t.url, t.promise]));
 }
 
-async function processSource(
+export async function processSource(
   source: { id: number; name: string; rss_url: string },
-  feedText: Promise<string>,
-  remaining: { count: number }
+  feedText: Promise<FeedResponse>,
+  remaining: { count: number },
+  diagnostic: SourceDiagnostic,
+  previous: PreviousFetch | undefined,
+  recoveryBudget: { count: number },
+  progress: () => void = heartbeat,
+  sourceRecoveryBudget: { count: number } = { count: 10 }
 ) {
   // Ручной override контент-селектора для этого издания, если задан в
   // конфиге (см. contentSelector в src/config/sources.ts) — источники
@@ -256,43 +260,63 @@ async function processSource(
   const isExtraFeed = sourceConfig?.extraFeeds?.includes(source.rss_url);
   console.log(`→ ${source.name}${isExtraFeed ? ` (${source.rss_url.replace(/^https?:\/\/(?:www\.)?/, "")})` : ""}`);
   const contentSelector = sourceConfig?.contentSelector;
+  const now = Date.now();
+  diagnostic.windowHours = fetchWindowHours(previous, now, FETCH_SINCE_DAYS);
   let feed;
   try {
-    const xml = await feedText;
-    feed = await parser.parseString(xml);
+    const response = await feedText;
+    diagnostic.status = response.status;
+    diagnostic.contentType = response.contentType;
+    diagnostic.age = response.age;
+    diagnostic.fingerprint = fingerprint(response.xml);
+    feed = await parser.parseString(response.xml);
   } catch (err) {
+    diagnostic.status ??= (err as { status?: number }).status ?? null;
+    diagnostic.feedError = (err as Error).message.slice(0, 500);
+    diagnostic.retryNeeded = true;
     console.error(`  не удалось получить RSS: ${(err as Error).message}`);
     return;
   }
 
-  const fresh = feed.items.filter((item): item is typeof item & { link: string; title: string } => {
-    if (!item.link || !item.title) return false;
+  diagnostic.items = feed.items.length;
+  // Проверяем неизвестные ссылки в перекрытии даже у здорового RSS: один
+  // запоздалый элемент может появиться среди множества свежих публикаций.
+  const scanHours = previous && FETCH_SINCE_DAYS === 0 ? Math.max(72, diagnostic.windowHours) : diagnostic.windowHours;
+  const candidates = feed.items.filter((item): item is typeof item & { link: string; title: string } => {
+    item.isoDate = normalizeFeedDate(item.pubDate, item.isoDate, sourceConfig?.feedDateOffset);
+    if (item.isoDate && (!diagnostic.newestItemAt || item.isoDate > diagnostic.newestItemAt)) diagnostic.newestItemAt = item.isoDate;
+    if (inFetchWindow(item.isoDate, now, 24)) diagnostic.freshItems++;
+    const sample = { title: item.title?.slice(0, 200), link: item.link?.slice(0, 2048), rawDate: item.pubDate?.slice(0, 100), date: item.isoDate, decision: "eligible" };
+    if ((diagnostic.snapshot ??= []).length < 10) diagnostic.snapshot.push(sample);
+    const reject = (reason: string) => { outcome(diagnostic, reason); sample.decision = reason; return false; };
+    if (!item.link || !item.title) return reject("missing_title_link");
     // Заголовок идёт в эмбеддинг (в том числе отдельный вектор заголовка, см.
     // grouping.ts) и в промпт: Hearst (Esquire, Car and Driver) размечает в
     // нём названия фильмов тегами <i><em>, а The Art Newspaper оборачивает
     // заголовки в пробелы и переносы строк.
     item.title = stripHtml(item.title);
-    if (!item.title) return false;
+    if (!item.title) return reject("missing_title_link");
     // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
     // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
-    if (!/^https?:\/\//i.test(item.link)) return false;
+    if (!/^https?:\/\//i.test(item.link)) return reject("invalid_link");
     // До проверки "уже обработана": в базе ссылка лежит уже без меток.
     if (sourceConfig?.stripLinkQuery) item.link = item.link.replace(/[?#].*$/, "");
+    sample.link = item.link.slice(0, 2048);
     const path = item.link.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, "");
-    if (isAd(item.title, item.link)) return false; // распродажа, подборка скидок, купон — общий фильтр для всех изданий
-    if (sourceConfig?.adTitlePattern?.test(item.title)) return false; // рекламный пост со скидками, см. sources.ts
-    if (sourceConfig?.adLinkPattern?.test(path)) return false; // то же по адресу
-    if (sourceConfig?.skipLinkPattern?.test(path)) return false; // вид материалов, который у издания не берём, см. sources.ts
-    if (sourceConfig?.skipTitlePattern?.test(item.title)) return false; // то же по заголовку
+    if (isAd(item.title, item.link) || sourceConfig?.adTitlePattern?.test(item.title) || sourceConfig?.adLinkPattern?.test(path)) return reject("advertising");
+    if (sourceConfig?.skipLinkPattern?.test(path) || sourceConfig?.skipTitlePattern?.test(item.title)) return reject("excluded_format");
     const skipCategory = sourceConfig?.skipCategoryPattern;
     // Рубрика с атрибутом (<category domain="…">, так у Domino) приходит из
     // rss-parser объектом { _: "Sponsored Content", $: {…} }, а не строкой.
     const categoryName = (c: unknown) => (typeof c === "string" ? c : (c as { _?: unknown } | null)?._);
-    if (skipCategory && (item.categories ?? []).some((c) => { const n = categoryName(c); return typeof n === "string" && skipCategory.test(n); })) return false; // рассылка или оплаченный материал, см. sources.ts
-    if (LIVE_BLOG_LINK_PATTERN.test(item.link)) return false; // live-блог на несколько разных тем сразу, не единичная новость
-    if (DAILY_CARTOON_LINK_PATTERN.test(item.link)) return false; // карикатура без текста, только шаблонное описание
-    return isWithinFetchWindow(item.isoDate); // старше суток (или FETCH_SINCE_DAYS) — не берём в ленту
+    if (skipCategory && (item.categories ?? []).some((c) => { const n = categoryName(c); return typeof n === "string" && skipCategory.test(n); })) return reject("excluded_category");
+    if (LIVE_BLOG_LINK_PATTERN.test(item.link) || DAILY_CARTOON_LINK_PATTERN.test(item.link)) return reject("excluded_format");
+    if (!item.isoDate) return reject("invalid_date");
+    if (!inFetchWindow(item.isoDate, now, scanHours)) return reject("outside_window");
+    return true;
   });
+  const fresh = freshFirst(candidates, now);
+  diagnostic.eligible = fresh.length;
 
   // Уже обработанные (или отброшенные, см. markSkipped) ссылки — одним
   // запросом на ленту: база в Ирландии, сбор — в США, и запрос на каждую
@@ -305,15 +329,35 @@ async function processSource(
   // Сюда же — ссылки, взятые в работу в этом прогоне: одна статья иногда
   // стоит в ленте дважды.
   const known = new Set(knownRows.map((r) => r.link));
+  diagnostic.snapshot = [...fresh.filter(item => !known.has(item.link)).slice(0, 10).map(item => ({
+    title: item.title.slice(0, 200), link: item.link.slice(0, 2048), rawDate: item.pubDate?.slice(0, 100), date: item.isoDate, decision: "eligible",
+  })), ...(diagnostic.snapshot ?? [])].slice(0, 10);
+  const decision = (link: string, value: string) => {
+    const sample = diagnostic.snapshot?.find(s => s.link === link);
+    if (sample) sample.decision = value;
+  };
 
   let pageFailureLogged = false;
-  for (const item of fresh) {
-    heartbeat(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
+  for (const [index, item] of fresh.entries()) {
+    progress(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
     if (remaining.count <= 0) {
+      diagnostic.deferred += fresh.slice(index).filter(i => !known.has(i.link)).length;
+      diagnostic.retryNeeded ||= diagnostic.deferred > 0;
       console.log(`  лимит статей достигнут, пропускаем остальное`);
       return;
     }
-    if (known.has(item.link)) continue;
+    if (known.has(item.link)) { diagnostic.known++; decision(item.link, "known"); continue; }
+    const recovery = !inFetchWindow(item.isoDate, now, 24) && FETCH_SINCE_DAYS === 0;
+    if (recovery && !claimRecoverySlot(sourceRecoveryBudget, recoveryBudget)) {
+      diagnostic.deferred++;
+      diagnostic.retryNeeded = true;
+      outcome(diagnostic, "recovery_limit");
+      decision(item.link, "recovery_limit");
+      continue;
+    }
+    if (recovery) diagnostic.windowHours = Math.max(diagnostic.windowHours, 72);
+    diagnostic.attempted++;
+    decision(item.link, "attempted");
     known.add(item.link);
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
@@ -354,6 +398,7 @@ async function processSource(
         excerpt =
           (feedContent?.length ?? 0) >= (og.excerpt?.length ?? 0) ? feedContent ?? og.excerpt : og.excerpt;
     } catch (err) {
+      diagnostic.pageErrors++;
       // страница недоступна боту — это ожидаемо для части источников
       excerpt = feedContent;
       // Причину пишем один раз на издание за прогон: без неё не отличить
@@ -442,7 +487,7 @@ async function processSource(
         gallery ?? null,
       ]
     );
-    if (insert.rowCount === 0) continue; // параллельный прогон уже вставил эту ссылку
+    if (insert.rowCount === 0) { outcome(diagnostic, "concurrent_duplicate"); continue; }
     const newId = insert.rows[0].id;
 
     // Тот же инфоповод: строгий порог, короткое окно. Источник может быть
@@ -514,6 +559,7 @@ async function processSource(
           overloadedInRow = 0;
           await sleep(REQUEST_INTERVAL_MS);
         } catch (err) {
+          diagnostic.summaryErrors++;
           // Перегрузка — статья и так уже в кластере, просто без продолжения.
           if (err instanceof GeminiQuotaExhaustedError && !toleratesOverload(err)) {
             await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
@@ -529,6 +575,9 @@ async function processSource(
       );
 
       console.log(`  + "${item.title.slice(0, 60)}..." → склеена с кластером #${clusterId}`);
+      diagnostic.saved++;
+      decision(item.link, "saved");
+      if (recovery) diagnostic.recovered++;
       remaining.count -= 1;
       continue;
     }
@@ -551,6 +600,9 @@ async function processSource(
         rawSummary,
       }));
     } catch (err) {
+      diagnostic.summaryErrors++;
+      diagnostic.retryNeeded = true;
+      decision(item.link, "summary_error");
       // Лимиты исчерпаны везде (все ключи, все модели, см. gemini.ts) — дальше
       // пропускать статьи по одной бессмысленно, каждая следующая упрётся в ту
       // же стену. Останавливаем весь пайплайн, а не долбим исчерпанный лимит
@@ -581,6 +633,8 @@ async function processSource(
       console.log(`  – "${item.title.slice(0, 60)}..." → спорт, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
       await markSkipped(item.link, "sport");
+      outcome(diagnostic, "sport");
+      decision(item.link, "sport");
       continue;
     }
 
@@ -591,6 +645,8 @@ async function processSource(
       console.log(`  – "${item.title.slice(0, 60)}..." → реклама/шопинг, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
       await markSkipped(item.link, "shopping");
+      outcome(diagnostic, "shopping");
+      decision(item.link, "shopping");
       continue;
     }
 
@@ -606,6 +662,8 @@ async function processSource(
       console.log(`  – "${item.title.slice(0, 60)}..." → нет текста статьи, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
       await markSkipped(item.link, "no_text");
+      outcome(diagnostic, "no_text");
+      decision(item.link, "no_text");
       continue;
     }
 
@@ -615,6 +673,9 @@ async function processSource(
     );
 
     console.log(`  + "${item.title.slice(0, 60)}..." → новый кластер #${clusterId}`);
+    diagnostic.saved++;
+    decision(item.link, "saved");
+    if (recovery) diagnostic.recovered++;
     remaining.count -= 1;
   }
 }
@@ -710,7 +771,12 @@ async function main() {
   // завершения, если тот прогресс идёт нормально, либо останавливает его и
   // продолжает сама, если он завис (не подавал признаков жизни).
   await acquireLock();
+  const runId = randomUUID();
+  const diagnostics: SourceDiagnostic[] = [];
+  let diagnosticsReady = false;
   try {
+    const previous = await initDiagnostics().then(state => { diagnosticsReady = true; return state; })
+      .catch(err => { console.error(`Диагностика недоступна: ${(err as Error).message}`); return new Map<number, PreviousFetch>(); });
     // Прошлый прогон могли оборвать снаружи (таймаут джобы) — тогда его статьи
     // так и остались скрытыми.
     await revealBatch();
@@ -729,9 +795,28 @@ async function main() {
     const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
     const selected = sources.rows.filter((source) => !only?.length || only.includes(source.name));
     const feeds = prefetchFeeds(selected.map((source) => source.rss_url));
+    const recoveryBudget = { count: 50 };
+    const recoveryByName = new Map<string, { count: number }>();
     for (const source of selected) {
       if (remaining.count <= 0) break;
-      await processSource(source, feeds.get(source.rss_url)!, remaining);
+      const d = diagnosticFor(source);
+      const started = Date.now();
+      const sourceRecoveryBudget = recoveryByName.get(source.name) ?? { count: 10 };
+      recoveryByName.set(source.name, sourceRecoveryBudget);
+      try {
+        await processSource(source, feeds.get(source.rss_url)!, remaining, d, previous.get(source.id), recoveryBudget, heartbeat, sourceRecoveryBudget);
+      } catch (err) {
+        d.retryNeeded = true;
+        outcome(d, "interrupted");
+        throw err;
+      } finally {
+        d.durationMs = Date.now() - started;
+        // Снимок содержит только заголовки, ссылки, даты и решения; не тела
+        // статей. Полные RSS не дублируются в каждом прогоне.
+        if (!d.retryNeeded && !d.feedError && d.items > 0 && !d.outcomes.invalid_date && !(d.eligible > 0 && d.saved === 0 && d.known === 0)) delete d.snapshot;
+        diagnostics.push(d);
+        console.log(`SOURCE_DIAGNOSTIC ${JSON.stringify(d)}`);
+      }
     }
     // Треды (DIS-36): новые карточки раскладываются по тредам (показывает их
     // лента с THREADS_VIEW, см. src/lib/feed.ts). Только после показа пачки —
@@ -751,6 +836,10 @@ async function main() {
       }
     }
   } finally {
+    await revealBatch().catch((err) => console.error(`не удалось показать статьи: ${(err as Error).message}`));
+    // До удаления семидневных статей сохраняем независимую историю объёмов.
+    if (diagnosticsReady) await persistDiagnostics(runId, diagnostics, RETENTION_DAYS)
+      .catch(err => console.error(`Не удалось сохранить диагностику: ${(err as Error).message}`));
     // Чистка — и при остановке прогона посередине (исчерпана квота Gemini):
     // раньше она стояла после обхода и в таком прогоне не выполнялась.
     await cleanupOld().catch((err) => console.error(`не удалось удалить старое: ${(err as Error).message}`));
@@ -762,7 +851,7 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
