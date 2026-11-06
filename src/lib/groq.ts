@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { SUMMARY_PROMPT, ensureCompleteSentence } from "./prompt.js";
+import { SUMMARY_PROMPT } from "./prompt.js";
+import { InvalidSummaryResponse } from "./summaryQuality.js";
 import { sleep } from "./http.js";
 
 // Запасной провайдер на случай, когда Gemini недоступен целиком (перегрузка
@@ -109,8 +110,9 @@ export async function summarize(
     if (!res.ok) throw new Error(`Groq error ${res.status}: ${(await res.text()).slice(0, 300)}`);
 
     const data = await res.json();
+    if (data.choices?.[0]?.finish_reason !== "stop") throw new InvalidSummaryResponse(`groq_finish:${data.choices?.[0]?.finish_reason ?? "missing"}`);
     const text: string | undefined = data.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("Groq вернул пустой ответ");
-    return ensureCompleteSentence(text);
+    if (!text) throw new InvalidSummaryResponse("groq_empty");
+    return text;
   }
 }

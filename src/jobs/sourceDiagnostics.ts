@@ -12,6 +12,7 @@ export type SourceDiagnostic = PreviousFetch & {
   items: number; freshItems: number; eligible: number; known: number; attempted: number;
   saved: number; recovered: number; deferred: number; summaryErrors: number; pageErrors: number;
   windowHours: number; outcomes: Record<string, number>; snapshot?: FeedSample[];
+  summaryFailures?: { link: string; attempts: number; reasons: string[]; action: string }[];
 };
 
 export function diagnosticFor(source: { id: number; name: string; rss_url: string }): SourceDiagnostic {

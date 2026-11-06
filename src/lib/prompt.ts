@@ -187,9 +187,8 @@ export function extractCategory(text: string): { category: Category[] | null; su
     rest = rest.slice(match[0].length);
   }
   const unique = Array.from(new Set(tags)).slice(0, 2);
-  // После темы ничего нет (ответ оборвался) — это не саммари, а его
-  // отсутствие: пусть вызывающий код возьмёт другой источник контекста.
-  return { category: unique.length ? unique : null, summary: rest.trim() || "NO_CONTENT" };
+  // Пустой ответ после темы — дефект генерации, а не сигнал пустого источника.
+  return { category: unique.length ? unique : null, summary: rest.trim() };
 }
 
 // Модель просит показать другой источник контекста вместо навигационного

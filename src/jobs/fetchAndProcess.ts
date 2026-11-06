@@ -6,6 +6,8 @@ import { resolve } from "node:path";
 import { pool, toVectorLiteral } from "../lib/db.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
+import { SummaryQualityError } from "../lib/summaryQuality.js";
+import { queueSummaryAlert, flushSummaryAlerts } from "./summaryAlerts.js";
 import {
   fetchOgTags,
   extractFeedGallery,
@@ -560,6 +562,7 @@ export async function processSource(
           await sleep(REQUEST_INTERVAL_MS);
         } catch (err) {
           diagnostic.summaryErrors++;
+          if (err instanceof SummaryQualityError) await recordSummaryFailure(diagnostic, item.link, item.title, err, "keep_cluster_summary");
           // Перегрузка — статья и так уже в кластере, просто без продолжения.
           if (err instanceof GeminiQuotaExhaustedError && !toleratesOverload(err)) {
             await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
@@ -601,6 +604,14 @@ export async function processSource(
       }));
     } catch (err) {
       diagnostic.summaryErrors++;
+      if (err instanceof SummaryQualityError) {
+        await recordSummaryFailure(diagnostic, item.link, item.title, err, "skip_quality");
+        await markSkipped(item.link, "summary_quality");
+        await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
+        decision(item.link, "summary_quality");
+        outcome(diagnostic, "summary_quality");
+        continue;
+      }
       diagnostic.retryNeeded = true;
       decision(item.link, "summary_error");
       // Лимиты исчерпаны везде (все ключи, все модели, см. gemini.ts) — дальше
@@ -701,7 +712,9 @@ async function cleanupOld() {
         OR (cluster_id IS NULL AND created_at < now() - interval '${RETENTION_DAYS} days')`
   );
   if (res.rowCount) console.log(`Удалено старых записей: ${res.rowCount}`);
-  await pool.query(`DELETE FROM skipped_links WHERE created_at < now() - interval '${RETENTION_DAYS} days'`);
+  // Ошибки качества держим минимум 7 дней, дольше автоматического окна 72 ч.
+  await pool.query(`DELETE FROM skipped_links WHERE created_at < now() - interval '${RETENTION_DAYS} days'
+    AND (reason <> 'summary_quality' OR created_at < now() - interval '7 days')`);
 
   // Следы оборванных прогонов: строка статьи вставляется до саммаризации, и
   // если прогон прервался посередине, кластер так и остаётся без единого
@@ -746,9 +759,18 @@ async function cleanupOld() {
 
 // Отметка "уже смотрели и отбросили" — только для окончательных решений
 // (спорт, нет текста), чтобы следующие прогоны не качали страницу и не звали
-// Gemini заново. Ошибки саммаризации сюда не пишем: они обычно временные
-// (сеть, перегрузка модели), и в следующем прогоне статья должна пройти.
-async function markSkipped(link: string, reason: "sport" | "shopping" | "no_text") {
+// Gemini заново. Временные сбои сети и квот не блокируем; исчерпание
+// бюджета качества помечаем summary_quality, чтобы не повторять его вечно.
+async function recordSummaryFailure(diagnostic: SourceDiagnostic, link: string, title: string, err: SummaryQualityError, action: string): Promise<void> {
+  const failure = { link, attempts: err.attempts, reasons: err.reasons, action };
+  console.error("SUMMARY_FAILED " + JSON.stringify({ sourceId: diagnostic.sourceId, ...failure }));
+  // Полный журнал в stdout, ограниченный размер JSONB на один источник.
+  diagnostic.summaryFailures ??= [];
+  if (diagnostic.summaryFailures.length < 50) diagnostic.summaryFailures.push(failure);
+  await queueSummaryAlert({ link, title, source: diagnostic.name }, err, action);
+}
+
+async function markSkipped(link: string, reason: "sport" | "shopping" | "no_text" | "summary_quality") {
   await pool.query("INSERT INTO skipped_links (link, reason) VALUES ($1, $2) ON CONFLICT (link) DO NOTHING", [
     link,
     reason,
@@ -840,6 +862,7 @@ async function main() {
     // До удаления семидневных статей сохраняем независимую историю объёмов.
     if (diagnosticsReady) await persistDiagnostics(runId, diagnostics, RETENTION_DAYS)
       .catch(err => console.error(`Не удалось сохранить диагностику: ${(err as Error).message}`));
+    await flushSummaryAlerts().catch(() => console.error("SUMMARY_ALERT_ERROR: не удалось обработать очередь уведомлений"));
     // Чистка — и при остановке прогона посередине (исчерпана квота Gemini):
     // раньше она стояла после обхода и в таком прогоне не выполнялась.
     await cleanupOld().catch((err) => console.error(`не удалось удалить старое: ${(err as Error).message}`));

@@ -1,7 +1,8 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { SUMMARY_PROMPT, ensureCompleteSentence } from "./prompt.js";
+import { SUMMARY_PROMPT } from "./prompt.js";
+import { InvalidSummaryResponse } from "./summaryQuality.js";
 import { sleep } from "./http.js";
 
 const MAX_RETRIES = 4;
@@ -271,16 +272,15 @@ export async function summarize(
       }
 
       const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      const candidate = data.candidates?.[0];
+      if (candidate?.finishReason !== "STOP") throw new InvalidSummaryResponse(`gemini_finish:${candidate?.finishReason ?? "missing"}`);
+      const text = candidate?.content?.parts?.filter((part: { thought?: boolean; text?: string }) => !part.thought && typeof part.text === "string")
+        .map((part: { text: string }) => part.text).join("").trim();
       if (!text) {
-        if (attempt < MAX_RETRIES) {
-          await sleep(1000);
-          continue;
-        }
-        throw new Error("Gemini вернул пустой ответ");
+        throw new InvalidSummaryResponse("gemini_empty");
       }
       saveState({ model, keyIndex });
-      return ensureCompleteSentence(text);
+      return text;
     }
     if (switchTo === null) throw new Error("Gemini: превышено число повторов");
     i = switchTo;

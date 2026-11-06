@@ -10,6 +10,7 @@ import {
   type Category,
 } from "./prompt.js";
 import { sleep } from "./http.js";
+import { checkedSummary, looksNonRussian, summaryQualityIssues, MAX_SUMMARY_ATTEMPTS, type SummaryBudget } from "./summaryQuality.js";
 
 export type SummaryResult = { summary: string; category: Category[] | null };
 
@@ -30,27 +31,27 @@ export const MIN_DETAIL_CONTEXT_LENGTH = Number(process.env.MIN_DETAIL_CONTEXT_L
 export async function summarize(
   title: string,
   rawSummary: string,
-  systemPrompt: string = SUMMARY_PROMPT
+  systemPrompt: string = SUMMARY_PROMPT,
+  budget: SummaryBudget = { attempts: 0, reasons: [] }
 ): Promise<SummaryResult> {
-  for (let attempt = 0; attempt < MAX_LANGUAGE_ATTEMPTS; attempt++) {
+  const articlePrompt = systemPrompt === SUMMARY_PROMPT || systemPrompt === LEAD_AND_MORE_PROMPT;
+  const raw = await checkedSummary(async (attempt, reasons) => {
     // Повтор — с напоминанием и в системном промпте, и в конце текста статьи,
     // а последняя попытка — другой моделью (Groq): на некоторых статьях
     // gemini-3.5-flash-lite отвечала по-украински даже с напоминанием
     // примерно два раза из трёх.
-    const remind = attempt > 0;
-    const prompt = remind ? systemPrompt + LANGUAGE_REMINDER : systemPrompt;
+    const remind = attempt > 1;
+    const prompt = remind ? systemPrompt + LANGUAGE_REMINDER + `\nИсправь ошибки предыдущего ответа: ${reasons.join(", ")}.` : systemPrompt;
     const text = remind ? rawSummary + LANGUAGE_REMINDER : rawSummary;
-    const lastTry = attempt === MAX_LANGUAGE_ATTEMPTS - 1;
-    const raw =
+    const lastTry = attempt === MAX_SUMMARY_ATTEMPTS;
+    return (
       lastTry && hasGroqKey()
-        ? await summarizeWithGroq(title, text, prompt).catch((err: Error) => {
-            throw new Error(`модель отвечала не на русском, запасной Groq недоступен: ${err.message}`);
-          })
-        : await generate(title, text, prompt);
-    if (!looksNonRussian(raw)) return extractCategory(raw);
-    console.log(`  модель ответила не на русском (попытка ${attempt + 1}) — переспрашиваю`);
-  }
-  throw new Error(`модель ${MAX_LANGUAGE_ATTEMPTS} раза подряд ответила не на русском`);
+        ? await summarizeWithGroq(title, text, prompt)
+        : await generate(title, text, prompt));
+  }, raw => articlePrompt
+    ? summaryQualityIssues(extractCategory(raw).summary, systemPrompt === LEAD_AND_MORE_PROMPT)
+    : looksNonRussian(raw) ? ["language"] : [], budget);
+  return extractCategory(raw);
 }
 
 // Изредка модель (реально — gemini-3.5-flash-lite) пишет пересказ на соседнем
@@ -59,8 +60,8 @@ export async function summarize(
 // украинском. Отличаем по буквам, которых в русском нет; порог 3, чтобы
 // одиночная буква в чужом имени собственном не считалась ошибкой. Такой ответ
 // не принимаем — переспрашиваем с явным напоминанием о языке (последний раз —
-// у Groq), а после MAX_LANGUAGE_ATTEMPTS неудач бросаем ошибку: статья
-// пропускается и обработается следующим прогоном (см. fetchAndProcess.ts).
+// у Groq), а после MAX_SUMMARY_ATTEMPTS неудач бросаем SummaryQualityError:
+// сборщик блокирует повторную обработку ссылки через skipped_links.
 //
 // Ответ не кириллицей ловится по доле кириллицы среди букв: 19 октября
 // запасной Groq (пока Gemini был перегружен) пересказал статью Polygon целиком
@@ -68,20 +69,9 @@ export async function summarize(
 // пересказов с английскими названиями игр и компаний эта доля не ниже 0,45
 // (все 6799 текстов базы на 20 октября), у английского ответа — 0. Короткие
 // ответы не проверяем: NO_CONTENT — не текст.
-const NON_RUSSIAN_LETTERS = /[әғқңөұүһіїєґўӘҒҚҢӨҰҮҺІЇЄҐЎ]/g;
-const MIN_CYRILLIC_SHARE = 0.3;
-const MIN_LETTERS_FOR_SHARE = 40;
-const MAX_LANGUAGE_ATTEMPTS = 4;
 const LANGUAGE_REMINDER =
-  "\n\nВАЖНО: весь ответ — строго на русском языке, не на английском, казахском, украинском или любом другом.";
+  "\n\nВАЖНО: весь ответ — строго на русском языке. Главное должно содержать факты и завершённые предложения, а не отдельное слово или обрывок фразы.";
 
-function looksNonRussian(text: string): boolean {
-  if ((text.match(NON_RUSSIAN_LETTERS)?.length ?? 0) >= 3) return true;
-  const letters = text.match(/\p{L}/gu) ?? [];
-  if (letters.length < MIN_LETTERS_FOR_SHARE) return false;
-  const cyrillic = letters.filter((ch) => /[\u0400-\u04FF]/.test(ch)).length;
-  return cyrillic / letters.length < MIN_CYRILLIC_SHARE;
-}
 
 // Groq — запасной вариант, когда Gemini не отвечает целиком (все модели и
 // ключи: перегрузка или квота, см. GeminiQuotaExhaustedError). После такого
@@ -162,13 +152,14 @@ export async function summarizeArticle(
   title: string,
   sources: { excerpt?: string; description?: string; rawSummary: string }
 ): Promise<ArticleSummary> {
+  const budget: SummaryBudget = { attempts: 0, reasons: [] };
   const candidates = [sources.excerpt, sources.description, sources.rawSummary].filter(
     (s): s is string => Boolean(s && s.trim())
   );
 
   for (const input of candidates) {
     const withMore = input.length >= MIN_DETAIL_CONTEXT_LENGTH;
-    const result = await summarize(title, input, withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT);
+    const result = await summarize(title, input, withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT, budget);
     if (isNoContentSignal(result.summary)) continue;
     if (!withMore) return { summary: result.summary, more: null, category: result.category };
     const { lead, more } = splitLeadAndMore(result.summary);
