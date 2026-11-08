@@ -444,11 +444,11 @@ export default function FeedCard({
         }
         .post-title {
           display: none;
-          margin: 0;
+          margin: 0 0 -4px; /* От заголовка до текста: 12px gap − 4px. */
           font-family: var(--font-news), sans-serif;
-          font-size: calc(19px * var(--font-scale));
-          line-height: 1.3;
-          font-weight: 600;
+          font-size: calc(18px * var(--font-scale));
+          line-height: 1.2;
+          font-weight: 500;
           color: var(--text);
           overflow-wrap: anywhere;
         }
