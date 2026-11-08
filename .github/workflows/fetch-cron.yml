@@ -82,6 +82,16 @@ jobs:
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS }}
           DEDUPE_THRESHOLD: ${{ vars.DEDUPE_THRESHOLD }}
 
+      - name: Translate article titles
+        run: npm run titles:translate
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_MODELS: ${{ secrets.GEMINI_MODELS }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
       # Ежедневный отчёт о состоянии в Telegram (DIS-81, src/jobs/healthReport.ts).
       # Своё расписание GitHub ненадёжно — 28 октября запуск в 07:00 UTC он
       # просто пропустил, — поэтому отчёт отправляет первый прогон сбора после

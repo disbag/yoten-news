@@ -11,6 +11,7 @@ import {
 } from "./prompt.js";
 import { sleep } from "./http.js";
 import { checkedSummary, looksNonRussian, summaryQualityIssues, MAX_SUMMARY_ATTEMPTS, type SummaryBudget } from "./summaryQuality.js";
+import { parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
 
 export type SummaryResult = { summary: string; category: Category[] | null };
 
@@ -138,6 +139,21 @@ async function generate(title: string, rawSummary: string, systemPrompt: string)
 }
 
 export type ArticleSummary = { summary: string; more: string | null; category: Category[] | null };
+
+export async function translateArticleTitles(titles: readonly ArticleTitle[]): Promise<ArticleTitle[]> {
+  const input = JSON.stringify(titles);
+  const result = await checkedSummary(
+    (attempt) => {
+      const prompt = attempt > 1 ? `${TITLE_TRANSLATION_PROMPT}\nПроверь JSON, все id и строки перевода перед ответом.` : TITLE_TRANSLATION_PROMPT;
+      return attempt === MAX_SUMMARY_ATTEMPTS && hasGroqKey()
+        ? summarizeWithGroq("Перевод заголовков", input, prompt)
+        : generate("Перевод заголовков", input, prompt);
+    },
+    (raw) => parseTranslatedTitles(raw, titles) ? [] : ["title_translation_format"],
+    { attempts: 0, reasons: [] },
+  );
+  return parseTranslatedTitles(result, titles)!;
+}
 
 // Саммари статьи для ленты — ОДНИМ запросом к модели: для полного текста
 // (>= MIN_DETAIL_CONTEXT_LENGTH) сразу главное + продолжение под кат, для

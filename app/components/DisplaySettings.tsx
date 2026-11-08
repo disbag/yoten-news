@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import {
   applyFontSize,
+  applyPostTitles,
   applyTheme,
   FONT_SIZE_LABELS,
   FONT_SIZES,
   getStoredFontSize,
+  getStoredPostTitles,
   getStoredTheme,
   type FontSize,
   type Theme,
@@ -28,9 +30,11 @@ export default function DisplaySettings() {
   // ничего не отмечаем, чтобы серверная и клиентская разметка совпали.
   const [theme, setTheme] = useState<Theme | null>(null);
   const [fontSize, setFontSize] = useState<FontSize | null>(null);
+  const [postTitles, setPostTitles] = useState(false);
   useEffect(() => {
     setTheme(getStoredTheme());
     setFontSize(getStoredFontSize());
+    setPostTitles(getStoredPostTitles());
   }, []);
 
   function choose(value: Theme) {
@@ -87,6 +91,16 @@ export default function DisplaySettings() {
             background: #6ee7b7;
           }
         `}</style>
+      </SettingsGroup>
+
+      <SettingsGroup title="Формат постов">
+        <SettingsRow role="switch" label="Показывать заголовки" checked={postTitles} onClick={() => {
+          applyPostTitles(!postTitles);
+          setPostTitles(!postTitles);
+        }}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- локальная иконка переключателя */}
+          <img src={postTitles ? "/toggle-on.svg" : "/toggle-off.svg"} alt="" width={24} height={24} className="theme-invert-toggle" />
+        </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title="Размер текста">

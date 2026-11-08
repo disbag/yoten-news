@@ -46,6 +46,7 @@ export type FeedItem = {
   // галерея есть только у неё.
   primaryImageUrl: string | null;
   summary: string;
+  titleRu: string | null;
   // Продолжение под кат "Читать" — дописывается сразу после summary, не
   // повторяя его. null — у тизеров без полного текста.
   summaryMore: string | null;
@@ -256,7 +257,7 @@ export async function getFeed(
         a.image_url IS NULL, a.created_at ASC))[1] AS visual_id,
       -- Своя картинка главного издания (может не быть) — для превью ссылки
       -- в мессенджерах: там подписано издание, и фото должно быть его.
-      (array_agg(a.image_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_image_url,
+      (array_agg(a.image_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_image_url,
       -- Дата карточки = дата САМОЙ СВЕЖЕЙ статьи в кластере — то же значение,
       -- по которому идёт сортировка ленты (см. ORDER BY ниже). Раньше дата
       -- бралась от первой добавленной в кластер статьи (ORDER BY created_at),
@@ -266,9 +267,10 @@ export async function getFeed(
       max(a.published_at) AS published_at,
       ${sortExpr} AS sort_at,
       to_char(${sortExpr} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
-      (array_agg(s.name ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_source,
-      (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_homepage,
-      (array_agg(a.link ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at ASC))[1] AS primary_link,
+      (array_agg(s.name ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_source,
+      (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_homepage,
+      (array_agg(a.link ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_link,
+      (array_agg(a.title_ru ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS title_ru,
       jsonb_agg(DISTINCT jsonb_build_object('name', s.name, 'homepage', s.homepage_url, 'link', a.link))
         FILTER (WHERE h.user_id IS NULL) AS source_list,
       -- category — TEXT[] на статью (см. схему), поэтому паттерн
@@ -321,6 +323,7 @@ export async function getFeed(
       imageUrls: row.image_urls,
       primaryImageUrl: row.primary_image_url,
       summary: row.summary,
+      titleRu: row.title_ru,
       summaryMore: row.summary_more,
       publishedAt: toIso(row.published_at),
       cursor: row.cursor,

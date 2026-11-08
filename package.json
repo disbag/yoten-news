@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "fetch": "tsx src/jobs/fetchAndProcess.ts",
+    "titles:translate": "tsx src/jobs/translateTitles.ts",
     "feed": "tsx src/getFeed.ts",
     "db:init": "tsx src/jobs/initDb.ts",
     "dev": "next dev",

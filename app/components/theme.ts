@@ -21,6 +21,7 @@ export const FONT_SIZE_LABELS: Record<FontSize, string> = {
 };
 
 export const FONT_SIZE_KEY = "fontSize";
+const POST_TITLES_KEY = "postTitles";
 
 // Цвет статус-бара и панели браузера (meta theme-color) — фон темы, --bg в
 // globals.css. В <head> их два, по prefers-color-scheme (см. viewport в
@@ -32,7 +33,7 @@ const SYNC_THEME_COLOR = `function(){var t=document.documentElement.dataset.them
 // Мета-теги theme-color Next.js вставляет в <head> сам — и после этого
 // скрипта, и ещё раз при гидратации (бывает дубль), — поэтому цвет
 // выставляется сразу и при каждом изменении <head>.
-export const DISPLAY_INIT_SCRIPT = `(function(){try{var d=document.documentElement;var t=localStorage.getItem("${THEME_KEY}");if(t==="light"||t==="dark")d.dataset.theme=t;var f=localStorage.getItem("${FONT_SIZE_KEY}");if(f==="s"||f==="l"||f==="xl")d.dataset.fontSize=f;var s=${SYNC_THEME_COLOR};s();document.addEventListener("DOMContentLoaded",s);new MutationObserver(s).observe(document.head,{childList:true});}catch(e){}})();`;
+export const DISPLAY_INIT_SCRIPT = `(function(){try{var d=document.documentElement;var t=localStorage.getItem("${THEME_KEY}");if(t==="light"||t==="dark")d.dataset.theme=t;var f=localStorage.getItem("${FONT_SIZE_KEY}");if(f==="s"||f==="l"||f==="xl")d.dataset.fontSize=f;if(localStorage.getItem("${POST_TITLES_KEY}")==="1")d.dataset.postTitles="1";var s=${SYNC_THEME_COLOR};s();document.addEventListener("DOMContentLoaded",s);new MutationObserver(s).observe(document.head,{childList:true});}catch(e){}})();`;
 
 function store(key: string, value: string | null) {
   try {
@@ -81,4 +82,14 @@ export function applyFontSize(size: FontSize) {
   store(FONT_SIZE_KEY, size === "m" ? null : size);
   if (size === "m") delete document.documentElement.dataset.fontSize;
   else document.documentElement.dataset.fontSize = size;
+}
+
+export function getStoredPostTitles(): boolean {
+  return read(POST_TITLES_KEY) === "1";
+}
+
+export function applyPostTitles(enabled: boolean) {
+  store(POST_TITLES_KEY, enabled ? "1" : null);
+  if (enabled) document.documentElement.dataset.postTitles = "1";
+  else delete document.documentElement.dataset.postTitles;
 }
