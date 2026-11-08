@@ -2,6 +2,9 @@ import { pool } from "./db.js";
 import { summarize, GeminiQuotaExhaustedError } from "./gemini.js";
 import { ensureImageHashes } from "./imageHash.js";
 import { sleep } from "./http.js";
+import { checkedSummary, SummaryQualityError } from "./summaryQuality.js";
+import { parseThreadAnswer, threadQualityIssues } from "./threadQuality.js";
+import { queueSummaryAlert } from "../jobs/summaryAlerts.js";
 
 // Треды (DIS-36) — уровень над склейкой дублей: карточки об одной истории,
 // её развитии или об одном информационном поводе (несколько версий систем
@@ -234,13 +237,6 @@ async function findCandidates(clusterId: number): Promise<Candidate[]> {
   return candidates;
 }
 
-function parseAnswer(raw: string, max: number): { thread: number; details: string | null } {
-  const thread = Number(raw.match(/ТРЕД:\s*(\d+)/i)?.[1] ?? 0);
-  let details: string | null = raw.match(/НОВОЕ:\s*([\s\S]+)/i)?.[1].trim() ?? null;
-  if (details && /^нет\.?$/i.test(details)) details = null;
-  return { thread: thread >= 1 && thread <= max ? thread : 0, details };
-}
-
 async function cardImages(clusterId: number): Promise<string[]> {
   const { rows } = await pool.query(
     "SELECT image_url, image_urls FROM articles WHERE cluster_id = $1 AND image_url IS NOT NULL",
@@ -330,8 +326,22 @@ async function assignOne(id: number, stats: ThreadRunStats): Promise<boolean> {
 
   let answer: string;
   try {
-    answer = await summarize(card.title, text, THREAD_PROMPT);
+    answer = await checkedSummary(
+      (attempt, reasons) => summarize(card.title, text, THREAD_PROMPT + (attempt > 1
+        ? `\nПредыдущий ответ отклонён: ${reasons.join(", ")}. Верни обе строки в заданном формате. НОВОЕ — законченные предложения на русском либо «нет».` : "")),
+      raw => threadQualityIssues(raw, candidates.length),
+      { attempts: 0, reasons: [] },
+    );
   } catch (err) {
+    if (err instanceof SummaryQualityError) {
+      console.error("THREAD_QUALITY_FAILED " + JSON.stringify({ clusterId: id, attempts: err.attempts, reasons: err.reasons }));
+      await queueSummaryAlert({ link: `https://yoten-news.vercel.app/post/${id}`, title: card.title, source: "Продолжение треда" }, err, "keep_card_summary");
+      // Оставляем корректную самостоятельную карточку и не повторяем
+      // исчерпанный бюджет на каждом последующем запуске раскладки.
+      await pool.query("INSERT INTO thread_posts (cluster_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);
+      stats.checked++;
+      return true;
+    }
     if (err instanceof GeminiQuotaExhaustedError) {
       stats.stoppedByQuota = true;
       return false;
@@ -341,7 +351,7 @@ async function assignOne(id: number, stats: ThreadRunStats): Promise<boolean> {
   }
   await sleep(REQUEST_INTERVAL_MS);
 
-  const { thread, details: fresh } = parseAnswer(answer, candidates.length);
+  const { thread, details: fresh } = parseThreadAnswer(answer, candidates.length)!;
   stats.checked++;
   if (!thread) {
     await pool.query("INSERT INTO thread_posts (cluster_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);

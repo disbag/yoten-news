@@ -37,7 +37,8 @@ export function summaryAlertText(alert: SummaryAlert): string {
   // Plain text: внешние заголовки не интерпретируются как Telegram HTML.
   return ["⚠️ Не удалось исправить саммари", alert.source.slice(0, 150), alert.title.slice(0, 400),
     `Попыток: ${alert.attempts}.`, `Причины: ${alert.reasons.map(describe).join("; ").slice(0, 1000)}.`,
-    alert.action === "keep_cluster_summary" ? "Новое продолжение не добавлено. Сохранён прежний пересказ в ленте." : "Повреждённый пересказ не опубликован. Автоповторы остановлены минимум на 7 дней.",
+    alert.action === "keep_card_summary" ? "Продолжение треда не добавлено. Сохранена самостоятельная карточка с исходным пересказом; автоповторы остановлены."
+      : alert.action === "keep_cluster_summary" ? "Новое продолжение не добавлено. Сохранён прежний пересказ в ленте." : "Повреждённый пересказ не опубликован. Автоповторы остановлены минимум на 7 дней.",
     alert.link.slice(0, 1500)].join("\n");
 }
 
