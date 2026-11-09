@@ -9,6 +9,13 @@ test("переводы связываются со статьями по id не
   assert.deepEqual(parseTranslatedTitles(JSON.stringify(result), originals), result);
 });
 
+test("строчное начало русского заголовка исправляется, фирменный регистр сохраняется", () => {
+  const result = [{ id: 11, title: "«ёлки» возвращаются в кино" }, { id: 12, title: "iPhone получает обновление" }];
+  assert.deepEqual(parseTranslatedTitles(JSON.stringify(result), originals), [
+    { id: 11, title: "«Ёлки» возвращаются в кино" }, result[1],
+  ]);
+});
+
 test("ответ не сохраняется при пропуске, дублировании или подмене id", () => {
   const title = "Почему небо кажется голубым?";
   for (const ids of [[11], [11, 11], [11, 13]]) {
