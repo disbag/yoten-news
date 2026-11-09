@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { SettingsGroup } from "./SettingsRows";
 
 type Transfer = { code: string; qr: string; expiresAt: string };
+type Device = { label: string; lastSeen: string; current: boolean };
 
 async function postTransfer(path: string, body: object = {}) {
   const response = await fetch(`/api/transfer${path}`, {
@@ -16,7 +18,8 @@ async function postTransfer(path: string, body: object = {}) {
   return result;
 }
 
-export default function TransferSettings({ connected }: { connected: number }) {
+export default function TransferSettings({ devices }: { devices: Device[] }) {
+  const router = useRouter();
   const [transfer, setTransfer] = useState<Transfer | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,6 +39,12 @@ export default function TransferSettings({ connected }: { connected: number }) {
     return () => clearTimeout(timer);
   }, [transfer]);
 
+  useEffect(() => {
+    const refresh = () => router.refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [router]);
+
   async function perform(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -54,13 +63,26 @@ export default function TransferSettings({ connected }: { connected: number }) {
 
   return (
     <div className="transfer">
-      <p>Другие связанные устройства: {connected}</p>
+      <SettingsGroup title="Связанные устройства">
+        {devices.length ? (
+          <ul className="devices">
+            {devices.map((device, index) => (
+              <li key={index}>
+                <strong>{device.label}</strong>
+                {device.current ? <span className="current">Это устройство</span> : null}
+                <span className="last-seen">Последняя активность {device.lastSeen}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p>Пока нет связанных устройств.</p>}
+      </SettingsGroup>
       {error ? <p role="alert" className="error">{error}</p> : null}
 
       <SettingsGroup title="Перенести на другое устройство">
         <p>Откройте Yoten на втором устройстве и введите код или отсканируйте QR. Код действует 10 минут и используется один раз.</p>
         <button type="button" disabled={busy} onClick={() => void perform(async () => {
           setTransfer(await postTransfer(""));
+          router.refresh();
         })}>{transfer ? "Создать новый код" : "Показать код и QR"}</button>
         {transfer ? <div className="code" aria-live="polite">
           <strong>{transfer.code}</strong>
@@ -95,6 +117,10 @@ export default function TransferSettings({ connected }: { connected: number }) {
         form, .code { gap: 12px; }
         p { margin: 0; }
         .error { color: var(--danger); }
+        .devices { list-style: none; padding: 0; margin: 0; }
+        .devices li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .current { margin-inline-start: 8px; color: var(--accent); }
+        .last-seen { display: block; color: var(--text-muted); font-size: 13px; }
         button, input {
           max-width: 100%; padding: 10px 12px; border: 1px solid var(--border);
           border-radius: 8px; background: var(--input-bg); color: var(--text); font: inherit;

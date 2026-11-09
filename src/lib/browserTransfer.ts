@@ -1,9 +1,8 @@
 import { randomInt } from "node:crypto";
 import type { PoolClient } from "pg";
-import { resolveBrowserUser, withBrowserTransaction } from "./browserAccounts.js";
+import { resolveBrowserUser, withBrowserTransaction, type BrowserIdentity } from "./browserAccounts.js";
 import { hashToken } from "./viewer.js";
 
-type BrowserIdentity = { hash: string; legacyId: number | null };
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const maxFailures = 5;
 
@@ -43,7 +42,7 @@ export async function claimTransferCode(browser: BrowserIdentity, input: string)
       return attempts + 1 >= maxFailures ? "blocked" as const : "invalid" as const;
     }
 
-    const source = await resolveBrowserUser(db, browser.hash, browser.legacyId, false);
+    const source = await resolveBrowserUser(db, browser, false);
     if (source !== null && source !== target) {
       await db.query(
         `INSERT INTO article_reads (user_id, cluster_id, read_at)
@@ -64,9 +63,10 @@ export async function claimTransferCode(browser: BrowserIdentity, input: string)
       await db.query("DELETE FROM users WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM passkeys WHERE user_id = $1)", [source]);
     }
     await db.query(
-      `INSERT INTO browsers (token_hash, user_id) VALUES ($1, $2)
-       ON CONFLICT (token_hash) DO UPDATE SET last_seen_at = now()`,
-      [browser.hash, target],
+      `INSERT INTO browsers (token_hash, user_id, device_label) VALUES ($1, $2, $3)
+       ON CONFLICT (token_hash) DO UPDATE SET last_seen_at = now(),
+         device_label = coalesce(EXCLUDED.device_label, browsers.device_label)`,
+      [browser.hash, target, browser.label],
     );
     await db.query("DELETE FROM transfer_attempts WHERE token_hash = $1", [browser.hash]);
     return "ok" as const;

@@ -1,16 +1,16 @@
-import { pool } from "../../../src/lib/db";
-import { getViewerId } from "../../../src/lib/viewer";
+import { getViewerDevices } from "../../../src/lib/viewer";
 import SettingsShell from "../../components/SettingsShell";
 import TransferSettings from "../../components/TransferSettings";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Устройства — Yoten", referrer: "no-referrer" };
+const activityDate = new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeZone: "Europe/Moscow" });
 
 export default async function TransferPage() {
-  const userId = await getViewerId();
-  const count = userId === null ? 0 : (await pool.query<{ count: number }>(
-    "SELECT greatest(count(*) - 1, 0)::int AS count FROM browsers WHERE user_id = $1",
-    [userId],
-  )).rows[0].count;
-  return <SettingsShell><TransferSettings connected={count} /></SettingsShell>;
+  const devices = (await getViewerDevices()).map(({ label, last_seen_at, current }) => ({
+    label: label ?? "Неизвестное устройство",
+    lastSeen: activityDate.format(last_seen_at),
+    current,
+  }));
+  return <SettingsShell><TransferSettings devices={devices} /></SettingsShell>;
 }

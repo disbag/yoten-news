@@ -1,0 +1,1 @@
+ALTER TABLE browsers ADD COLUMN IF NOT EXISTS device_label TEXT;

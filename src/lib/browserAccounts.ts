@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 import { pool } from "./db.js";
 
+export type BrowserIdentity = { hash: string; legacyId: number | null; label: string | null };
+
 // Запись истории, перенос и чистка используют один порядок. Запрос, пришедший
 // во время переноса, запишет отметку уже в общую историю.
 export async function withBrowserTransaction<T>(run: (db: PoolClient) => Promise<T>): Promise<T> {
@@ -19,29 +21,31 @@ export async function withBrowserTransaction<T>(run: (db: PoolClient) => Promise
   }
 }
 
-export async function findBrowserUser(db: Pick<PoolClient, "query">, hash: string): Promise<number | null> {
+export async function findBrowserUser(db: Pick<PoolClient, "query">, { hash, label }: BrowserIdentity): Promise<number | null> {
   const { rows } = await db.query<{ user_id: number }>(
-    `WITH browser AS (SELECT user_id, last_seen_at FROM browsers WHERE token_hash = $1),
-          touch AS (UPDATE browsers SET last_seen_at = now() FROM browser
-                    WHERE token_hash = $1 AND browser.last_seen_at < now() - interval '1 day')
+    `WITH browser AS (SELECT user_id FROM browsers WHERE token_hash = $1),
+          touch AS (UPDATE browsers SET last_seen_at = now(), device_label = coalesce($2::text, device_label)
+                    WHERE token_hash = $1 AND (last_seen_at < now() - interval '1 day'
+                      OR ($2::text IS NOT NULL AND device_label IS DISTINCT FROM $2)))
      SELECT user_id FROM browser`,
-    [hash],
+    [hash, label],
   );
   return rows[0]?.user_id ?? null;
 }
 
 // Вызывать внутри withBrowserTransaction. Подхватываем и браузеры, которые
 // старая версия могла создать между миграцией и переключением приложения.
-export async function resolveBrowserUser(db: PoolClient, hash: string, legacyId: number | null, create: boolean): Promise<number | null> {
-  const existing = await findBrowserUser(db, hash);
+export async function resolveBrowserUser(db: PoolClient, browser: BrowserIdentity, create: boolean): Promise<number | null> {
+  const { hash, legacyId, label } = browser;
+  const existing = await findBrowserUser(db, browser);
   if (existing !== null) return existing;
 
   const { rows: migrated } = await db.query<{ user_id: number }>(
-    `INSERT INTO browsers (token_hash, user_id)
-     SELECT $1, id FROM users WHERE browser_token = $1 OR id = $2
+    `INSERT INTO browsers (token_hash, user_id, device_label)
+     SELECT $1, id, $3 FROM users WHERE browser_token = $1 OR id = $2
      ORDER BY (browser_token IS NOT DISTINCT FROM $1) DESC LIMIT 1
      RETURNING user_id`,
-    [hash, legacyId],
+    [hash, legacyId, label],
   );
   if (migrated[0]) return migrated[0].user_id;
   if (!create) return null;
@@ -53,7 +57,7 @@ export async function resolveBrowserUser(db: PoolClient, hash: string, legacyId:
   );
   if (!rows[0]) return null;
   const id = rows[0].id;
-  await db.query("INSERT INTO browsers (token_hash, user_id) VALUES ($1, $2)", [hash, id]);
+  await db.query("INSERT INTO browsers (token_hash, user_id, device_label) VALUES ($1, $2, $3)", [hash, id, label]);
   return id;
 }
 
