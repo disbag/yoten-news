@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { pool, toVectorLiteral } from "../lib/db.js";
+import { cleanupBrowsers } from "../lib/browserAccounts.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
 import { SummaryQualityError } from "../lib/summaryQuality.js";
@@ -747,14 +748,8 @@ async function cleanupOld() {
   );
   if (reads.rowCount) console.log(`Удалено отметок о прочитанном у удалённых карточек: ${reads.rowCount}`);
 
-  // Браузеры, не заходившие больше года (DIS-65): от них остались только
-  // выключенные издания (удаляются каскадом). Аккаунты с passkey — со времён
-  // входа — не трогаем, пока таблица passkeys не убрана.
-  const stale = `SELECT id FROM users u WHERE last_seen_at < now() - interval '1 year'
-                 AND NOT EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id)`;
-  await pool.query(`DELETE FROM article_reads WHERE user_id IN (${stale})`);
-  const browsers = await pool.query(`DELETE FROM users WHERE id IN (${stale})`);
-  if (browsers.rowCount) console.log(`Удалено давно не заходивших браузеров: ${browsers.rowCount}`);
+  const browsers = await cleanupBrowsers();
+  if (browsers) console.log(`Удалено давно не заходивших браузеров: ${browsers}`);
 }
 
 // Отметка "уже смотрели и отбросили" — только для окончательных решений

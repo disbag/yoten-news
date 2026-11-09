@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "../../../src/lib/db";
-import { getViewerId } from "../../../src/lib/viewer";
+import { withViewerWrite } from "../../../src/lib/viewer";
 
 const MAX_IDS = 100;
 
@@ -16,17 +15,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `clusterIds — от 1 до ${MAX_IDS} номеров карточек` }, { status: 400 });
   }
 
-  // Первая отметка заводит строку браузера (см. src/lib/viewer.ts).
-  const userId = await getViewerId({ create: true });
-  if (!userId) return NextResponse.json({ ok: false }, { status: 429 });
-
   // Только существующие карточки: иначе бот мог бы набить отметок сколько
   // угодно. Так у браузера их не больше, чем карточек в базе.
-  await pool.query(
+  const written = await withViewerWrite((db, userId) => db.query(
     `INSERT INTO article_reads (user_id, cluster_id)
      SELECT $1, c FROM unnest($2::int[]) c WHERE EXISTS (SELECT 1 FROM articles a WHERE a.cluster_id = c)
      ON CONFLICT DO NOTHING`,
     [userId, ids]
-  );
+  ));
+  if (!written) return NextResponse.json({ ok: false }, { status: 429 });
   return NextResponse.json({ ok: true });
 }

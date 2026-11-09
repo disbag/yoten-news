@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import type { PoolClient } from "pg";
 import { SOURCE_GROUPS, OTHER_SOURCES_LABEL } from "../config/sourceGroups.js";
 
 export type SettingsSource = { id: number; name: string; enabled: boolean };
@@ -39,18 +40,18 @@ export async function getSettingsGroups(userId: number | null): Promise<Settings
 // Переключает издание целиком — все его фиды (строки sources с тем же
 // названием, что у sourceId). false — такого издания нет (id из запроса не
 // нашёлся в sources).
-export async function setSourceEnabled(userId: number, sourceId: number, enabled: boolean): Promise<boolean> {
-  const exists = await pool.query("SELECT 1 FROM sources WHERE id = $1", [sourceId]);
+export async function setSourceEnabled(db: PoolClient, userId: number, sourceId: number, enabled: boolean): Promise<boolean> {
+  const exists = await db.query("SELECT 1 FROM sources WHERE id = $1", [sourceId]);
   if (!exists.rowCount) return false;
   if (enabled) {
-    await pool.query(
+    await db.query(
       `DELETE FROM user_hidden_sources
        WHERE user_id = $1
          AND source_id IN (SELECT id FROM sources WHERE name = (SELECT name FROM sources WHERE id = $2))`,
       [userId, sourceId]
     );
   } else {
-    await pool.query(
+    await db.query(
       `INSERT INTO user_hidden_sources (user_id, source_id)
        SELECT $1, id FROM sources WHERE name = (SELECT name FROM sources WHERE id = $2)
        ON CONFLICT DO NOTHING`,

@@ -1,81 +1,53 @@
 import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { jwtVerify } from "jose";
+import type { PoolClient } from "pg";
 import { pool } from "./db.js";
+import { findBrowserUser, resolveBrowserUser, withBrowserTransaction } from "./browserAccounts.js";
+import { BROWSER_COOKIE, isBrowserToken } from "./browserCookie.js";
 
-// Посетитель — это браузер (DIS-65): регистрации нет, прочитанное и
-// выключенные издания хранятся в базе под случайным номером из куки, которую
-// выдаёт middleware.ts. В базе лежит не сам номер, а его SHA-256: утечка
-// таблицы не даёт подставить чужую куку.
-export const BROWSER_COOKIE = "yoten_browser";
+export const LEGACY_SESSION_COOKIE = "session";
 
-// Строку в users заводит первое действие — отметка прочитанного или
-// переключатель издания, — а не визит: иначе строку получал бы каждый бот.
-// Больше MAX_NEW_PER_MINUTE новых браузеров в минуту — скорее бот, чем люди.
-const MAX_NEW_PER_MINUTE = 30;
-
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-// Кука входа до DIS-65 (подписанный JWT с userId, жила 90 дней): её владелец
-// при первом визите получает свой аккаунт под номером браузера. Последние
-// такие куки выданы 26 октября 2026 — после 24 января 2027 проверку и
-// SESSION_SECRET можно убрать.
-const LEGACY_SESSION_COOKIE = "session";
+// Последние старые JWT истекают 24 января 2027.
 async function legacyUserId(token: string | undefined): Promise<number | null> {
   const secret = process.env.SESSION_SECRET;
   if (!token || !secret) return null;
   try {
     const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
-    return typeof payload.userId === "number" ? payload.userId : null;
+    return typeof payload.userId === "number" && Number.isSafeInteger(payload.userId) ? payload.userId : null;
   } catch {
     return null;
   }
 }
 
-// Номер пользователя для этого браузера или null, если строки ещё нет.
-// create — завести строку (только для действий, не для чтения ленты).
-export async function getViewerId({ create = false } = {}): Promise<number | null> {
+export async function getBrowserIdentity() {
   const jar = await cookies();
   const token = jar.get(BROWSER_COOKIE)?.value;
-  if (!token) return null;
-  const hash = hashToken(token);
+  if (!isBrowserToken(token)) return null;
+  return { hash: hashToken(token), legacyId: await legacyUserId(jar.get(LEGACY_SESSION_COOKIE)?.value) };
+}
 
-  // last_seen_at — для удаления давно не заходивших (см. cleanupOld в
-  // fetchAndProcess.ts); пишется не чаще раза в сутки.
-  const { rows } = await pool.query<{ id: number }>(
-    `WITH u AS (SELECT id, last_seen_at FROM users WHERE browser_token = $1),
-          touch AS (UPDATE users SET last_seen_at = now() FROM u
-                    WHERE users.id = u.id AND u.last_seen_at < now() - interval '1 day')
-     SELECT id FROM u`,
-    [hash]
-  );
-  if (rows[0]) return rows[0].id;
+export async function getViewerId(): Promise<number | null> {
+  const browser = await getBrowserIdentity();
+  if (!browser) return null;
+  const id = await findBrowserUser(pool, browser.hash);
+  if (id !== null) return id;
 
-  const legacy = await legacyUserId(jar.get(LEGACY_SESSION_COOKIE)?.value);
-  if (legacy !== null) {
-    // Аккаунт уже привязан к другому браузеру — пока жива кука входа, этот
-    // браузер работает под тем же аккаунтом, потом начнёт с нуля.
-    await pool.query("UPDATE users SET browser_token = $1, last_seen_at = now() WHERE id = $2 AND browser_token IS NULL", [
-      hash,
-      legacy,
-    ]);
-    return legacy;
-  }
+  // Обычный визит без истории не создаёт записей и не берёт блокировку.
+  const legacy = await pool.query("SELECT 1 FROM users WHERE browser_token = $1 OR id = $2", [browser.hash, browser.legacyId]);
+  if (!legacy.rowCount) return null;
+  return withBrowserTransaction(db => resolveBrowserUser(db, browser.hash, browser.legacyId, false));
+}
 
-  if (!create) return null;
-  const { rows: recent } = await pool.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM users WHERE created_at > now() - interval '1 minute'"
-  );
-  if (recent[0].n >= MAX_NEW_PER_MINUTE) return null;
-  // ON CONFLICT — два первых действия браузера, пришедшие одновременно,
-  // получают одну строку.
-  const { rows: created } = await pool.query<{ id: number }>(
-    `INSERT INTO users (display_name, browser_token) VALUES ('browser', $1)
-     ON CONFLICT (browser_token) DO UPDATE SET last_seen_at = now()
-     RETURNING id`,
-    [hash]
-  );
-  return created[0].id;
+export async function withViewerWrite<T>(run: (db: PoolClient, id: number) => Promise<T>): Promise<T | null> {
+  const browser = await getBrowserIdentity();
+  if (!browser) return null;
+  return withBrowserTransaction(async db => {
+    const id = await resolveBrowserUser(db, browser.hash, browser.legacyId, true);
+    return id === null ? null : run(db, id);
+  });
 }

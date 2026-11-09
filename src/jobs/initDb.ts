@@ -9,6 +9,7 @@ async function main() {
   await pool.query(schema);
   await pool.query(fs.readFileSync(new URL("../../db/fetch-diagnostics.sql", import.meta.url), "utf8"));
   await pool.query(fs.readFileSync(new URL("../../db/article-titles.sql", import.meta.url), "utf8"));
+  await pool.query(fs.readFileSync(new URL("../../db/browser-transfer.sql", import.meta.url), "utf8"));
   console.log("Схема применена");
 
   // У издания с несколькими фидами (extraFeeds) — по строке на фид, все с

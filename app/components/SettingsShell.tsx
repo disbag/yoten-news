@@ -17,6 +17,7 @@ export default function SettingsShell({ children }: { children: ReactNode }) {
   const sections = [
     { href: "/settings", label: "Источники" },
     { href: "/settings/display", label: "Отображение" },
+    { href: "/settings/transfer", label: "Устройства" },
   ];
   const nav = sections.map((s) => (
     <Link key={s.href} href={s.href} className={pathname === s.href ? "active" : undefined}>
