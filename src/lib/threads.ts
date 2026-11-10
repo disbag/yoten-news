@@ -18,7 +18,8 @@ import { queueSummaryAlert } from "../jobs/summaryAlerts.js";
 //    Порог мягкий: по выборке 16 октября при сходстве заголовков 0,60–0,65
 //    одна история только в половине пар — отбор окончательно делает модель.
 //    Если тредов по заголовку меньше трёх, добавляются треды карточек с тем же
-//    редким именем в пересказе: пять статей о нападении на депутата Хелен
+//    редким именем в пересказе или латинским названием в заголовке или
+//    пересказе. Пять статей о нападении на депутата Хелен
 //    Хейнс (20 октября) не нашли друг друга — «водитель задержан», «парикмахер
 //    помог», «призывы снизить напряжённость», сходство заголовков 0,21.
 //    Материалы об одном выходе фильма, игры или устройства (рецензии разных
@@ -81,6 +82,11 @@ const MERGE_TITLE_THRESHOLD = 0.62;
 // кандидатов по заголовку.
 const MAX_NAME_CARDS = 6;
 const NAME_PATTERN = /[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?(?:\s+[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?)+/g;
+const LATIN_NAME_PATTERN = /(?<![\p{L}\p{N}])[A-Z][a-z]+(?: +[A-Z][a-z]+)+(?![\p{L}\p{N}])/gu;
+const MAX_LATIN_NAMES = 4;
+// Сокращённое название (Odyssey вместо Villa Vie Odyssey) — менее точный
+// сигнал. Для него дополнительно проверяем сходство текстов.
+const LATIN_SHORT_NAME_BODY_THRESHOLD = 0.60;
 // Первое слово с окончанием прилагательного — география, а не имя: «Ближнем
 // Востоке», «Северной Америке», «Южной Корее».
 const ADJECTIVE_ENDING = /(?:ой|ей|ий|ый|ая|яя|ом|ем|ых|их|ую|юю|ое|ее)$/;
@@ -150,7 +156,7 @@ const GUIDE_TITLE_PATTERN = String.raw`^(how to|where to (buy|watch|stream)) |\m
 // Ламарра-Кондона).
 async function nameCandidates(clusterId: number): Promise<Candidate[]> {
   const { rows: own } = await pool.query(
-    `SELECT a.created_at, (SELECT s.ai_summary FROM articles s WHERE s.cluster_id = a.id AND s.ai_summary IS NOT NULL
+    `SELECT a.created_at, a.title, (SELECT s.ai_summary FROM articles s WHERE s.cluster_id = a.id AND s.ai_summary IS NOT NULL
        ORDER BY s.ai_summary_more IS NULL, s.created_at LIMIT 1) AS summary
      FROM articles a WHERE a.id = $1 AND a.title !~* $2`,
     [clusterId, GUIDE_TITLE_PATTERN]
@@ -179,6 +185,42 @@ async function nameCandidates(clusterId: number): Promise<Candidate[]> {
       [clusterId, own[0].created_at, name, GUIDE_TITLE_PATTERN]
     );
     if (rows.length > MAX_NAME_CARDS) continue;
+    for (const r of rows) found.set(r.id, r.thread_id);
+  }
+
+  // Берём полное название и последнее слово из него. Сравниваем по границам
+  // слов, чтобы Odyssey не совпало, например, с Odysseyland.
+  const latinNames = [...new Set(
+    [own[0].summary, own[0].title].flatMap((value: string) =>
+      [...value.matchAll(LATIN_NAME_PATTERN)].map(([name]) => name)
+    )
+  )].slice(0, MAX_LATIN_NAMES);
+  if (latinNames.length) {
+    const shortNames = latinNames.map((name) => name.split(" ").pop()!).filter((name) => name.length >= 6);
+    const patterns = [...latinNames, ...new Set(shortNames)].map((name) => `\\m${name}\\M`);
+    const { rows } = await pool.query(
+      `WITH matches AS (
+         SELECT d.id, tp.thread_id, d.created_at, n.rank,
+           1 - (d.embedding <=> c.embedding) AS body_similarity,
+           count(*) OVER (PARTITION BY n.rank) AS card_count
+         FROM articles c
+         JOIN articles d ON d.cluster_id = d.id AND d.visible_at IS NOT NULL
+           AND d.created_at < c.created_at AND d.created_at > c.created_at - interval '${OLD_CANDIDATE_HOURS} hours'
+         LEFT JOIN thread_posts tp ON tp.cluster_id = d.id
+         CROSS JOIN unnest($2::text[]) WITH ORDINALITY AS n(pattern, rank)
+         WHERE c.id = $1 AND d.title !~* $3
+           AND NOT EXISTS (SELECT 1 FROM thread_exclusions x WHERE x.cluster_id = c.id AND x.thread_id = tp.thread_id)
+           AND ${THREAD_HAS_ROOM("tp")}
+           AND EXISTS (
+             SELECT 1 FROM articles s WHERE s.cluster_id = d.id AND s.ai_summary IS NOT NULL
+               AND (s.title ~ n.pattern OR s.ai_summary ~ n.pattern)
+           )
+       )
+       SELECT id, thread_id FROM matches WHERE card_count <= ${MAX_NAME_CARDS}
+         AND (rank <= $4 OR body_similarity >= $5)
+       ORDER BY rank, created_at DESC, id DESC`,
+      [clusterId, patterns, GUIDE_TITLE_PATTERN, latinNames.length, LATIN_SHORT_NAME_BODY_THRESHOLD]
+    );
     for (const r of rows) found.set(r.id, r.thread_id);
   }
   return [...found].map(([id, threadId]) => ({ threadId, clusterIds: [id], similarity: 0 }));

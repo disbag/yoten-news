@@ -25,6 +25,7 @@ import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
 import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
 import { normalizeFeedDate, fetchWindowHours, inFetchWindow, freshFirst, claimRecoverySlot, type PreviousFetch } from "./fetchPolicy.js";
+import { initCoverage, observeLinks, completeCoverage, coverageReport, type ObservedLink } from "./fetchCoverage.js";
 import { diagnosticFor, fingerprint, initDiagnostics, outcome, persistDiagnostics, type SourceDiagnostic, type FeedResponse } from "./sourceDiagnostics.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
@@ -242,15 +243,9 @@ function prefetchFeeds(urls: string[]): Map<string, Promise<FeedResponse>> {
   return new Map(tasks.map((t) => [t.url, t.promise]));
 }
 
-export async function processSource(
+export async function prepareSource(
   source: { id: number; name: string; rss_url: string },
-  feedText: Promise<FeedResponse>,
-  remaining: { count: number },
-  diagnostic: SourceDiagnostic,
-  previous: PreviousFetch | undefined,
-  recoveryBudget: { count: number },
-  progress: () => void = heartbeat,
-  sourceRecoveryBudget: { count: number } = { count: 10 }
+  feedText: Promise<FeedResponse>, diagnostic: SourceDiagnostic, previous: PreviousFetch | undefined
 ) {
   // Ручной override контент-селектора для этого издания, если задан в
   // конфиге (см. contentSelector в src/config/sources.ts) — источники
@@ -262,7 +257,6 @@ export async function processSource(
   // фиды одного издания не различить.
   const isExtraFeed = sourceConfig?.extraFeeds?.includes(source.rss_url);
   console.log(`→ ${source.name}${isExtraFeed ? ` (${source.rss_url.replace(/^https?:\/\/(?:www\.)?/, "")})` : ""}`);
-  const contentSelector = sourceConfig?.contentSelector;
   const now = Date.now();
   diagnostic.windowHours = fetchWindowHours(previous, now, FETCH_SINCE_DAYS);
   let feed;
@@ -278,20 +272,27 @@ export async function processSource(
     diagnostic.feedError = (err as Error).message.slice(0, 500);
     diagnostic.retryNeeded = true;
     console.error(`  не удалось получить RSS: ${(err as Error).message}`);
-    return;
+    return { fresh: [], observations: [] };
   }
 
   diagnostic.items = feed.items.length;
   // Проверяем неизвестные ссылки в перекрытии даже у здорового RSS: один
   // запоздалый элемент может появиться среди множества свежих публикаций.
   const scanHours = previous && FETCH_SINCE_DAYS === 0 ? Math.max(72, diagnostic.windowHours) : diagnostic.windowHours;
+  const observations: ObservedLink[] = [];
   const candidates = feed.items.filter((item): item is typeof item & { link: string; title: string } => {
     item.isoDate = normalizeFeedDate(item.pubDate, item.isoDate, sourceConfig?.feedDateOffset);
     if (item.isoDate && (!diagnostic.newestItemAt || item.isoDate > diagnostic.newestItemAt)) diagnostic.newestItemAt = item.isoDate;
     if (inFetchWindow(item.isoDate, now, 24)) diagnostic.freshItems++;
     const sample = { title: item.title?.slice(0, 200), link: item.link?.slice(0, 2048), rawDate: item.pubDate?.slice(0, 100), date: item.isoDate, decision: "eligible" };
     if ((diagnostic.snapshot ??= []).length < 10) diagnostic.snapshot.push(sample);
-    const reject = (reason: string) => { outcome(diagnostic, reason); sample.decision = reason; return false; };
+    const observe = (decision: string) => {
+      if (item.link && /^https?:\/\//i.test(item.link) && decision !== "outside_window") {
+        observations.push({ link: sourceConfig?.stripLinkQuery ? item.link.replace(/[?#].*$/, "") : item.link,
+          title: stripHtml(item.title ?? "").slice(0, 400), publishedAt: item.isoDate ?? null, decision });
+      }
+    };
+    const reject = (reason: string) => { outcome(diagnostic, reason); sample.decision = reason; observe(reason); return false; };
     if (!item.link || !item.title) return reject("missing_title_link");
     // Заголовок идёт в эмбеддинг (в том числе отдельный вектор заголовка, см.
     // grouping.ts) и в промпт: Hearst (Esquire, Car and Driver) размечает в
@@ -316,10 +317,31 @@ export async function processSource(
     if (LIVE_BLOG_LINK_PATTERN.test(item.link) || DAILY_CARTOON_LINK_PATTERN.test(item.link)) return reject("excluded_format");
     if (!item.isoDate) return reject("invalid_date");
     if (!inFetchWindow(item.isoDate, now, scanHours)) return reject("outside_window");
+    observe("eligible");
     return true;
   });
   const fresh = freshFirst(candidates, now);
   diagnostic.eligible = fresh.length;
+
+  return { fresh, observations };
+}
+
+export async function processSource(
+  source: { id: number; name: string; rss_url: string },
+  feedText: Promise<FeedResponse>,
+  remaining: { count: number },
+  diagnostic: SourceDiagnostic,
+  previous: PreviousFetch | undefined,
+  recoveryBudget: { count: number },
+  progress: () => void = heartbeat,
+  sourceRecoveryBudget: { count: number } = { count: 10 },
+  prepared?: Awaited<ReturnType<typeof prepareSource>>
+) {
+  const sourceConfig = SOURCES.find(s => s.name === source.name);
+  const contentSelector = sourceConfig?.contentSelector;
+  const now = Date.now();
+  const { fresh, observations } = prepared ?? await prepareSource(source, feedText, diagnostic, previous);
+  if (prepared) console.log(`→ ${source.name}`);
 
   // Уже обработанные (или отброшенные, см. markSkipped) ссылки — одним
   // запросом на ленту: база в Ирландии, сбор — в США, и запрос на каждую
@@ -336,6 +358,7 @@ export async function processSource(
     title: item.title.slice(0, 200), link: item.link.slice(0, 2048), rawDate: item.pubDate?.slice(0, 100), date: item.isoDate, decision: "eligible",
   })), ...(diagnostic.snapshot ?? [])].slice(0, 10);
   const decision = (link: string, value: string) => {
+    for (const entry of observations) if (entry.link === link) entry.decision = value;
     const sample = diagnostic.snapshot?.find(s => s.link === link);
     if (sample) sample.decision = value;
   };
@@ -791,6 +814,7 @@ async function main() {
   const runId = randomUUID();
   const diagnostics: SourceDiagnostic[] = [];
   let diagnosticsReady = false;
+  let coverageReady = false;
   try {
     const previous = await initDiagnostics().then(state => { diagnosticsReady = true; return state; })
       .catch(err => { console.error(`Диагностика недоступна: ${(err as Error).message}`); return new Map<number, PreviousFetch>(); });
@@ -812,21 +836,40 @@ async function main() {
     const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
     const selected = sources.rows.filter((source) => !only?.length || only.includes(source.name));
     const feeds = prefetchFeeds(selected.map((source) => source.rss_url));
+    coverageReady = await initCoverage().then(() => true).catch(err => {
+      console.error(`COVERAGE_ERROR: ${err.message}`); return false;
+    });
+    const preparedSources = new Map<number, Awaited<ReturnType<typeof prepareSource>>>();
+    const sourceDiagnostics = new Map<number, SourceDiagnostic>();
+    for (const source of selected) {
+      heartbeat();
+      const d = diagnosticFor(source);
+      sourceDiagnostics.set(source.id, d);
+      const prepared = await prepareSource(source, feeds.get(source.rss_url)!, d, previous.get(source.id));
+      preparedSources.set(source.id, prepared);
+      if (coverageReady) await observeLinks(source.id, prepared.observations).catch(err => {
+        console.error(`COVERAGE_ERROR: ${err.message}`);
+      });
+    }
     const recoveryBudget = { count: 50 };
     const recoveryByName = new Map<string, { count: number }>();
     for (const source of selected) {
       if (remaining.count <= 0) break;
-      const d = diagnosticFor(source);
+      const d = sourceDiagnostics.get(source.id)!;
       const started = Date.now();
+      let completed = false;
       const sourceRecoveryBudget = recoveryByName.get(source.name) ?? { count: 10 };
       recoveryByName.set(source.name, sourceRecoveryBudget);
       try {
-        await processSource(source, feeds.get(source.rss_url)!, remaining, d, previous.get(source.id), recoveryBudget, heartbeat, sourceRecoveryBudget);
+        await processSource(source, feeds.get(source.rss_url)!, remaining, d, previous.get(source.id), recoveryBudget, heartbeat, sourceRecoveryBudget, preparedSources.get(source.id));
+        completed = !d.feedError && remaining.count > 0;
       } catch (err) {
         d.retryNeeded = true;
         outcome(d, "interrupted");
         throw err;
       } finally {
+        if (coverageReady) await completeCoverage(source.id, runId, preparedSources.get(source.id)!.observations, completed)
+          .catch(err => console.error(`COVERAGE_ERROR: ${err.message}`));
         d.durationMs = Date.now() - started;
         // Снимок содержит только заголовки, ссылки, даты и решения; не тела
         // статей. Полные RSS не дублируются в каждом прогоне.
@@ -854,6 +897,8 @@ async function main() {
     }
   } finally {
     await revealBatch().catch((err) => console.error(`не удалось показать статьи: ${(err as Error).message}`));
+    if (coverageReady) await coverageReport().then(report => console.log("COVERAGE_SHADOW " + JSON.stringify(report)))
+      .catch(err => console.error(`COVERAGE_ERROR: ${err.message}`));
     // До удаления семидневных статей сохраняем независимую историю объёмов.
     if (diagnosticsReady) await persistDiagnostics(runId, diagnostics, RETENTION_DAYS)
       .catch(err => console.error(`Не удалось сохранить диагностику: ${(err as Error).message}`));

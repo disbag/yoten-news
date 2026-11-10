@@ -14,7 +14,8 @@
     "start": "next start",
     "favicons": "tsx src/jobs/fetchFavicons.ts",
     "threads": "tsx src/jobs/assignThreads.ts",
-    "health": "tsx src/jobs/healthReport.ts"
+    "health": "tsx src/jobs/healthReport.ts",
+    "coverage": "tsx src/jobs/fetchCoverage.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
