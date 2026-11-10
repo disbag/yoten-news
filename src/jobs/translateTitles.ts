@@ -1,4 +1,5 @@
 import { pool } from "../lib/db.js";
+import { SummaryQualityError } from "../lib/summaryQuality.js";
 import { sleep } from "../lib/http.js";
 import { translateArticleTitles } from "../lib/summarizer.js";
 import type { ArticleTitle } from "../lib/titleTranslation.js";
@@ -16,7 +17,18 @@ async function main() {
   let saved = 0;
   for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
     const batch = rows.slice(offset, offset + BATCH_SIZE);
-    const translated = await translateArticleTitles(batch);
+    let translated: ArticleTitle[];
+    try {
+      translated = await translateArticleTitles(batch);
+    } catch (err) {
+      if (!(err instanceof SummaryQualityError)) throw err;
+      console.error("TITLE_TRANSLATION_FAILED " + JSON.stringify({
+        ids: batch.map(({ id }) => id), attempts: err.attempts, reasons: err.reasons,
+      }));
+      process.exitCode = 1;
+      if (offset + BATCH_SIZE < rows.length) await sleep(4000);
+      continue;
+    }
     const originals = new Map(batch.map(({ id, title }) => [id, title]));
     const result = await pool.query(
       `UPDATE articles AS a SET title_ru = t.title_ru

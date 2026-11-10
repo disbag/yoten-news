@@ -13,6 +13,17 @@ export function capitalizeTranslatedTitle(title: string): string {
   return title.replace(/^[\s\p{P}\p{S}]*[а-яё]/u, (prefix) => prefix.toUpperCase());
 }
 
+// Длинные названия продуктов могут занимать большую часть русского
+// заголовка. Учитываем только латинские имена, уже присутствующие в оригинале.
+function titleLooksNonRussian(title: string, original: string): boolean {
+  if (!looksNonRussian(title)) return false;
+  if (!/[А-Яа-яЁё]/.test(title)) return true;
+  const latinWord = /[A-Za-z][A-Za-z0-9]*(?:[-’'][A-Za-z0-9]+)*/g;
+  const names = new Set((original.match(latinWord) ?? []).filter(word => /[A-Z]/.test(word)));
+  const prose = title.replace(latinWord, word => names.has(word) ? "" : word);
+  return looksNonRussian(prose, 20);
+}
+
 export function parseTranslatedTitles(raw: string, originals: readonly ArticleTitle[]): ArticleTitle[] | null {
   let value: unknown;
   try {
@@ -22,13 +33,15 @@ export function parseTranslatedTitles(raw: string, originals: readonly ArticleTi
   }
   if (!Array.isArray(value) || value.length !== originals.length) return null;
 
-  const expected = new Set(originals.map(({ id }) => id));
+  const expected = new Map(originals.map(({ id, title }) => [id, title]));
   const result: ArticleTitle[] = [];
   for (const item of value) {
-    if (!item || !expected.delete(item.id) || typeof item.title !== "string") return null;
+    if (!item || !expected.has(item.id) || typeof item.title !== "string") return null;
+    const original = expected.get(item.id)!;
+    expected.delete(item.id);
     const title = item.title.trim();
     if (!title || title.length > 600 || /[\u0000-\u001f]/.test(title)) return null;
-    if (/^NO_CONTENT$/i.test(title) || looksNonRussian(title)) return null;
+    if (/^NO_CONTENT$/i.test(title) || titleLooksNonRussian(title, original)) return null;
     result.push({ id: item.id, title: capitalizeTranslatedTitle(title) });
   }
   return result;
