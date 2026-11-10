@@ -446,7 +446,7 @@ export default function FeedCard({
           display: none;
           margin: 0 0 -4px; /* От заголовка до текста: 12px gap − 4px. */
           font-family: var(--font-news), sans-serif;
-          font-size: calc(18px * var(--font-scale));
+          font-size: calc(16px * var(--font-scale));
           line-height: 1.2;
           font-weight: 500;
           color: var(--text);
