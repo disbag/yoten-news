@@ -35,7 +35,7 @@ export function faviconUrl(homepage: string | null): string | null {
 }
 
 // Сколько карточка должна пробыть на экране, чтобы считаться прочитанной.
-const READ_AFTER_MS = 2500;
+const READ_AFTER_MS = 1500;
 
 export default function FeedCard({
   item,
