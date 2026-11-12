@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseTranslatedTitles } from "../lib/titleTranslation.js";
+import { parseTranslatedTitles, validateTranslatedTitles } from "../lib/titleTranslation.js";
 
 const originals = [{ id: 11, title: "Why does the sky look blue?" }, { id: 12, title: "Minecraft" }];
 
@@ -44,5 +44,30 @@ test("латинские названия не разрешают оставля
     "Apple выпускает Unrelated Product Enterprise Architecture Management Platform",
   ]) {
     assert.equal(parseTranslatedTitles(JSON.stringify([{ id: 1, title }]), originals), null);
+  }
+});
+
+test("диагностика различает JSON, структуру и идентификаторы", () => {
+  assert.deepEqual(validateTranslatedTitles("[", originals).issues, ["title_translation:invalid_json"]);
+  assert.deepEqual(validateTranslatedTitles("{}", originals).issues, ["title_translation:not_array"]);
+  const result = validateTranslatedTitles(JSON.stringify([
+    { id: 11, title: "Почему небо голубое?" }, { id: 11, title: "Дубликат" }, { id: 99, title: "Чужой" },
+  ]), originals);
+  assert.equal(result.titles, null);
+  assert.deepEqual(result.issues, [
+    "title_translation:count_mismatch", "title_translation:duplicate_id:id=11",
+    "title_translation:unexpected_id:index=2", "title_translation:missing_id:id=12",
+  ]);
+});
+
+test("диагностика указывает конкретный заголовок и дефект текста", () => {
+  for (const [title, reason] of [
+    ["", "empty"], [null, "not_string"], ["а".repeat(601), "too_long"],
+    ["Привет\nмир", "control_characters"], ["NO_CONTENT", "no_content"],
+    ["Why does the blue sky appear so bright during sunny summer days?", "language"],
+  ]) {
+    const result = validateTranslatedTitles(JSON.stringify([{ id: 11, title }, originals[1]]), originals);
+    assert.equal(result.titles, null);
+    assert.ok(result.issues.includes("title_translation:id=11:" + reason));
   }
 });

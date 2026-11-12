@@ -48,6 +48,7 @@ function describeDailyLimit(message: string): string {
 }
 
 export class GroqLimitError extends Error {}
+export class GroqRequestTooLargeError extends Error {}
 
 export function hasGroqKey(): boolean {
   return Boolean(process.env.GROQ_API_KEY);
@@ -58,7 +59,8 @@ export function hasGroqKey(): boolean {
 function waitMs(res: Response, message: string): number {
   const m = message.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
   const fromMessage = m ? (Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 : NaN;
-  const fromHeader = Number(res.headers.get("retry-after")) * 1000;
+  const retryAfter = res.headers.get("retry-after");
+  const fromHeader = retryAfter?.trim() ? Number(retryAfter) * 1000 : NaN;
   const ms = Number.isFinite(fromMessage) ? fromMessage : Number.isFinite(fromHeader) ? fromHeader : 30_000;
   return ms + 500;
 }
@@ -89,12 +91,24 @@ export async function summarize(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
+    if (res.status === 413) {
+      throw new GroqRequestTooLargeError("Groq: запрос слишком большой (HTTP 413); автоматический повтор остановлен");
+    }
     if (res.status === 429) {
       const message: string = (await res.json().catch(() => ({})))?.error?.message ?? "";
+      if (/request too large/i.test(message)) {
+        const limit = message.match(/\bLimit\s+(\d+)/i)?.[1] ?? "unknown";
+        const requested = message.match(/\bRequested\s+(\d+)/i)?.[1] ?? "unknown";
+        const kind = message.match(/\((OTPM|ITPM|TPM|TPD|RPD)\)/i)?.[1] ?? "unknown";
+        throw new GroqRequestTooLargeError(
+          `Groq: запрос превышает лимит ${kind} (limit=${limit}, requested=${requested}); автоматический повтор остановлен`
+        );
+      }
       const wait = waitMs(res, message);
-      if (/per day|\((?:RPD|TPD)\)/i.test(message) || wait > MAX_WAIT_MS) {
+      if (/per day|\((?:RPD|TPD)\)/i.test(message)) {
         throw new GroqLimitError(describeDailyLimit(message));
       }
+      if (wait > MAX_WAIT_MS) throw new Error("Groq: время ожидания временного лимита превышает бюджет запроса");
       if (minuteWaits >= MAX_MINUTE_WAITS) throw new Error(`Groq: минутный лимит не освободился (${message.slice(0, 160)})`);
       minuteWaits += 1;
       await sleep(wait);

@@ -11,7 +11,7 @@ import {
 } from "./prompt.js";
 import { sleep } from "./http.js";
 import { checkedSummary, looksNonRussian, summaryQualityIssues, MAX_SUMMARY_ATTEMPTS, type SummaryBudget } from "./summaryQuality.js";
-import { parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
+import { validateTranslatedTitles, parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
 
 export type SummaryResult = { summary: string; category: Category[] | null };
 
@@ -143,13 +143,20 @@ export type ArticleSummary = { summary: string; more: string | null; category: C
 export async function translateArticleTitles(titles: readonly ArticleTitle[]): Promise<ArticleTitle[]> {
   const input = JSON.stringify(titles);
   const result = await checkedSummary(
-    (attempt) => {
-      const prompt = attempt > 1 ? `${TITLE_TRANSLATION_PROMPT}\nПроверь JSON, все id и строки перевода перед ответом.` : TITLE_TRANSLATION_PROMPT;
+    (attempt, reasons) => {
+      const prompt = attempt > 1 ? `${TITLE_TRANSLATION_PROMPT}\nИсправь ошибки предыдущего ответа: ${reasons.join(", ")}. Проверь JSON, все id и строки перевода.` : TITLE_TRANSLATION_PROMPT;
       return attempt === MAX_SUMMARY_ATTEMPTS && hasGroqKey()
         ? summarizeWithGroq("Перевод заголовков", input, prompt)
         : generate("Перевод заголовков", input, prompt);
     },
-    (raw) => parseTranslatedTitles(raw, titles) ? [] : ["title_translation_format"],
+    (raw) => {
+      const { issues } = validateTranslatedTitles(raw, titles);
+      if (issues.length) console.warn("TITLE_TRANSLATION_REJECTED " + JSON.stringify({
+        ids: titles.map(({ id }) => id), reasons: issues,
+        responseLength: raw.length, responsePreview: raw.slice(0, 1200),
+      }));
+      return issues;
+    },
     { attempts: 0, reasons: [] },
   );
   return parseTranslatedTitles(result, titles)!;

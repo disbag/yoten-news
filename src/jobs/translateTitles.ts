@@ -1,4 +1,5 @@
 import { pool } from "../lib/db.js";
+import { GroqRequestTooLargeError } from "../lib/groq.js";
 import { SummaryQualityError } from "../lib/summaryQuality.js";
 import { sleep } from "../lib/http.js";
 import { translateArticleTitles } from "../lib/summarizer.js";
@@ -21,9 +22,12 @@ async function main() {
     try {
       translated = await translateArticleTitles(batch);
     } catch (err) {
-      if (!(err instanceof SummaryQualityError)) throw err;
+      if (!(err instanceof SummaryQualityError) && !(err instanceof GroqRequestTooLargeError)) throw err;
       console.error("TITLE_TRANSLATION_FAILED " + JSON.stringify({
-        ids: batch.map(({ id }) => id), attempts: err.attempts, reasons: err.reasons,
+        ids: batch.map(({ id }) => id),
+        attempts: err instanceof SummaryQualityError ? err.attempts : undefined,
+        reasons: err instanceof SummaryQualityError ? err.reasons : ["groq_request_too_large"],
+        message: err.message,
       }));
       process.exitCode = 1;
       if (offset + BATCH_SIZE < rows.length) await sleep(4000);
