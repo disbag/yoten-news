@@ -24,6 +24,7 @@ import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
 import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
+import { descriptionArticle, sufficientFeedArticle, canonicalAbduzeedoLink, cmsFeedArticle } from "../lib/feedArticle.js";
 import { normalizeFeedDate, fetchWindowHours, inFetchWindow, freshFirst, claimRecoverySlot, type PreviousFetch } from "./fetchPolicy.js";
 import { initCoverage, observeLinks, completeCoverage, coverageReport, type ObservedLink } from "./fetchCoverage.js";
 import { diagnosticFor, fingerprint, initDiagnostics, outcome, persistDiagnostics, type SourceDiagnostic, type FeedResponse } from "./sourceDiagnostics.js";
@@ -225,19 +226,50 @@ export async function fetchFeedText(rssUrl: string, attempts = 3, userAgent = BR
 // всё равно идёт по очереди. Ответ ленты ждёт своей очереди в памяти — это
 // сотни килобайт на ленту.
 const FEED_CONCURRENCY = 8;
+export async function fetchSourceFeed(source: { name: string; rss_url: string }): Promise<FeedResponse> {
+  const config = SOURCES.find(s => s.name === source.name);
+  if (!config?.primaryFeedUrl || source.rss_url !== config.rssUrl) {
+    return fetchFeedText(source.rss_url, undefined, config?.feedUserAgent);
+  }
+  let primaryError: string;
+  try {
+    // Две сетевые попытки основного канала, одна резервного — максимум
+    // три запроса суммарно. Невалидный/пустой XML тоже включает резерв.
+    const response = await fetchFeedText(config.primaryFeedUrl, 2, config.feedUserAgent);
+    const feed = await parser.parseString(response.xml);
+    if (!feed.items.some(item => item.title && item.link && item.isoDate &&
+      Number.isFinite(Date.parse(item.isoDate)) &&
+      (source.name !== "Abduzeedo" || cmsFeedArticle(item.content, item.link)))) {
+      throw new Error("RSS не содержит пригодных статей");
+    }
+    return { ...response, fetchedUrl: config.primaryFeedUrl };
+  } catch (err) { primaryError = (err as Error).message.slice(0, 500); }
+  console.log(`  ${source.name}: основной RSS недоступен (${primaryError}), резерв ${source.rss_url}`);
+  try {
+    const response = await fetchFeedText(source.rss_url, 1, config.feedUserAgent);
+    const feed = await parser.parseString(response.xml);
+    if (!feed.items.some(item => item.title && item.link && item.isoDate && Number.isFinite(Date.parse(item.isoDate)))) {
+      throw new Error("Резервный RSS не содержит пригодных статей");
+    }
+    return { ...response, fetchedUrl: source.rss_url, primaryFeedError: primaryError };
+  } catch (err) {
+    throw Object.assign(new Error(`Основной RSS: ${primaryError}; резервный RSS: ${(err as Error).message}`),
+      { status: (err as { status?: number }).status });
+  }
+}
+
 function prefetchFeeds(sources: { name: string; rss_url: string }[]): Map<string, Promise<FeedResponse>> {
   const tasks = sources.map(({ name, rss_url: url }) => {
     let settle!: { resolve: (xml: FeedResponse) => void; reject: (err: unknown) => void };
     const promise = new Promise<FeedResponse>((resolve, reject) => (settle = { resolve, reject }));
     promise.catch(() => {}); // ошибку прочитает processSource; до тех пор она не "необработанная"
-    const userAgent = SOURCES.find(source => source.name === name)?.feedUserAgent;
-    return { url, userAgent, promise, settle };
+    return { url, name, promise, settle };
   });
   let next = 0;
   const worker = async () => {
     while (next < tasks.length) {
       const task = tasks[next++];
-      await fetchFeedText(task.url, undefined, task.userAgent).then(task.settle.resolve, task.settle.reject);
+      await fetchSourceFeed({ name: task.name, rss_url: task.url }).then(task.settle.resolve, task.settle.reject);
     }
   };
   for (let i = 0; i < FEED_CONCURRENCY; i++) void worker();
@@ -266,6 +298,8 @@ export async function prepareSource(
     diagnostic.status = response.status;
     diagnostic.contentType = response.contentType;
     diagnostic.age = response.age;
+    diagnostic.fetchedUrl = response.fetchedUrl ?? source.rss_url;
+    diagnostic.primaryFeedError = response.primaryFeedError;
     diagnostic.fingerprint = fingerprint(response.xml);
     feed = await parser.parseString(response.xml);
   } catch (err) {
@@ -282,6 +316,7 @@ export async function prepareSource(
   const scanHours = previous && FETCH_SINCE_DAYS === 0 ? Math.max(72, diagnostic.windowHours) : diagnostic.windowHours;
   const observations: ObservedLink[] = [];
   const candidates = feed.items.filter((item): item is typeof item & { link: string; title: string } => {
+    if (source.name === "Abduzeedo" && item.link) item.link = canonicalAbduzeedoLink(item.link);
     item.isoDate = normalizeFeedDate(item.pubDate, item.isoDate, sourceConfig?.feedDateOffset);
     if (item.isoDate && (!diagnostic.newestItemAt || item.isoDate > diagnostic.newestItemAt)) diagnostic.newestItemAt = item.isoDate;
     if (inFetchWindow(item.isoDate, now, 24)) diagnostic.freshItems++;
@@ -388,7 +423,8 @@ export async function processSource(
     known.add(item.link);
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
-    const feedFullHtml = item["dc:content"] ?? item["content:encoded"];
+    const feedFullHtml = item["dc:content"] ?? item["content:encoded"] ??
+      (sourceConfig?.feedDescriptionIsFull ? descriptionArticle(item.content) : undefined);
     const feedContent = feedFullHtml
       ? stripFeedFooter(stripHtml(feedFullHtml), sourceConfig?.feedFooterPattern).slice(0, MAX_ARTICLE_CHARS)
       : undefined;
@@ -400,9 +436,16 @@ export async function processSource(
     let imageUrl: string | undefined;
     let gallery: string[] | undefined;
     let excerpt: string | undefined;
-    if (sourceConfig?.skipArticlePage) excerpt = feedContent; // страница всегда закрыта, см. sources.ts
+    const cmsArticle = source.name === "Abduzeedo" ? cmsFeedArticle(item.content, item.link) : undefined;
+    if (cmsArticle) {
+      excerpt = cmsArticle.excerpt;
+      imageUrl = cmsArticle.image;
+      gallery = cmsArticle.gallery?.length ? cmsArticle.gallery : undefined;
+    } else if (sourceConfig?.skipArticlePage ||
+      (sourceConfig?.feedDescriptionIsFull && sufficientFeedArticle(feedContent))) excerpt = feedContent;
     else try {
       const og = await fetchOgTags(item.link, contentSelector, sourceConfig?.gallery);
+      if (og.retrieval) console.log(`  резервный источник ${og.retrieval}: ${item.link}`);
       fullDescription = og.description;
       imageUrl = og.image;
       gallery = og.gallery?.length ? og.gallery : undefined;

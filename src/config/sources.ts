@@ -24,6 +24,9 @@ export type SourceConfig = {
   fetchDisabled?: boolean;
   homepageUrl: string;
   feedUserAgent?: string;
+  // Основной транспортный URL, если отличается от стабильного rssUrl в БД.
+  // При ошибке загрузки/разбора резервом служит rssUrl.
+  primaryFeedUrl?: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
   // (Motor Trend, Car and Driver). "futureplc" (Wallpaper, Creative Bloq —
@@ -44,6 +47,8 @@ export type SourceConfig = {
   // комментариев, которые иначе попадали в текст для модели и могли
   // просочиться в подробности под катом.
   preferFeedContent?: boolean;
+  // Полная статья в description; при наличии >=600 символов страницу не запрашиваем.
+  feedDescriptionIsFull?: boolean;
   // Страницу статьи не открывать вообще: она всегда закрыта для сбора
   // (платный доступ или защита от ботов на адресах GitHub — 401/403 на
   // каждой статье). Карточка строится по RSS: анонс, обложка из фида.
@@ -274,6 +279,8 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.gamespot.com/feeds/mashup/",
     homepageUrl: "https://www.gamespot.com",
     gallery: "gamespot",
+    feedDescriptionIsFull: true,
+    preferFeedContent: true,
     // Видео (/videos/) не берутся: в RSS у них только пара строк описания, и
     // пересказы видеообзоров и превью выходили пустыми («кампания увлекательная
     // от начала до конца») (DIS-36, решение пользователя 17 октября).
@@ -605,14 +612,17 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: "https://www.fastcompany.com/co-design/rss",
     homepageUrl: "https://www.fastcompany.com/co-design",
     gallery: "fastcompany",
+    feedDescriptionIsFull: true,
+    preferFeedContent: true,
     stripLinkQuery: true,
   },
   {
     // Айдентика, типографика, упаковка, веб-дизайн: короткие заметки о
-    // проектах студий (США/Бразилия). В RSS только обложка, текст — со
-    // страницы; общий разбор добавлял к нему подпись из подвала сайта.
+    // проектах студий (США/Бразилия). CMS RSS несёт текст, обложку и фото.
+    // Публичный RSS — резерв и стабильный идентификатор источника в БД.
     name: "Abduzeedo",
     rssUrl: "https://abduzeedo.com/rss.xml",
+    primaryFeedUrl: "https://cms.abduzeedo.com/rss.xml",
     homepageUrl: "https://abduzeedo.com",
     contentSelector: ".article-body",
     gallery: "abduzeedo",

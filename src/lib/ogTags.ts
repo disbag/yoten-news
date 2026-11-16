@@ -693,7 +693,7 @@ const GALLERY_SITES: Record<
     from: "rss",
   },
   abduzeedo: {
-    selector: ".article-body img",
+    selector: [".article-body img", "article .field--name-body img"],
     normalize: (url) => {
       let file = url;
       if (url.pathname === "/api/img") {
@@ -844,7 +844,7 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
   return Array.from(urls);
 }
 
-export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[] };
+export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[]; retrieval?: "abduzeedo-cms" };
 
 export async function fetchOgTags(
   url: string,
@@ -855,7 +855,35 @@ export async function fetchOgTags(
   // разметке, чем обычно нужно для og-тегов/текста: у Wallpaper фото тела
   // статьи идут с ~910КБ до ~1.01МБ при странице ~1.05-1.1МБ — прежний лимит
   // 1МБ срезал последние кадры. Читаем с запасом именно для них.
-  const html = await fetchHtmlChunk(url, gallery && !galleryFromRss(gallery) ? 1_500_000 : undefined);
+  const abduzeedo = ["abduzeedo.com", "www.abduzeedo.com"].includes(new URL(url).hostname) && gallery === "abduzeedo";
+  try {
+    const html = await fetchHtmlChunk(url, gallery && !galleryFromRss(gallery) ? 1_500_000 : undefined);
+    if (abduzeedo && !extractBySelector(cheerio.load(html), ".article-body")) {
+      throw new Error("Abduzeedo: отсутствует тело статьи");
+    }
+    return parseArticleHtml(html, url, contentSelector, gallery);
+  } catch (primaryError) {
+    if (!abduzeedo) throw primaryError;
+    // Публичная Drupal CMS того же издания. Одна попытка, без перебора
+    // прокси/зеркал и без смены канонической ссылки статьи в базе.
+    const cms = new URL(url);
+    cms.hostname = "cms.abduzeedo.com";
+    cms.search = "";
+    cms.hash = "";
+    cms.pathname = cms.pathname.replace(/\/$/, "");
+    try {
+      const html = await fetchHtmlChunk(cms.href, 1_500_000, 1);
+      if (!extractBySelector(cheerio.load(html), "article .field--name-body")) {
+        throw new Error("CMS: отсутствует тело статьи");
+      }
+      return { ...parseArticleHtml(html, cms.href, "article .field--name-body", gallery), retrieval: "abduzeedo-cms" };
+    } catch (fallbackError) {
+      throw new Error(`Abduzeedo: ${(primaryError as Error).message}; CMS: ${(fallbackError as Error).message}`);
+    }
+  }
+}
+
+export function parseArticleHtml(html: string, url: string, contentSelector?: string, gallery?: GallerySite): OgTags {
   const $ = cheerio.load(html);
   const articleScope = findLargestArticleScope($);
   // Порядок: ручной селектор источника (если задан и сработал) > JSON-LD

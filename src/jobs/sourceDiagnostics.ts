@@ -3,10 +3,11 @@ import { createHash } from "node:crypto";
 import { pool } from "../lib/db.js";
 import type { PreviousFetch } from "./fetchPolicy.js";
 
-export type FeedResponse = { xml: string; status: number; contentType: string | null; age: string | null };
+export type FeedResponse = { xml: string; status: number; contentType: string | null; age: string | null; fetchedUrl?: string; primaryFeedError?: string };
 export type FeedSample = { title?: string; link?: string; rawDate?: string; date?: string; decision: string };
 export type SourceDiagnostic = PreviousFetch & {
   workflowRunId?: string;
+  fetchedUrl?: string; primaryFeedError?: string;
   sourceId: number; name: string; rssUrl: string; durationMs: number;
   status: number | null; contentType: string | null; age: string | null; fingerprint: string | null;
   items: number; freshItems: number; eligible: number; known: number; attempted: number;
