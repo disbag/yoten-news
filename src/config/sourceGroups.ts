@@ -47,6 +47,7 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
       "Monocle",
       "Creative Boom",
       "Hyperallergic",
+      "CULTURED",
       "Colossal",
       "Design Milk",
       "ArchitectureAU",

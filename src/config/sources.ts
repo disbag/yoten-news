@@ -20,7 +20,10 @@ export type SourceConfig = {
   // фид ("Мир", "Книги", "Путешествия"). В базе у каждого фида своя строка
   // sources с тем же названием; в ленте и в настройках это одно издание.
   extraFeeds?: string[];
+  // Сбор отключён для всех фидов издания. Записи источника и статей остаются в БД.
+  fetchDisabled?: boolean;
   homepageUrl: string;
+  feedUserAgent?: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
   // (Motor Trend, Car and Driver). "futureplc" (Wallpaper, Creative Bloq —
@@ -542,6 +545,15 @@ export const SOURCES: SourceConfig[] = [
     skipCategoryPattern: /\b(?:newsletter|sponsored|announcement|opportunities)\b/i,
   },
   {
+    name: "CULTURED",
+    rssUrl: "https://culturedmag.com/feed/",
+    homepageUrl: "https://culturedmag.com",
+    // Полный текст и фотографии приходят в content:encoded.
+    feedUserAgent: "Mozilla/5.0",
+    skipArticlePage: true,
+    gallery: "cultured",
+  },
+  {
     // Современное искусство, иллюстрация, фотография (США). Полный текст в
     // content:encoded, в конце каждого — призыв стать подписчиком.
     name: "Colossal",
@@ -702,6 +714,7 @@ export const SOURCES: SourceConfig[] = [
     // ~20 в день) — почти только политика, поэтому ещё разделы «Культура» и
     // «Экономика» (по статье в день). В RSS анонс, текст со страницы.
     name: "DW",
+    fetchDisabled: true,
     rssUrl: "https://rss.dw.com/rdf/rss-en-top",
     extraFeeds: ["https://rss.dw.com/rdf/rss-en-cul", "https://rss.dw.com/rdf/rss-en-bus"],
     homepageUrl: "https://www.dw.com/en/",

@@ -199,12 +199,12 @@ function stripFeedFooter(text: string, sourceFooter?: RegExp): string {
 // первая попытка никогда не завершается. Реальный случай — весь прогон
 // зависал на одном источнике на десятки минут, пока не упирался в
 // timeout-minutes джобы или его не останавливали вручную.
-export async function fetchFeedText(rssUrl: string, attempts = 3): Promise<FeedResponse> {
+export async function fetchFeedText(rssUrl: string, attempts = 3, userAgent = BROWSER_USER_AGENT): Promise<FeedResponse> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(rssUrl, {
         headers: {
-          "User-Agent": BROWSER_USER_AGENT,
+          "User-Agent": userAgent,
           Accept: "application/rss+xml, application/xml, text/xml, */*",
         },
         signal: AbortSignal.timeout(15_000),
@@ -225,18 +225,19 @@ export async function fetchFeedText(rssUrl: string, attempts = 3): Promise<FeedR
 // всё равно идёт по очереди. Ответ ленты ждёт своей очереди в памяти — это
 // сотни килобайт на ленту.
 const FEED_CONCURRENCY = 8;
-function prefetchFeeds(urls: string[]): Map<string, Promise<FeedResponse>> {
-  const tasks = urls.map((url) => {
+function prefetchFeeds(sources: { name: string; rss_url: string }[]): Map<string, Promise<FeedResponse>> {
+  const tasks = sources.map(({ name, rss_url: url }) => {
     let settle!: { resolve: (xml: FeedResponse) => void; reject: (err: unknown) => void };
     const promise = new Promise<FeedResponse>((resolve, reject) => (settle = { resolve, reject }));
     promise.catch(() => {}); // ошибку прочитает processSource; до тех пор она не "необработанная"
-    return { url, promise, settle };
+    const userAgent = SOURCES.find(source => source.name === name)?.feedUserAgent;
+    return { url, userAgent, promise, settle };
   });
   let next = 0;
   const worker = async () => {
     while (next < tasks.length) {
       const task = tasks[next++];
-      await fetchFeedText(task.url).then(task.settle.resolve, task.settle.reject);
+      await fetchFeedText(task.url, undefined, task.userAgent).then(task.settle.resolve, task.settle.reject);
     }
   };
   for (let i = 0; i < FEED_CONCURRENCY; i++) void worker();
@@ -826,7 +827,11 @@ async function main() {
     // издания из конца списка. Сдвиг — по номеру получасового окна, без
     // хранимого состояния: старт проходит по всем 55 лентам изданий примерно
     // за сутки.
-    const { rows: allSources } = await pool.query("SELECT id, name, rss_url FROM sources ORDER BY id");
+    const disabledSources = SOURCES.filter(source => source.fetchDisabled).map(source => source.name);
+    const { rows: allSources } = await pool.query(
+      "SELECT id, name, rss_url FROM sources WHERE name <> ALL($1::text[]) ORDER BY id",
+      [disabledSources],
+    );
     const shift = allSources.length ? Math.floor(Date.now() / (30 * 60_000)) % allSources.length : 0;
     const sources = { rows: [...allSources.slice(shift), ...allSources.slice(0, shift)] };
     // FETCH_SOURCES="Dezeen,Esquire" — ручной прогон только по перечисленным
@@ -835,7 +840,7 @@ async function main() {
     const only = process.env.FETCH_SOURCES?.split(",").map((name) => name.trim()).filter(Boolean);
     const remaining = { count: Number(process.env.FETCH_LIMIT ?? Infinity) };
     const selected = sources.rows.filter((source) => !only?.length || only.includes(source.name));
-    const feeds = prefetchFeeds(selected.map((source) => source.rss_url));
+    const feeds = prefetchFeeds(selected);
     coverageReady = await initCoverage().then(() => true).catch(err => {
       console.error(`COVERAGE_ERROR: ${err.message}`); return false;
     });

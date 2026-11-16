@@ -347,6 +347,7 @@ export type GallerySite =
   | "itsnicethat"
   | "creativeboom"
   | "hyperallergic"
+  | "cultured"
   | "colossal"
   | "designmilk"
   | "fastcompany"
@@ -678,6 +679,18 @@ const GALLERY_SITES: Record<
     },
     leadWithCover: true,
     lazy: true,
+  },
+  cultured: {
+    selector: "img",
+    srcsetMaxWidth: 1024,
+    normalize: (url) => {
+      const direct = url.hostname === "media.culturedmag.com" && url.pathname.startsWith("/uploads/");
+      const proxied = /^i[0-3]\.wp\.com$/.test(url.hostname) && url.pathname.startsWith("/media.culturedmag.com/uploads/");
+      return url.protocol === "https:" && (direct || proxied) ? url : null;
+    },
+    leadWithCover: false,
+    coverFromFirstFrame: true,
+    from: "rss",
   },
   abduzeedo: {
     selector: ".article-body img",

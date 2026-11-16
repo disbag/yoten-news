@@ -208,7 +208,7 @@ async function main() {
   const empty = { n_day: 0, n_week: 0, img_day: 0, img_week: 0, gal_day: 0, gal_week: 0, more_day: 0, more_week: 0 };
 
   // По изданиям из конфига — и тем, у кого статей в базе нет вовсе.
-  for (const name of [...new Set(SOURCES.map((s) => s.name))]) {
+  for (const name of [...new Set(SOURCES.filter(s => !s.fetchDisabled).map(s => s.name))]) {
     const r = { name, ...(byName.get(name) ?? empty) };
     const log = runs.sources.get(r.name);
     const records = diagnostics.records.filter(d => d.name === name);
