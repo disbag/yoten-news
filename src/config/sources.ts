@@ -165,6 +165,7 @@ export const SOURCES: SourceConfig[] = [
     // WordPress-шаблона сайта в начале — AI надёжно находит реальный текст
     // дальше, см. NOISE_HANDLING_INSTRUCTIONS в src/lib/prompt.ts).
     name: "9to5Mac",
+    contentSelector: ".post-content",
     rssUrl: "https://9to5mac.com/feed/",
     homepageUrl: "https://9to5mac.com",
     // Выпуски подкастов (DIS-52): пересказ выходит пустым — список тем
@@ -180,6 +181,7 @@ export const SOURCES: SourceConfig[] = [
     // И RSS-описание, и страница статьи — не блокирует бота, минимум мусора
     // в начале текста (в отличие от 9to5Mac). Проверено на реальной статье.
     name: "TechCrunch",
+    contentSelector: ".entry-content",
     rssUrl: "https://techcrunch.com/feed/",
     homepageUrl: "https://techcrunch.com",
   },
@@ -599,7 +601,7 @@ export const SOURCES: SourceConfig[] = [
     name: "DesignWanted",
     rssUrl: "https://designwanted.com/feed/",
     homepageUrl: "https://designwanted.com",
-    contentSelector: ".col-center > .container > p",
+    contentSelector: ".article-body",
     gallery: "designwanted",
   },
   {
@@ -664,6 +666,7 @@ export const SOURCES: SourceConfig[] = [
     // Интерьеры, сад, недвижимость (Великобритания). Рубрики Shopping и
     // Recipes (рецепты, /recipe/) не берём.
     name: "House & Garden",
+    contentSelector: 'article [data-testid="BodyWrapper"], article [class*="GallerySlideCaptionDek-"]',
     rssUrl: "https://www.houseandgarden.co.uk/feed/rss",
     homepageUrl: "https://www.houseandgarden.co.uk",
     gallery: "condenast",
@@ -751,6 +754,7 @@ export const SOURCES: SourceConfig[] = [
     // Интерьеры, дома, детали (США). Полный текст и фото 733 px в
     // content:encoded. Подборки покупок отсекает тема shopping.
     name: "Remodelista",
+    preferFeedContent: true,
     rssUrl: "https://www.remodelista.com/feed/",
     homepageUrl: "https://www.remodelista.com",
     gallery: "remodelista",
@@ -759,6 +763,7 @@ export const SOURCES: SourceConfig[] = [
     // Сады и растения (США), сестринское издание Remodelista: тот же движок и
     // то же правило галереи.
     name: "Gardenista",
+    preferFeedContent: true,
     rssUrl: "https://www.gardenista.com/feed/",
     homepageUrl: "https://www.gardenista.com",
     gallery: "remodelista",

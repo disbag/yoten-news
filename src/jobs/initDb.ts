@@ -7,6 +7,8 @@ import { SOURCES } from "../config/sources.js";
 async function main() {
   const schema = fs.readFileSync(path.join(process.cwd(), "db/schema.sql"), "utf-8");
   await pool.query(schema);
+  await pool.query(fs.readFileSync(new URL("../../db/content-quality.sql", import.meta.url), "utf8"));
+  await pool.query(fs.readFileSync(new URL("../../db/content-repairs.sql", import.meta.url), "utf8"));
   await pool.query(fs.readFileSync(new URL("../../db/fetch-diagnostics.sql", import.meta.url), "utf8"));
   await pool.query(fs.readFileSync(new URL("../../db/article-titles.sql", import.meta.url), "utf8"));
   await pool.query(fs.readFileSync(new URL("../../db/browser-transfer.sql", import.meta.url), "utf8"));

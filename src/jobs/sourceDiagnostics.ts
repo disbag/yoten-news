@@ -14,7 +14,23 @@ export type SourceDiagnostic = PreviousFetch & {
   saved: number; recovered: number; deferred: number; summaryErrors: number; pageErrors: number;
   windowHours: number; outcomes: Record<string, number>; snapshot?: FeedSample[];
   summaryFailures?: { link: string; attempts: number; reasons: string[]; action: string }[];
+  extraction?: { methods: Record<string, number>; origins: Record<string, number>;
+    selectorMisses: number; possibleTeasers: number; shortContexts: number;
+    examples: { link: string; reason: string }[] };
 };
+
+export function recordExtraction(d: SourceDiagnostic, link: string, context: { origin: string; isThin: boolean },
+  page?: { method: string; selectorMiss: boolean; possibleTeaser: boolean }): void {
+  const stats = d.extraction ??= { methods: {}, origins: {}, selectorMisses: 0, possibleTeasers: 0, shortContexts: 0, examples: [] };
+  const method = page?.method ?? context.origin;
+  stats.methods[method] = (stats.methods[method] ?? 0) + 1;
+  stats.origins[context.origin] = (stats.origins[context.origin] ?? 0) + 1;
+  if (context.isThin) stats.shortContexts++;
+  if (page?.selectorMiss) stats.selectorMisses++;
+  if (page?.possibleTeaser) stats.possibleTeasers++;
+  const reason = page?.selectorMiss ? "selector_missing" : page?.possibleTeaser ? "possible_teaser_jsonld" : undefined;
+  if (reason && stats.examples.length < 10) stats.examples.push({ link, reason });
+}
 
 export function diagnosticFor(source: { id: number; name: string; rss_url: string }): SourceDiagnostic {
   return { workflowRunId: process.env.GITHUB_RUN_ID, sourceId: source.id, name: source.name, rssUrl: source.rss_url, at: new Date().toISOString(),

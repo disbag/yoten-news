@@ -16,6 +16,7 @@ import {
   galleryFromRss,
   normalizeCover,
   MAX_ARTICLE_CHARS,
+  type OgTags,
 } from "../lib/ogTags.js";
 import { findAndAssignGroup } from "../lib/grouping.js";
 import { SOURCES } from "../config/sources.js";
@@ -24,10 +25,13 @@ import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
 import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
-import { descriptionArticle, sufficientFeedArticle, canonicalAbduzeedoLink, cmsFeedArticle } from "../lib/feedArticle.js";
+import { descriptionArticle, sufficientFeedArticle, canonicalAbduzeedoLink, cmsFeedArticle, cleanFeedMarkup } from "../lib/feedArticle.js";
+import { clipArticleText } from "../lib/articleText.js";
+import { describeContext, type ContentOrigin } from "../lib/contentQuality.js";
+import { loadContentRepairs, claimContentRepair, recordNoText, resolveContentRepair } from "./contentRepairs.js";
 import { normalizeFeedDate, fetchWindowHours, inFetchWindow, freshFirst, claimRecoverySlot, type PreviousFetch } from "./fetchPolicy.js";
 import { initCoverage, observeLinks, completeCoverage, coverageReport, type ObservedLink } from "./fetchCoverage.js";
-import { diagnosticFor, fingerprint, initDiagnostics, outcome, persistDiagnostics, type SourceDiagnostic, type FeedResponse } from "./sourceDiagnostics.js";
+import { diagnosticFor, fingerprint, initDiagnostics, outcome, persistDiagnostics, recordExtraction, type SourceDiagnostic, type FeedResponse } from "./sourceDiagnostics.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
 // Lifehacker — Ziff Davis) кладут туда ПОЛНЫЙ, уже чистый текст статьи прямо
@@ -307,7 +311,7 @@ export async function prepareSource(
     diagnostic.feedError = (err as Error).message.slice(0, 500);
     diagnostic.retryNeeded = true;
     console.error(`  не удалось получить RSS: ${(err as Error).message}`);
-    return { fresh: [], observations: [] };
+    return { fresh: [], observations: [], repairLinks: [] as string[] };
   }
 
   diagnostic.items = feed.items.length;
@@ -359,7 +363,7 @@ export async function prepareSource(
   const fresh = freshFirst(candidates, now);
   diagnostic.eligible = fresh.length;
 
-  return { fresh, observations };
+  return { fresh, observations, repairLinks: [] as string[] };
 }
 
 export async function processSource(
@@ -376,7 +380,7 @@ export async function processSource(
   const sourceConfig = SOURCES.find(s => s.name === source.name);
   const contentSelector = sourceConfig?.contentSelector;
   const now = Date.now();
-  const { fresh, observations } = prepared ?? await prepareSource(source, feedText, diagnostic, previous);
+  const { fresh, observations, repairLinks } = prepared ?? await prepareSource(source, feedText, diagnostic, previous);
   if (prepared) console.log(`→ ${source.name}`);
 
   // Уже обработанные (или отброшенные, см. markSkipped) ссылки — одним
@@ -384,8 +388,9 @@ export async function processSource(
   // статью ленты стоил ~100 мс сети, около минуты на прогон.
   if (!fresh.length) return;
   const { rows: knownRows } = await pool.query<{ link: string }>(
-    "SELECT link FROM articles WHERE link = ANY($1) UNION SELECT link FROM skipped_links WHERE link = ANY($1)",
-    [fresh.map((item) => item.link)]
+    `SELECT link FROM articles WHERE link = ANY($1) UNION SELECT link FROM skipped_links WHERE link = ANY($1)
+     AND NOT (reason = 'no_text' AND link = ANY($2::text[]))`,
+    [fresh.map((item) => item.link), repairLinks]
   );
   // Сюда же — ссылки, взятые в работу в этом прогоне: одна статья иногда
   // стоит в ленте дважды.
@@ -418,15 +423,17 @@ export async function processSource(
       continue;
     }
     if (recovery) diagnostic.windowHours = Math.max(diagnostic.windowHours, 72);
+    const repairing = repairLinks.includes(item.link);
+    if (repairing && !await claimContentRepair(item.link)) continue;
     diagnostic.attempted++;
     decision(item.link, "attempted");
     known.add(item.link);
 
     const rawSummary = item.contentSnippet ?? item.content ?? item.title;
-    const feedFullHtml = item["dc:content"] ?? item["content:encoded"] ??
-      (sourceConfig?.feedDescriptionIsFull ? descriptionArticle(item.content) : undefined);
+    const feedFullHtml = cleanFeedMarkup(item["dc:content"] ?? item["content:encoded"] ??
+      (sourceConfig?.feedDescriptionIsFull ? descriptionArticle(item.content) : undefined), item.link);
     const feedContent = feedFullHtml
-      ? stripFeedFooter(stripHtml(feedFullHtml), sourceConfig?.feedFooterPattern).slice(0, MAX_ARTICLE_CHARS)
+      ? clipArticleText(stripFeedFooter(stripHtml(feedFullHtml), sourceConfig?.feedFooterPattern), MAX_ARTICLE_CHARS)
       : undefined;
 
     // Best-effort: некоторые издания (NYT, Telegraph) блокируют такие запросы
@@ -436,8 +443,11 @@ export async function processSource(
     let imageUrl: string | undefined;
     let gallery: string[] | undefined;
     let excerpt: string | undefined;
+    let excerptOrigin: ContentOrigin = "rss";
+    let pageExtraction: OgTags["extraction"];
     const cmsArticle = source.name === "Abduzeedo" ? cmsFeedArticle(item.content, item.link) : undefined;
     if (cmsArticle) {
+      excerptOrigin = "rss_cms";
       excerpt = cmsArticle.excerpt;
       imageUrl = cmsArticle.image;
       gallery = cmsArticle.gallery?.length ? cmsArticle.gallery : undefined;
@@ -445,6 +455,7 @@ export async function processSource(
       (sourceConfig?.feedDescriptionIsFull && sufficientFeedArticle(feedContent))) excerpt = feedContent;
     else try {
       const og = await fetchOgTags(item.link, contentSelector, sourceConfig?.gallery);
+      pageExtraction = og.extraction;
       if (og.retrieval) console.log(`  резервный источник ${og.retrieval}: ${item.link}`);
       fullDescription = og.description;
       imageUrl = og.image;
@@ -467,6 +478,7 @@ export async function processSource(
       else
         excerpt =
           (feedContent?.length ?? 0) >= (og.excerpt?.length ?? 0) ? feedContent ?? og.excerpt : og.excerpt;
+      if (excerpt !== undefined && excerpt !== feedContent) excerptOrigin = "page";
     } catch (err) {
       diagnostic.pageErrors++;
       // страница недоступна боту — это ожидаемо для части источников
@@ -517,7 +529,11 @@ export async function processSource(
     // похоже. По оригинальному тексту разрыв кристально чистый: дубли
     // 0.79-0.85, разные новости 0.53-0.67 — короткое саммари для эмбеддинга не
     // используем.
-    const embedding = await embed(`${item.title}. ${excerpt ?? fullDescription ?? rawSummary}`);
+    const embeddingContext = excerpt ?? fullDescription ?? rawSummary;
+    const context = describeContext(embeddingContext, excerpt !== undefined ? excerptOrigin :
+      fullDescription !== undefined ? "description" : "rss_snippet");
+    recordExtraction(diagnostic, item.link, context, pageExtraction);
+    const embedding = await embed(`${item.title}. ${embeddingContext}`);
     const vectorLiteral = toVectorLiteral(embedding);
     const titleVectorLiteral = toVectorLiteral(await embed(item.title));
 
@@ -540,8 +556,9 @@ export async function processSource(
     // visible_at = NULL — статья скрыта из ленты до конца прогона, см.
     // revealBatch.
     const insert = await pool.query(
-      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, embedding, title_embedding, image_urls, visible_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9::vector, $10, NULL)
+      `INSERT INTO articles (source_id, title, link, published_at, raw_summary, full_description, image_url, embedding, title_embedding, image_urls, visible_at,
+         content_chars, content_origin, content_fingerprint, parser_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9::vector, $10, NULL, $11, $12, $13, $14)
        ON CONFLICT (link) DO NOTHING
        RETURNING id`,
       [
@@ -555,6 +572,7 @@ export async function processSource(
         vectorLiteral,
         titleVectorLiteral,
         gallery ?? null,
+        context.chars, context.origin, context.fingerprint, context.version,
       ]
     );
     if (insert.rowCount === 0) { outcome(diagnostic, "concurrent_duplicate"); continue; }
@@ -586,7 +604,7 @@ export async function processSource(
         windowHours: 24,
         recentHours: 12,
         threshold: DEDUPE_THRESHOLD,
-        isThin: !fullDescription,
+        isThin: context.isThin,
         thinThreshold: THIN_DEDUPE_THRESHOLD,
         titleVector: titleVectorLiteral,
         titleThreshold: TITLE_DEDUPE_THRESHOLD,
@@ -647,6 +665,7 @@ export async function processSource(
 
       console.log(`  + "${item.title.slice(0, 60)}..." → склеена с кластером #${clusterId}`);
       diagnostic.saved++;
+      if (repairing) await resolveContentRepair(item.link);
       decision(item.link, "saved");
       if (recovery) diagnostic.recovered++;
       remaining.count -= 1;
@@ -675,6 +694,7 @@ export async function processSource(
       if (err instanceof SummaryQualityError) {
         await recordSummaryFailure(diagnostic, item.link, item.title, err, "skip_quality");
         await markSkipped(item.link, "summary_quality");
+        if (repairing) await resolveContentRepair(item.link);
         await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
         decision(item.link, "summary_quality");
         outcome(diagnostic, "summary_quality");
@@ -712,6 +732,7 @@ export async function processSource(
       console.log(`  – "${item.title.slice(0, 60)}..." → спорт, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
       await markSkipped(item.link, "sport");
+      if (repairing) await resolveContentRepair(item.link);
       outcome(diagnostic, "sport");
       decision(item.link, "sport");
       continue;
@@ -724,6 +745,7 @@ export async function processSource(
       console.log(`  – "${item.title.slice(0, 60)}..." → реклама/шопинг, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
       await markSkipped(item.link, "shopping");
+      if (repairing) await resolveContentRepair(item.link);
       outcome(diagnostic, "shopping");
       decision(item.link, "shopping");
       continue;
@@ -740,7 +762,9 @@ export async function processSource(
     if (aiSummary === item.title) {
       console.log(`  – "${item.title.slice(0, 60)}..." → нет текста статьи, пропущена`);
       await pool.query("DELETE FROM articles WHERE id = $1", [newId]);
+      const retryPending = await recordNoText(source, item);
       await markSkipped(item.link, "no_text");
+      diagnostic.retryNeeded ||= retryPending;
       outcome(diagnostic, "no_text");
       decision(item.link, "no_text");
       continue;
@@ -753,6 +777,7 @@ export async function processSource(
 
     console.log(`  + "${item.title.slice(0, 60)}..." → новый кластер #${clusterId}`);
     diagnostic.saved++;
+    if (repairing) await resolveContentRepair(item.link);
     decision(item.link, "saved");
     if (recovery) diagnostic.recovered++;
     remaining.count -= 1;
@@ -833,7 +858,7 @@ async function recordSummaryFailure(diagnostic: SourceDiagnostic, link: string, 
 }
 
 async function markSkipped(link: string, reason: "sport" | "shopping" | "no_text" | "summary_quality") {
-  await pool.query("INSERT INTO skipped_links (link, reason) VALUES ($1, $2) ON CONFLICT (link) DO NOTHING", [
+  await pool.query("INSERT INTO skipped_links (link, reason) VALUES ($1, $2) ON CONFLICT (link) DO UPDATE SET reason = EXCLUDED.reason WHERE skipped_links.reason = 'no_text'", [
     link,
     reason,
   ]);
@@ -851,6 +876,11 @@ async function revealBatch() {
 }
 
 async function main() {
+  // Проверка только читает схему; production-миграция выполняется отдельно.
+  await pool.query("SELECT content_chars, content_origin, content_fingerprint, parser_version FROM articles LIMIT 0")
+    .catch(err => { throw new Error("Нужна миграция db/content-quality.sql до запуска сбора", { cause: err }); });
+  await pool.query("SELECT alert_queued_at FROM article_content_repairs LIMIT 0")
+    .catch(err => { throw new Error("Нужна миграция db/content-repairs.sql до запуска сбора", { cause: err }); });
   // Проверка на уже запущенный прогон — см. src/lib/fetchLock.ts. Ждёт
   // завершения, если тот прогресс идёт нормально, либо останавливает его и
   // продолжает сама, если он завис (не подавал признаков жизни).
@@ -888,12 +918,28 @@ async function main() {
       console.error(`COVERAGE_ERROR: ${err.message}`); return false;
     });
     const preparedSources = new Map<number, Awaited<ReturnType<typeof prepareSource>>>();
+    const pendingRepairs = await loadContentRepairs(selected);
     const sourceDiagnostics = new Map<number, SourceDiagnostic>();
     for (const source of selected) {
       heartbeat();
       const d = diagnosticFor(source);
       sourceDiagnostics.set(source.id, d);
       const prepared = await prepareSource(source, feeds.get(source.rss_url)!, d, previous.get(source.id));
+      for (const item of pendingRepairs.get(source.id) ?? []) {
+        const config = SOURCES.find(s => s.name === source.name);
+        const path = new URL(item.link).pathname;
+        const excluded = isAd(item.title, item.link) || config?.adTitlePattern?.test(item.title) ||
+          config?.adLinkPattern?.test(path) || config?.skipLinkPattern?.test(path) || config?.skipTitlePattern?.test(item.title) ||
+          item.categories?.some(c => config?.skipCategoryPattern?.test(typeof c === "string" ? c : "")) ||
+          LIVE_BLOG_LINK_PATTERN.test(item.link) || DAILY_CARTOON_LINK_PATTERN.test(item.link);
+        if (excluded) { await resolveContentRepair(item.link); continue; }
+        prepared.repairLinks.push(item.link);
+        if (!prepared.fresh.some(i => i.link === item.link)) {
+          prepared.fresh.push(item);
+          prepared.observations.push({ link: item.link, title: item.title, publishedAt: item.isoDate ?? null, decision: "eligible" });
+          d.eligible++;
+        }
+      }
       preparedSources.set(source.id, prepared);
       if (coverageReady) await observeLinks(source.id, prepared.observations).catch(err => {
         console.error(`COVERAGE_ERROR: ${err.message}`);

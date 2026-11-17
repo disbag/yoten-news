@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import type { CheerioAPI, Cheerio } from "cheerio";
 import type { AnyNode } from "domhandler";
 import { BROWSER_USER_AGENT, sleep } from "./http.js";
+import { cleanArticleDom, clipArticleText } from "./articleText.js";
 
 const BROWSER_HEADERS = {
   "User-Agent": BROWSER_USER_AGENT,
@@ -205,7 +206,7 @@ function extractParagraphs($: CheerioAPI, scope: Cheerio<AnyNode> | undefined): 
     .slice(0, maxParagraphs);
 
   if (paragraphs.length === 0) return undefined;
-  return paragraphs.join(" ").slice(0, MAX_ARTICLE_CHARS);
+  return clipArticleText(paragraphs.join(" "), MAX_ARTICLE_CHARS);
 }
 
 // Ручной override на конкретное издание (см. contentSelector в
@@ -222,7 +223,7 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
-    return text.length >= 80 ? text.slice(0, MAX_ARTICLE_CHARS) : undefined;
+    return text.length >= 80 ? clipArticleText(text, MAX_ARTICLE_CHARS) : undefined;
   } catch {
     return undefined;
   }
@@ -417,10 +418,12 @@ const GALLERY_SITES: Record<
     // машины — попадали в карусель (реальный случай: Volvo EX60 13 октября
     // с фото Corvette, Infiniti и Chrysler). У обычной статьи слайдов нет —
     // тогда берём миниатюры её подгалереи по ссылкам.
-    selector: [".listicle-slides img", 'a[href*="/photos"] img'],
-    // Убираем resize-параметры CDN из query (?w=...&format=webp).
+    selector: [".listicle-slides img",
+      '.article-body .embed img[src*="hips.hearstapps.com"], [data-nitrous-content-readable="true"] [data-component="ImageElement"] img',
+      'a[href*="/photos"] img'],
+    // Для новых встроенных кадров не скачиваем многомегабайтные оригиналы.
     normalize: (url) => {
-      url.search = "";
+      url.search = url.hostname === "hips.hearstapps.com" ? "?resize=1280:*" : "";
       return url;
     },
     leadWithCover: false,
@@ -438,7 +441,7 @@ const GALLERY_SITES: Record<
     leadWithCover: true,
   },
   condenast: {
-    selector: 'figure[class*="AssetEmbedWrapper"] img',
+    selector: 'article figure[class*="AssetEmbedWrapper"] img, article figure[class*="GallerySlide"] img',
     normalize: (url) => {
       url.search = "";
       const match = url.pathname.match(CONDENAST_IMAGE_PATH);
@@ -670,7 +673,7 @@ const GALLERY_SITES: Record<
     srcsetMaxWidth: 1280,
   },
   designwanted: {
-    selector: ".col-center .post-gallery .swiper-slide img, .col-center figure.wp-block-image img",
+    selector: ".article-body figure.wp-block-image img, .col-center .post-gallery .swiper-slide img, .col-center figure.wp-block-image img",
     normalize: (url) => {
       if (!url.hostname.endsWith("designwanted.com") || !url.pathname.startsWith("/wp-content/uploads/")) return null;
       url.protocol = "https:";
@@ -844,7 +847,8 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
   return Array.from(urls);
 }
 
-export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[]; retrieval?: "abduzeedo-cms" };
+export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[]; retrieval?: "abduzeedo-cms";
+  extraction?: { method: "selector" | "jsonld" | "article" | "page" | "none"; selectorMiss: boolean; possibleTeaser: boolean } };
 
 export async function fetchOgTags(
   url: string,
@@ -885,6 +889,11 @@ export async function fetchOgTags(
 
 export function parseArticleHtml(html: string, url: string, contentSelector?: string, gallery?: GallerySite): OgTags {
   const $ = cheerio.load(html);
+  let jsonLd = extractArticleBodyFromJsonLd($);
+  if (new URL(url).hostname.replace(/^www\./, "") === "caranddriver.com") {
+    jsonLd = jsonLd?.replace(/➡\uFE0F?\s*Skip the lot\.[\s\S]*$/, "").trim();
+  }
+  cleanArticleDom($, url);
   const articleScope = findLargestArticleScope($);
   // Порядок: ручной селектор источника (если задан и сработал) > JSON-LD
   // (самый чистый общий вариант, когда есть) > абзацы внутри <article>
@@ -892,11 +901,11 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
   // абзацы по всей странице (запасной вариант — для сайтов, где <article>
   // либо отсутствует, либо указывает не туда, см. коммент у
   // findLargestArticleScope).
-  const excerpt =
-    (contentSelector && extractBySelector($, contentSelector)) ??
-    extractArticleBodyFromJsonLd($)?.slice(0, MAX_ARTICLE_CHARS) ??
-    (articleScope && extractParagraphs($, articleScope)) ??
-    extractParagraphs($, undefined);
+  const manual = contentSelector ? extractBySelector($, contentSelector) : undefined;
+  const articleText = articleScope ? extractParagraphs($, articleScope) : undefined;
+  const excerpt = manual ?? (jsonLd ? clipArticleText(jsonLd, MAX_ARTICLE_CHARS) : undefined) ??
+    articleText ?? extractParagraphs($, undefined);
+  const method = manual ? "selector" : jsonLd ? "jsonld" : articleText ? "article" : excerpt ? "page" : "none";
   const ogImage = extractMetaContent($, "og:image");
   const pageSite = gallery && !galleryFromRss(gallery) ? gallery : undefined;
   const frames = pageSite ? collectFrames($, url, pageSite, ogImage) : undefined;
@@ -908,6 +917,8 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
     description: extractMetaContent($, "og:description"),
     image,
     excerpt,
+    extraction: { method, selectorMiss: Boolean(contentSelector && !manual),
+      possibleTeaser: method === "jsonld" && (jsonLd?.length ?? 0) < 1000 && (articleText?.length ?? 0) > (jsonLd?.length ?? 0) * 2 },
     // Одна обложка без единого фото из тела — это не галерея.
     gallery: frames && (frames.length > 1 ? frames : []),
   };

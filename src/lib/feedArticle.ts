@@ -1,5 +1,13 @@
 import * as cheerio from "cheerio";
 import { parseArticleHtml, type OgTags } from "./ogTags.js";
+import { cleanArticleDom } from "./articleText.js";
+
+export function cleanFeedMarkup(html: string | undefined, link: string): string | undefined {
+  if (!html) return undefined;
+  const $ = cheerio.load(html);
+  cleanArticleDom($, link);
+  return $.html();
+}
 
 export function canonicalAbduzeedoLink(link: string): string {
   try {

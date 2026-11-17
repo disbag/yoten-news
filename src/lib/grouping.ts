@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import { SUBSTANTIAL_CONTENT_CHARS } from "./contentQuality.js";
 
 // Якорь старше recentHours (но моложе windowHours) — "вчерашняя" новость.
 // К ней статья приклеивается только по более строгому правилу и только от
@@ -29,7 +30,7 @@ export async function findAndAssignGroup(
     recentHours: number;
     threshold: number;
     // Более мягкий порог для пар, где хотя бы одна сторона — тизер из RSS
-    // без полного текста страницы (full_description IS NULL, платные/
+    // с контекстом короче 600 символов (content_chars, платные/
     // блокирующие бота издания вроде Bloomberg/WSJ/NYT). На реальных
     // примерах: BBC (богатый текст, 1433 символа) + Bloomberg (тизер,
     // тизер ~100 символов) про один и тот же расстрел в школе на
@@ -94,7 +95,8 @@ export async function findAndAssignGroup(
            created_at > now() - interval '${options.recentHours} hours'
            AND (
              1 - (embedding <=> $2::vector) > (
-               CASE WHEN $4::bool OR full_description IS NULL THEN $5::float8 ELSE $3::float8 END
+               CASE WHEN $4::bool OR COALESCE(content_chars < ${SUBSTANTIAL_CONTENT_CHARS}, FALSE)
+                 THEN $5::float8 ELSE $3::float8 END
              )
              OR (
                title_embedding IS NOT NULL AND (

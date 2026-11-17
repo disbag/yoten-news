@@ -22,6 +22,12 @@ export async function queueSummaryAlert(
   await pool.query("INSERT INTO summary_quality_alerts (link, payload) VALUES ($1, $2::jsonb) ON CONFLICT (link) DO NOTHING", [article.link, JSON.stringify(payload)]);
 }
 
+export async function queueContentAlert(article: { link: string; title: string; source: string; attempts: number }): Promise<void> {
+  await initAlerts();
+  const payload: SummaryAlert = { ...article, reasons: ["source_no_text"], action: "skip_no_text" };
+  await pool.query("INSERT INTO summary_quality_alerts (link, payload) VALUES ($1, $2::jsonb) ON CONFLICT (link) DO NOTHING", [article.link, JSON.stringify(payload)]);
+}
+
 export function summaryAlertText(alert: SummaryAlert): string {
   const reasons: Record<string, string> = {
     too_short: "слишком короткий текст", unfinished: "оборванное предложение", language: "другой язык",
@@ -35,6 +41,9 @@ export function summaryAlertText(alert: SummaryAlert): string {
     return reasons[reason] ?? reason;
   };
   // Plain text: внешние заголовки не интерпретируются как Telegram HTML.
+  if (alert.action === "skip_no_text") return ["⚠️ Не удалось получить текст статьи", alert.source.slice(0, 150), alert.title.slice(0, 400),
+    `Попыток обработки: ${alert.attempts}. Лимит попыток или срок восстановления исчерпан.`,
+    "Статья не опубликована. Автоповторы остановлены.", alert.link.slice(0, 1500)].join("\n");
   return ["⚠️ Не удалось исправить саммари", alert.source.slice(0, 150), alert.title.slice(0, 400),
     `Попыток: ${alert.attempts}.`, `Причины: ${alert.reasons.map(describe).join("; ").slice(0, 1000)}.`,
     alert.action === "keep_card_summary" ? "Продолжение треда не добавлено. Сохранена самостоятельная карточка с исходным пересказом; автоповторы остановлены."
