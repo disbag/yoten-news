@@ -926,12 +926,18 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
   const method = manual ? "selector" : jsonLd ? "jsonld" : articleText ? "article" : excerpt ? "page" : "none";
   const ogImage = extractMetaContent($, "og:image");
   const pageSite = gallery && !galleryFromRss(gallery) ? gallery : undefined;
-  const frames = pageSite ? collectFrames($, url, pageSite, ogImage) : undefined;
+  // У Wallpaper og:image может быть кадром из середины статьи. Главное
+  // фото страницы расположено перед телом, в отдельном editorial hero.
+  const wallpaperHero = pageSite === "futureplc" && /^(www\.)?wallpaper\.com$/.test(new URL(url).hostname)
+    ? $('.article-wrapper .image--hero > figure img[src^="https://cdn.mos.cms.futurecdn.net/"]').first().attr("src")
+    : undefined;
+  const cover = wallpaperHero ? normalizeCover("futureplc", wallpaperHero) : ogImage;
+  const frames = pageSite ? collectFrames($, url, pageSite, cover) : undefined;
   // У сайтов с coverFromFirstFrame обложка — первый кадр страницы, даже когда
   // он один и галереи нет: у The Guardian og:image обрезан под соцсети и
   // несёт плашку логотипа, а главное фото статьи чистое.
   const image = (pageSite && GALLERY_SITES[pageSite].coverFromFirstFrame && frames?.[0]) ||
-    (pageSite === "hearst" ? hearstLeadImage($) : undefined) || ogImage;
+    (pageSite === "hearst" ? hearstLeadImage($) : undefined) || cover;
   return {
     description: extractMetaContent($, "og:description"),
     image,

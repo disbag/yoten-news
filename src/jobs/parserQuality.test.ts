@@ -40,6 +40,21 @@ test("DesignWanted: новый шаблон, без автора и сторон
   assert.deepEqual(result.gallery, ["https://designwanted.com/wp-content/uploads/one.jpg", "https://designwanted.com/wp-content/uploads/two.jpg"]);
 });
 
+test("Wallpaper: главное фото страницы предшествует кадрам статьи", () => {
+  const cdn = "https://cdn.mos.cms.futurecdn.net/";
+  const html = `<meta property="og:image" content="${cdn}Social-1920-80.jpg">
+    <section class="article-wrapper">
+      <div class="image--hero"><figure><picture><img src="${cdn}Hero.jpg"></picture></figure></div>
+      <aside><img src="${cdn}Recommended.jpg"></aside>
+      <div id="article-body"><figure class="van-image-figure"><img src="${cdn}Body.jpg"></figure>
+        <figure class="van-image-figure"><img src="${cdn}Social.jpg"></figure></div>
+    </section>`;
+  const result = parse("Wallpaper", html);
+  const expected = ["Hero", "Body", "Social"].map(id => `${cdn}${id}-1280-80.jpg`);
+  assert.equal(result.image, expected[0]);
+  assert.deepEqual(result.gallery, expected);
+});
+
 test("Hearst: встроенные кадры и Motor Trend, без чужой подгалереи", () => {
   for (const name of ["Car and Driver", "House Beautiful", "Motor Trend"]) {
     const images = `<img src="https://hips.hearstapps.com/hmg-prod/images/one.jpg?resize=300:*"><img src="https://hips.hearstapps.com/hmg-prod/images/two.jpg?resize=600:*">`;

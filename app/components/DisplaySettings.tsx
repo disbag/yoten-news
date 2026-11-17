@@ -30,7 +30,7 @@ export default function DisplaySettings() {
   // ничего не отмечаем, чтобы серверная и клиентская разметка совпали.
   const [theme, setTheme] = useState<Theme | null>(null);
   const [fontSize, setFontSize] = useState<FontSize | null>(null);
-  const [postTitles, setPostTitles] = useState(false);
+  const [postTitles, setPostTitles] = useState(true);
   useEffect(() => {
     setTheme(getStoredTheme());
     setFontSize(getStoredFontSize());

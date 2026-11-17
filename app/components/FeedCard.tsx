@@ -250,7 +250,7 @@ export default function FeedCard({
             </svg>
           </button>
         </div>
-        {item.titleRu ? <h2 className={`post-title${isRead ? " read" : ""}`}>{item.titleRu}</h2> : null}
+        {item.titleRu ? <h2 className={`post-title${standalone ? " standalone" : ""}${isRead ? " read" : ""}`}>{item.titleRu}</h2> : null}
         <p
           className={`summary${isRead ? " read" : ""}${hasMoreText && !expanded ? " expandable" : ""}`}
           onClick={hasMoreText && !expanded ? () => setExpanded(true) : undefined}
@@ -443,7 +443,6 @@ export default function FeedCard({
           color: var(--text-dim);
         }
         .post-title {
-          display: none;
           margin: 0 0 -4px; /* От заголовка до текста: 12px gap − 4px. */
           font-family: var(--font-news), sans-serif;
           font-size: calc(16px * var(--font-scale));
@@ -452,8 +451,8 @@ export default function FeedCard({
           color: var(--text);
           overflow-wrap: anywhere;
         }
-        :global(html[data-post-titles="1"]) .post-title {
-          display: block;
+        :global(html[data-post-titles="0"]) .post-title:not(.standalone) {
+          display: none;
         }
         .summary {
           margin: 0;
