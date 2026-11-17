@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Lora, Onest } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { DISPLAY_INIT_SCRIPT, THEME_COLORS } from "./components/theme";
 
@@ -60,7 +61,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             каждой загрузке (см. app/components/theme.ts). */}
         <script dangerouslySetInnerHTML={{ __html: DISPLAY_INIT_SCRIPT }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
