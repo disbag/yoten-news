@@ -417,10 +417,11 @@ const GALLERY_SITES: Record<
     // на ДРУГИЕ галереи (блок "ещё фото" внизу), и раньше их кадры — чужие
     // машины — попадали в карусель (реальный случай: Volvo EX60 13 октября
     // с фото Corvette, Infiniti и Chrysler). У обычной статьи слайдов нет —
-    // тогда берём миниатюры её подгалереи по ссылкам.
+    // тогда берём редакционные кадры из тела статьи. Related Stories тоже
+    // лежит внутри .embed, но его миниатюры вложены в aside.
     selector: [".listicle-slides img",
-      '.article-body .embed img[src*="hips.hearstapps.com"], [data-nitrous-content-readable="true"] [data-component="ImageElement"] img',
-      'a[href*="/photos"] img'],
+      '.article-body .embed img[src*="hips.hearstapps.com"]:not(aside img), [data-nitrous-content-readable="true"] [data-component="ImageElement"] img:not(aside img)',
+      '.article-body a[href*="/photos"] img:not(aside img)'],
     // Для новых встроенных кадров не скачиваем многомегабайтные оригиналы.
     normalize: (url) => {
       url.search = url.hostname === "hips.hearstapps.com" ? "?resize=1280:*" : "";
@@ -810,6 +811,10 @@ function extractGallery($: CheerioAPI, baseUrl: string, site: GallerySite, cover
   return frames.length > 1 ? frames : [];
 }
 
+function hearstLeadImage($: CheerioAPI): string | undefined {
+  return $('.article-container .content-lead-image img[src^="https://hips.hearstapps.com/"]').first().attr("src");
+}
+
 function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?: string): string[] {
   const { selector, normalize, leadWithCover, lazy, srcsetMaxWidth } = GALLERY_SITES[site];
   const urls = new Set<string>();
@@ -843,6 +848,19 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
   for (const sel of Array.isArray(selector) ? selector : [selector]) {
     collect(sel);
     if (urls.size > before) break;
+  }
+  if (site === "hearst" && urls.size > 0) {
+    // Главное фото у Hearst находится перед article-body. Добавляем его
+    // первым, сохраняя порядок остальных кадров и исключая повторы.
+    // Если в шапке видео, og:image остаётся обложкой. Вместе с единственным
+    // кадром из текста она позволяет сохранить оба редакционных изображения.
+    const lead = hearstLeadImage($) ?? (urls.size === 1 ? cover : undefined);
+    if (lead) {
+      const frames = [...urls];
+      urls.clear();
+      add(lead);
+      for (const frame of frames) urls.add(frame);
+    }
   }
   return Array.from(urls);
 }
@@ -912,7 +930,8 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
   // У сайтов с coverFromFirstFrame обложка — первый кадр страницы, даже когда
   // он один и галереи нет: у The Guardian og:image обрезан под соцсети и
   // несёт плашку логотипа, а главное фото статьи чистое.
-  const image = (pageSite && GALLERY_SITES[pageSite].coverFromFirstFrame && frames?.[0]) || ogImage;
+  const image = (pageSite && GALLERY_SITES[pageSite].coverFromFirstFrame && frames?.[0]) ||
+    (pageSite === "hearst" ? hearstLeadImage($) : undefined) || ogImage;
   return {
     description: extractMetaContent($, "og:description"),
     image,

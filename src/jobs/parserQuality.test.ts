@@ -56,6 +56,21 @@ test("Hearst: отдельная галерея сохраняет приори�
   assert.ok(r.gallery?.every(url => !url.includes("other")));
 });
 
+test("Good Housekeeping: главное фото и кадры тела без блоков рекомендаций", () => {
+  const img = (name: string) => `<img src="https://hips.hearstapps.com/hmg-prod/images/${name}.jpg?resize=480:*">`;
+  const related = `<div class="embed"><aside><h2>Related Stories</h2><a href="/photos/related">${img("related")}</a>${img("another")}</aside></div>`;
+  const latest = `<div class="embed"><aside><h3>The Latest News</h3><div data-testid="inner-carousel"><a href="/entertainment/other-story/">${img("latest")}</a></div></aside></div>`;
+  const page = (body: string) => `<main class="article-container"><div class="content-lead-image">${img("lead")}</div><div class="article-body">${body}${related}</div></main><a href="/photos/footer">${img("footer")}</a>`;
+  const actual = parse("Good Housekeeping", page(`<div class="embed">${img("first")}${img("lead")}</div>${latest}<div class="embed">${img("last")}</div>`));
+  const expected = ["lead", "first", "last"].map(name => `https://hips.hearstapps.com/hmg-prod/images/${name}.jpg?resize=1280:*`);
+  assert.deepEqual(actual.gallery, expected);
+  const coverOnly = parse("Good Housekeeping", page(""));
+  assert.deepEqual(coverOnly.gallery, []);
+  assert.match(coverOnly.image ?? "", /lead\.jpg/);
+  const videoLead = parse("Good Housekeeping", `<meta property="og:image" content="https://hips.hearstapps.com/hmg-prod/images/cover.jpg"><div class="article-body"><div class="embed">${img("first")}</div>${related}</div>`);
+  assert.deepEqual(videoLead.gallery, ["cover", "first"].map(name => `https://hips.hearstapps.com/hmg-prod/images/${name}.jpg?resize=1280:*`));
+});
+
 test("9to5Mac/TechCrunch: сохраняются новости и списки, исключаются служебные блоки", () => {
   const nine = parse("9to5Mac", `<div class="post-content"><p>9to5Mac is brought to you by Sponsor.</p><p>${body}</p><ul><li>Feature one</li><li>Feature two</li></ul><div class="ad-disclaimer-container">Affiliate links</div><div>You’re reading 9to5Mac — subscribe.</div></div><p>${"Author biography. ".repeat(20)}</p>`);
   assert.match(nine.excerpt!, /Feature one Feature two/);
