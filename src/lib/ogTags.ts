@@ -333,6 +333,7 @@ function extractBySelector($: CheerioAPI, selector: string): string | undefined 
 //    обрезка 1200x630 с плашкой логотипа: обложкой статьи становится первый
 //    кадр страницы, главное фото (coverFromFirstFrame).
 export type GallerySite =
+  | "hollywoodreporter"
   | "hearst"
   | "futureplc"
   | "condenast"
@@ -410,6 +411,19 @@ const GALLERY_SITES: Record<
     coverFromFirstFrame?: boolean;
   }
 > = {
+  hollywoodreporter: {
+    // Внутри paywall-обёртки также лежат карточки Related Stories.
+    // Редакционные фото обычной статьи размечены как post-content-image.
+    selector: ".a-content .pmc-paywall .post-content-image figure img",
+    normalize: (url) => {
+      if (url.protocol !== "https:" || url.hostname !== "www.hollywoodreporter.com"
+        || !/^\/wp-content\/uploads\/.*\.(?:jpe?g|png|webp)$/i.test(url.pathname)) return null;
+      url.search = "?w=1280";
+      return url;
+    },
+    leadWithCover: true,
+    lazy: true,
+  },
   hearst: {
     // Сначала — слайды самой галереи: у Car and Driver фотогалерея приходит в
     // RSS отдельной статьёй (/photos/…-gallery/), её кадры лежат в
@@ -840,7 +854,7 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
       const srcset = $(el).attr("srcset") ?? (lazy ? $(el).attr("data-srcset") : undefined);
       if (srcsetMaxWidth && add(pickFromSrcset(srcset, srcsetMaxWidth), size)) return;
       if (add($(el).attr("src"), size)) return;
-      if (lazy && add($(el).attr("data-src"), size)) return;
+      if (lazy && add($(el).attr("data-src") ?? $(el).attr("data-lazy-src"), size)) return;
       add(srcset?.trim().split(",")[0]?.trim().split(/\s+/)[0], size);
     });
   };

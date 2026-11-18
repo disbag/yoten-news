@@ -261,6 +261,7 @@ export const SOURCES: SourceConfig[] = [
     name: "The Hollywood Reporter",
     rssUrl: "https://www.hollywoodreporter.com/feed/",
     homepageUrl: "https://www.hollywoodreporter.com",
+    gallery: "hollywoodreporter",
     contentSelector: ".a-content .pmc-paywall",
   },
   {
