@@ -79,6 +79,7 @@ jobs:
           # иначе GitHub маскирует в логах ЛЮБОЕ совпадение с этим значением
           # (напр. RETENTION_DAYS=7 маскировал цифру "7" внутри номеров
           # кластеров вроде #1927 → "192***").
+          FETCH_COVERAGE_ALERTS: ${{ vars.FETCH_COVERAGE_ALERTS }}
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS }}
           DEDUPE_THRESHOLD: ${{ vars.DEDUPE_THRESHOLD }}
 

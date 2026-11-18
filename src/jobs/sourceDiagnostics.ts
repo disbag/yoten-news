@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { pool } from "../lib/db.js";
 import type { PreviousFetch } from "./fetchPolicy.js";
 
-export type FeedResponse = { xml: string; status: number; contentType: string | null; age: string | null; fetchedUrl?: string; primaryFeedError?: string };
+export type FeedResponse = { xml: string; status: number; contentType: string | null; age: string | null; fetchedUrl?: string; primaryFeedError?: string; atomFallback?: boolean };
 export type FeedSample = { title?: string; link?: string; rawDate?: string; date?: string; decision: string };
 export type SourceDiagnostic = PreviousFetch & {
   workflowRunId?: string;

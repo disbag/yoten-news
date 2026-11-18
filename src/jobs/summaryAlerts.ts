@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { pool } from "../lib/db.js";
+import type { CoverageAlert } from "./fetchCoverage.js";
 import { SummaryQualityError } from "../lib/summaryQuality.js";
 
 export type SummaryAlert = {
-  link: string; title: string; source: string; attempts: number; reasons: string[]; action: string;
+  link: string; title: string; source: string; attempts: number; reasons: string[]; action: string; coverage?: CoverageAlert;
 };
 let ready: Promise<unknown> | undefined;
 async function initAlerts(): Promise<void> {
@@ -28,7 +29,37 @@ export async function queueContentAlert(article: { link: string; title: string; 
   await pool.query("INSERT INTO summary_quality_alerts (link, payload) VALUES ($1, $2::jsonb) ON CONFLICT (link) DO NOTHING", [article.link, JSON.stringify(payload)]);
 }
 
+function coverageKey(alert: CoverageAlert): string {
+  return `coverage:${alert.state}:${alert.link}`;
+}
+
+export async function queueCoverageAlerts(alerts: CoverageAlert[]): Promise<void> {
+  if (!alerts.length) return;
+  await initAlerts();
+  const candidates = [...new Map(alerts.map(alert => [coverageKey(alert), alert])).entries()]
+    .map(([link, alert]) => ({
+      link,
+      waiting: alert.waitingMinutes,
+      payload: { link: alert.link, title: alert.title, source: alert.name, attempts: 0,
+        reasons: [], action: "fetch_coverage", coverage: alert } satisfies SummaryAlert,
+    }));
+  await pool.query(
+    `INSERT INTO summary_quality_alerts (link, payload)
+     SELECT x.link, x.payload FROM jsonb_to_recordset($1::jsonb) AS x(link text, payload jsonb, waiting integer)
+     WHERE NOT EXISTS (SELECT 1 FROM summary_quality_alerts q WHERE q.link = x.link)
+     ORDER BY x.waiting DESC, x.link LIMIT 3
+     ON CONFLICT (link) DO NOTHING`,
+    [JSON.stringify(candidates)]
+  );
+}
+
 export function summaryAlertText(alert: SummaryAlert): string {
+  if (alert.coverage) {
+    const c = alert.coverage;
+    return [c.state === "missing" ? "⚠️ Статья из RSS не собрана" : "⚠️ Статья из RSS не опубликована",
+      c.name.slice(0, 150), c.title.slice(0, 400), `В RSS: ${c.completedChecks} проверок, ожидание: ${c.waitingMinutes} мин.`,
+      `Последнее решение сборщика: ${c.decision}.`, c.link.slice(0, 1500)].join("\n");
+  }
   const reasons: Record<string, string> = {
     too_short: "слишком короткий текст", unfinished: "оборванное предложение", language: "другой язык",
     markup: "служебная разметка", model_commentary: "ответ модели вместо пересказа", extra_sections: "лишние разделы",
@@ -62,10 +93,14 @@ export async function sendSummaryAlert(alert: SummaryAlert, token: string, chat:
 
 // Вызывается под общей блокировкой сборщика. Не больше 10 сообщений / 15 с
 // за прогон; неудачная доставка повторяется через 30 минут, без регенерации.
-export async function flushSummaryAlerts(): Promise<void> {
+export async function flushSummaryAlerts(coverage: CoverageAlert[] = []): Promise<void> {
   await initAlerts();
+  const current = new Map(coverage.map(alert => [coverageKey(alert), alert]));
   const { rows } = await pool.query<{ link: string; payload: SummaryAlert }>(
-    "SELECT link, payload FROM summary_quality_alerts WHERE sent_at IS NULL AND next_attempt_at <= now() ORDER BY next_attempt_at, created_at LIMIT 10");
+    `SELECT link, payload FROM summary_quality_alerts WHERE sent_at IS NULL AND next_attempt_at <= now()
+     AND (link NOT LIKE 'coverage:%' OR link = ANY($1::text[]))
+     ORDER BY (link LIKE 'coverage:%'), next_attempt_at, created_at LIMIT 10`,
+    [[...current.keys()]]);
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chat = process.env.TELEGRAM_CHAT_ID;
   if (rows.length && (!token || !chat)) {
@@ -77,7 +112,7 @@ export async function flushSummaryAlerts(): Promise<void> {
     if (Date.now() - started >= 10_000) break;
     await pool.query("UPDATE summary_quality_alerts SET delivery_attempts = delivery_attempts + 1, next_attempt_at = now() + interval '30 minutes' WHERE link = $1", [row.link]);
     try {
-      await sendSummaryAlert(row.payload, token!, chat!);
+      await sendSummaryAlert({ ...row.payload, coverage: current.get(row.link) }, token!, chat!);
     } catch {
       // Не печатаем исключение fetch: в URL содержится токен бота.
       console.error(`SUMMARY_ALERT_PENDING: доставка не удалась (${row.link})`);
@@ -86,6 +121,8 @@ export async function flushSummaryAlerts(): Promise<void> {
     await pool.query("UPDATE summary_quality_alerts SET sent_at = now() WHERE link = $1", [row.link]);
     console.log(`SUMMARY_ALERT_SENT ${row.link}`);
   }
-  // Недоставленные уведомления не удаляем при очистке истории.
+  // Окончательные отказы качества без подтверждения доставки не удаляем.
   await pool.query("DELETE FROM summary_quality_alerts WHERE sent_at < now() - interval '56 days'");
+  // Ссылка вне окна наблюдения уже не может быть актуальным оповещением.
+  await pool.query("DELETE FROM summary_quality_alerts WHERE link LIKE 'coverage:%' AND sent_at IS NULL AND created_at < now() - interval '7 days'");
 }

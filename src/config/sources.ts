@@ -27,6 +27,8 @@ export type SourceConfig = {
   // Основной транспортный URL, если отличается от стабильного rssUrl в БД.
   // При ошибке загрузки/разбора резервом служит rssUrl.
   primaryFeedUrl?: string;
+  // Резерв того же издателя. Atom передаёт полный текст в <content>.
+  fallbackAtomUrl?: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
   // (Motor Trend, Car and Driver). "futureplc" (Wallpaper, Creative Bloq —
@@ -526,6 +528,7 @@ export const SOURCES: SourceConfig[] = [
     // content:encoded. "Maxim Models Competition" — промо их конкурса моделей.
     name: "Maxim",
     rssUrl: "https://www.maxim.com/feed/",
+    fallbackAtomUrl: "https://www.maxim.com/feed/atom/",
     homepageUrl: "https://www.maxim.com",
     gallery: "maxim",
     preferFeedContent: true,
@@ -773,6 +776,7 @@ export const SOURCES: SourceConfig[] = [
     // content:encoded, ~5 материалов в неделю.
     name: "Azure",
     rssUrl: "https://www.azuremagazine.com/feed/",
+    fallbackAtomUrl: "https://www.azuremagazine.com/feed/atom/",
     homepageUrl: "https://www.azuremagazine.com",
     gallery: "azure",
   },

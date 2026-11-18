@@ -8,7 +8,7 @@ import { cleanupBrowsers } from "../lib/browserAccounts.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
 import { SummaryQualityError } from "../lib/summaryQuality.js";
-import { queueSummaryAlert, flushSummaryAlerts } from "./summaryAlerts.js";
+import { queueSummaryAlert, flushSummaryAlerts, queueCoverageAlerts } from "./summaryAlerts.js";
 import {
   fetchOgTags,
   extractFeedGallery,
@@ -30,7 +30,7 @@ import { clipArticleText } from "../lib/articleText.js";
 import { describeContext, type ContentOrigin } from "../lib/contentQuality.js";
 import { loadContentRepairs, claimContentRepair, recordNoText, resolveContentRepair } from "./contentRepairs.js";
 import { normalizeFeedDate, fetchWindowHours, inFetchWindow, freshFirst, claimRecoverySlot, type PreviousFetch } from "./fetchPolicy.js";
-import { initCoverage, observeLinks, completeCoverage, coverageReport, type ObservedLink } from "./fetchCoverage.js";
+import { initCoverage, observeLinks, completeCoverage, coverageReport, type CoverageAlert, type ObservedLink } from "./fetchCoverage.js";
 import { diagnosticFor, fingerprint, initDiagnostics, outcome, persistDiagnostics, recordExtraction, type SourceDiagnostic, type FeedResponse } from "./sourceDiagnostics.js";
 
 // dc:content/content:encoded — некоторые издания (Wallpaper — Future plc,
@@ -232,30 +232,32 @@ export async function fetchFeedText(rssUrl: string, attempts = 3, userAgent = BR
 const FEED_CONCURRENCY = 8;
 export async function fetchSourceFeed(source: { name: string; rss_url: string }): Promise<FeedResponse> {
   const config = SOURCES.find(s => s.name === source.name);
-  if (!config?.primaryFeedUrl || source.rss_url !== config.rssUrl) {
+  if (!config || (!config.primaryFeedUrl && !config.fallbackAtomUrl) || source.rss_url !== config.rssUrl) {
     return fetchFeedText(source.rss_url, undefined, config?.feedUserAgent);
   }
+  const primaryUrl = config.primaryFeedUrl ?? source.rss_url;
+  const fallbackUrl = config.fallbackAtomUrl ?? source.rss_url;
   let primaryError: string;
   try {
     // Две сетевые попытки основного канала, одна резервного — максимум
     // три запроса суммарно. Невалидный/пустой XML тоже включает резерв.
-    const response = await fetchFeedText(config.primaryFeedUrl, 2, config.feedUserAgent);
+    const response = await fetchFeedText(primaryUrl, 2, config.feedUserAgent);
     const feed = await parser.parseString(response.xml);
     if (!feed.items.some(item => item.title && item.link && item.isoDate &&
       Number.isFinite(Date.parse(item.isoDate)) &&
       (source.name !== "Abduzeedo" || cmsFeedArticle(item.content, item.link)))) {
       throw new Error("RSS не содержит пригодных статей");
     }
-    return { ...response, fetchedUrl: config.primaryFeedUrl };
+    return { ...response, fetchedUrl: primaryUrl };
   } catch (err) { primaryError = (err as Error).message.slice(0, 500); }
-  console.log(`  ${source.name}: основной RSS недоступен (${primaryError}), резерв ${source.rss_url}`);
+  console.log(`  ${source.name}: основной RSS недоступен (${primaryError}), резерв ${fallbackUrl}`);
   try {
-    const response = await fetchFeedText(source.rss_url, 1, config.feedUserAgent);
+    const response = await fetchFeedText(fallbackUrl, 1, config.feedUserAgent);
     const feed = await parser.parseString(response.xml);
-    if (!feed.items.some(item => item.title && item.link && item.isoDate && Number.isFinite(Date.parse(item.isoDate)))) {
+    if (!feed.items.some(item => item.title && item.link && item.isoDate && Number.isFinite(Date.parse(item.isoDate)) && (!config.fallbackAtomUrl || Boolean(item.content?.trim())))) {
       throw new Error("Резервный RSS не содержит пригодных статей");
     }
-    return { ...response, fetchedUrl: source.rss_url, primaryFeedError: primaryError };
+    return { ...response, fetchedUrl: fallbackUrl, primaryFeedError: primaryError, atomFallback: Boolean(config.fallbackAtomUrl) };
   } catch (err) {
     throw Object.assign(new Error(`Основной RSS: ${primaryError}; резервный RSS: ${(err as Error).message}`),
       { status: (err as { status?: number }).status });
@@ -306,6 +308,14 @@ export async function prepareSource(
     diagnostic.primaryFeedError = response.primaryFeedError;
     diagnostic.fingerprint = fingerprint(response.xml);
     feed = await parser.parseString(response.xml);
+    if (response.atomFallback) {
+      for (const item of feed.items) {
+        // rss-parser кладёт полный Atom <content> в item.content, а не content:encoded.
+        item["content:encoded"] ??= item.content;
+        item.content = item.summary ?? "";
+        item.contentSnippet = stripHtml(item.content) || undefined;
+      }
+    }
   } catch (err) {
     diagnostic.status ??= (err as { status?: number }).status ?? null;
     diagnostic.feedError = (err as Error).message.slice(0, 500);
@@ -936,7 +946,7 @@ async function main() {
         prepared.repairLinks.push(item.link);
         if (!prepared.fresh.some(i => i.link === item.link)) {
           prepared.fresh.push(item);
-          prepared.observations.push({ link: item.link, title: item.title, publishedAt: item.isoDate ?? null, decision: "eligible" });
+          prepared.observations.push({ link: item.link, title: item.title, publishedAt: item.isoDate ?? null, decision: "eligible", fromRepair: true });
           d.eligible++;
         }
       }
@@ -990,13 +1000,26 @@ async function main() {
       }
     }
   } finally {
-    await revealBatch().catch((err) => console.error(`не удалось показать статьи: ${(err as Error).message}`));
-    if (coverageReady) await coverageReport().then(report => console.log("COVERAGE_SHADOW " + JSON.stringify(report)))
+    const batchRevealed = await revealBatch().then(() => true, err => {
+      console.error(`не удалось показать статьи: ${(err as Error).message}`);
+      return false;
+    });
+    const coverageAlerts: CoverageAlert[] = [];
+    const sendCoverageAlerts = batchRevealed && process.env.FETCH_COVERAGE_ALERTS === "1";
+    if (coverageReady) await coverageReport(runId, coverageAlerts).then(async report => {
+      console.log("COVERAGE_SHADOW " + JSON.stringify(report));
+      if (coverageAlerts.length) {
+        console.log("COVERAGE_ALERT_CANDIDATES " + JSON.stringify({
+          sendingEnabled: sendCoverageAlerts, count: coverageAlerts.length, examples: coverageAlerts.slice(0, 10),
+        }));
+        if (sendCoverageAlerts) await queueCoverageAlerts(coverageAlerts);
+      }
+    })
       .catch(err => console.error(`COVERAGE_ERROR: ${err.message}`));
     // До удаления семидневных статей сохраняем независимую историю объёмов.
     if (diagnosticsReady) await persistDiagnostics(runId, diagnostics, RETENTION_DAYS)
       .catch(err => console.error(`Не удалось сохранить диагностику: ${(err as Error).message}`));
-    await flushSummaryAlerts().catch(() => console.error("SUMMARY_ALERT_ERROR: не удалось обработать очередь уведомлений"));
+    await flushSummaryAlerts(sendCoverageAlerts ? coverageAlerts : []).catch(() => console.error("SUMMARY_ALERT_ERROR: не удалось обработать очередь уведомлений"));
     // Чистка — и при остановке прогона посередине (исчерпана квота Gemini):
     // раньше она стояла после обхода и в таком прогоне не выполнялась.
     await cleanupOld().catch((err) => console.error(`не удалось удалить старое: ${(err as Error).message}`));

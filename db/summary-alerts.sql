@@ -1,4 +1,4 @@
--- Очередь только окончательных ошибок качества, независимо от жизни статьи.
+-- Очередь ошибок качества и сигналов о пропущенных RSS-ссылках.
 CREATE TABLE IF NOT EXISTS summary_quality_alerts (
   link TEXT PRIMARY KEY,
   payload JSONB NOT NULL,

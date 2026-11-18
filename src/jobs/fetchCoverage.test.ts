@@ -8,7 +8,7 @@ const now = Date.parse("2026-11-10T12:00:00Z");
 const row: CoverageRow = {
   name: "Test", link: "https://example.com/article", title: "Article", decision: "eligible",
   first_seen_at: new Date(now - 3 * 3_600_000), published_at: new Date(now - 4 * 3_600_000),
-  completed_checks: 2, article_id: null, published: false, skipped_reason: null,
+  observed_checks: 2, article_id: null, published: false, skipped_reason: null,
 };
 
 test("публикация в кластере важнее старой ошибки обработки", () => {
@@ -21,12 +21,12 @@ test("известная исключённая ссылка не считает
 });
 test("пропуск требует и двух часов ожидания, и двух завершённых проверок", () => {
   assert.equal(coverageState(row, now), "missing");
-  assert.equal(coverageState({ ...row, completed_checks: 1 }, now), "pending");
+  assert.equal(coverageState({ ...row, observed_checks: 1 }, now), "pending");
   assert.equal(coverageState({ ...row, first_seen_at: new Date(now - 3_600_000) }, now), "pending");
 });
 test("строка статьи без публикации выявляется отдельно", () => {
   assert.equal(coverageState({ ...row, article_id: 1 }, now), "stuck");
-  assert.equal(coverageState({ ...row, article_id: 1, completed_checks: 0 }, now), "processing");
+  assert.equal(coverageState({ ...row, article_id: 1, observed_checks: 0 }, now), "processing");
 });
 test("ошибка даты не превращается в подтверждённый пропуск", () => {
   assert.equal(coverageState({ ...row, decision: "invalid_date", published_at: null }, now), "invalid_metadata");

@@ -868,6 +868,21 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
 export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[]; retrieval?: "abduzeedo-cms";
   extraction?: { method: "selector" | "jsonld" | "article" | "page" | "none"; selectorMiss: boolean; possibleTeaser: boolean } };
 
+function editorialTextSelector(url: URL): string | undefined {
+  const host = url.hostname.replace(/^www\./, "");
+  const path = url.pathname;
+  if (host === "cntraveler.com" && path.startsWith("/gallery/")) {
+    return '[class*="GalleryPageTextBlock"] p, .gallery__slides__slide h3, .gallery__slides__slide [class*="UnifiedProductCardDescriptionWrapper"] p';
+  }
+  if (host === "newyorker.com" && path.startsWith("/culture/screening-room/")) {
+    return "article .body__inner-container > p";
+  }
+  if (host === "nymag.com" && path.startsWith("/intelligencer/") && /live-updates/.test(path)) {
+    return "article.article > section.body > .article-content > p, article.article .liveblog-update > .content > p";
+  }
+  return undefined;
+}
+
 export async function fetchOgTags(
   url: string,
   contentSelector?: string,
@@ -877,9 +892,13 @@ export async function fetchOgTags(
   // разметке, чем обычно нужно для og-тегов/текста: у Wallpaper фото тела
   // статьи идут с ~910КБ до ~1.01МБ при странице ~1.05-1.1МБ — прежний лимит
   // 1МБ срезал последние кадры. Читаем с запасом именно для них.
-  const abduzeedo = ["abduzeedo.com", "www.abduzeedo.com"].includes(new URL(url).hostname) && gallery === "abduzeedo";
+  const pageUrl = new URL(url);
+  const abduzeedo = ["abduzeedo.com", "www.abduzeedo.com"].includes(pageUrl.hostname) && gallery === "abduzeedo";
+  const isPmcList = /^(?:www\.)?(?:variety\.com|hollywoodreporter\.com)$/.test(pageUrl.hostname)
+    && pageUrl.pathname.startsWith("/lists/");
   try {
-    const html = await fetchHtmlChunk(url, gallery && !galleryFromRss(gallery) ? 1_500_000 : undefined);
+    const html = await fetchHtmlChunk(url, isPmcList || editorialTextSelector(pageUrl) || (gallery && !galleryFromRss(gallery))
+      ? 1_500_000 : undefined);
     if (abduzeedo && !extractBySelector(cheerio.load(html), ".article-body")) {
       throw new Error("Abduzeedo: отсутствует тело статьи");
     }
@@ -908,7 +927,8 @@ export async function fetchOgTags(
 export function parseArticleHtml(html: string, url: string, contentSelector?: string, gallery?: GallerySite): OgTags {
   const $ = cheerio.load(html);
   let jsonLd = extractArticleBodyFromJsonLd($);
-  if (new URL(url).hostname.replace(/^www\./, "") === "caranddriver.com") {
+  const pageUrl = new URL(url);
+  if (pageUrl.hostname.replace(/^www\./, "") === "caranddriver.com") {
     jsonLd = jsonLd?.replace(/➡\uFE0F?\s*Skip the lot\.[\s\S]*$/, "").trim();
   }
   cleanArticleDom($, url);
@@ -919,7 +939,9 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
   // абзацы по всей странице (запасной вариант — для сайтов, где <article>
   // либо отсутствует, либо указывает не туда, см. коммент у
   // findLargestArticleScope).
-  const manual = contentSelector ? extractBySelector($, contentSelector) : undefined;
+  const formatSelector = editorialTextSelector(pageUrl);
+  const formatText = formatSelector ? extractBySelector($, formatSelector) : undefined;
+  const manual = formatText ?? (contentSelector ? extractBySelector($, contentSelector) : undefined);
   const articleText = articleScope ? extractParagraphs($, articleScope) : undefined;
   const excerpt = manual ?? (jsonLd ? clipArticleText(jsonLd, MAX_ARTICLE_CHARS) : undefined) ??
     articleText ?? extractParagraphs($, undefined);

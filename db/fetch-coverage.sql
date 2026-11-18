@@ -13,5 +13,7 @@ CREATE TABLE IF NOT EXISTS fetch_link_coverage (
   PRIMARY KEY (source_id, link)
 );
 CREATE INDEX IF NOT EXISTS fetch_link_coverage_seen ON fetch_link_coverage (last_seen_at);
+-- Прежний счётчик включал проходы после исчезновения ссылки из RSS.
+ALTER TABLE fetch_link_coverage ADD COLUMN IF NOT EXISTS observed_checks integer NOT NULL DEFAULT 0;
 ALTER TABLE fetch_link_coverage ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON fetch_link_coverage FROM PUBLIC;

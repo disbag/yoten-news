@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const SUBSTANTIAL_CONTENT_CHARS = 600;
-export const PARSER_VERSION = "dis86-v1";
+export const PARSER_VERSION = "dis86-v2";
 export type ContentOrigin = "rss" | "rss_cms" | "page" | "description" | "rss_snippet";
 
 // Измеряем контекст эмбеддинга, а не метаданные страницы. Длина сама по
