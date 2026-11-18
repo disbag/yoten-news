@@ -10,11 +10,13 @@ import Gallery from "./Gallery";
 // фото или взмахом вверх/вниз.
 export default function Lightbox({
   urls,
-  startIndex = 0,
+  selectedUrl,
+  onSelect,
   onClose,
 }: {
   urls: string[];
-  startIndex?: number;
+  selectedUrl: string | null;
+  onSelect: (url: string) => void;
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -46,7 +48,8 @@ export default function Lightbox({
       <Gallery
         urls={urls}
         fullscreen
-        startIndex={startIndex}
+        selectedUrl={selectedUrl}
+        onSelect={onSelect}
         onClose={onClose}
         onTap={(_, target) => {
           // Нажатие по самому фото ничего не делает, мимо него — закрывает.

@@ -36,20 +36,19 @@ const NO_ZOOM: Zoom = { scale: 1, x: 0, y: 0 };
 export default function Gallery({
   urls,
   fullscreen = false,
-  startIndex = 0,
+  selectedUrl,
+  onSelect,
   onTap,
   onClose,
 }: {
   urls: string[];
   fullscreen?: boolean;
-  // С какого кадра открыть (для просмотра на весь экран).
-  startIndex?: number;
-  // Нажатие без перетаскивания: номер кадра и то, по чему попали.
-  onTap?: (index: number, target: EventTarget) => void;
+  selectedUrl: string | null;
+  onSelect: (url: string) => void;
+  // Нажатие без перетаскивания: адрес кадра и то, по чему попали.
+  onTap?: (url: string, target: EventTarget) => void;
   onClose?: () => void;
 }) {
-  // Номер текущего кадра в ленте, с нуля.
-  const [pos, setPos] = useState(startIndex);
   // Сломанные (402/битые байты — см. app/api/image-proxy/route.ts) кадры
   // исключаем из карусели по мере обнаружения, а не показываем битую иконку —
   // тот же принцип, что и для одиночной обложки в FeedCard.tsx.
@@ -67,7 +66,7 @@ export default function Gallery({
   // карточка подъехала к экрану. Однажды загруженный кадр src не теряет.
   // На весь экран кадр открывают нажатием, он нужен сразу — без ожидания.
   const [firstLoaded, setFirstLoaded] = useState(fullscreen);
-  const [requested, setRequested] = useState<Set<string>>(() => new Set([urls[fullscreen ? startIndex : 0]]));
+  const [requested, setRequested] = useState<Set<string>>(() => new Set(fullscreen && selectedUrl ? [selectedUrl] : urls.slice(0, 1)));
   const [dragPx, setDragPx] = useState(0);
   // Вертикальное смещение — только на весь экран: фото тянется за пальцем.
   const [dragY, setDragY] = useState(0);
@@ -97,8 +96,12 @@ export default function Gallery({
 
   const workingUrls = urls.filter((u) => !broken.has(u));
   const n = workingUrls.length;
-  // Кадр могли исключить как битый — номер не должен выйти за конец ленты.
-  const current = Math.max(0, Math.min(pos, n - 1));
+  // Галереи могут исключать битые кадры независимо. Адрес сохраняет выбор
+  // даже при сдвиге индексов. Для недоступного кадра берём ближайший справа.
+  const selectedIndex = selectedUrl === null ? 0 : urls.indexOf(selectedUrl);
+  const nextUrl = urls.slice(Math.max(0, selectedIndex)).find(url => !broken.has(url));
+  const current = nextUrl ? workingUrls.indexOf(nextUrl) : Math.max(0, n - 1);
+  const currentUrl = workingUrls[current];
   const neighbors = [workingUrls[current - 1], workingUrls[current], workingUrls[current + 1]].filter(
     (u): u is string => Boolean(u)
   );
@@ -135,8 +138,12 @@ export default function Gallery({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- go читает только n, он в зависимостях
-  }, [fullscreen, n]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- neighborsKey описывает кадры, доступные для go
+  }, [fullscreen, neighborsKey, current, onSelect]);
+
+  useEffect(() => {
+    if (fullscreen && currentUrl && currentUrl !== selectedUrl) onSelect(currentUrl);
+  }, [fullscreen, currentUrl, selectedUrl, onSelect]);
 
   // Safari на iPhone на щипок увеличивает всю страницу, и touch-action его не
   // останавливает — жест двумя пальцами на весь экран забираем себе явно.
@@ -163,7 +170,8 @@ export default function Gallery({
 
   function go(delta: number) {
     setZoom(NO_ZOOM);
-    setPos((p) => Math.max(0, Math.min(Math.min(p, n - 1) + delta, n - 1)));
+    const url = workingUrls[Math.max(0, Math.min(current + delta, n - 1))];
+    if (url) onSelect(url);
   }
 
   // Сдвиг увеличенного фото — не дальше его края: пустоты за фото не видно.
@@ -362,7 +370,7 @@ export default function Gallery({
               return;
             }
           }
-          onTap?.(current, e.target);
+          onTap?.(currentUrl, e.target);
         }}
       >
         <div
@@ -438,7 +446,7 @@ export default function Gallery({
                 key={url}
                 className={i === current ? "dot active" : "dot"}
                 aria-label={`Фото ${i + 1}`}
-                onClick={() => setPos(i)}
+                onClick={() => onSelect(workingUrls[i])}
               />
             ))}
           </div>

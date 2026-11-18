@@ -7,7 +7,15 @@ export class SummaryQualityError extends Error {
   }
 }
 
+export function hasForeignLetterInRussianWord(text: string): boolean {
+  // Раздельные названия (iPhone, Home Alone) и обозначения вроде i-режим
+  // допустимы. Проверяем только буквы внутри одного слова с русской основой.
+  return (text.normalize("NFC").match(/\p{L}+/gu) ?? []).some(word =>
+    /[а-яё]/iu.test(word) && /[^а-яё]/iu.test(word));
+}
+
 export function looksNonRussian(text: string, minLetters = 40): boolean {
+  if (hasForeignLetterInRussianWord(text)) return true;
   if ((text.match(/[әғқңөұүһіїєґўӘҒҚҢӨҰҮҺІЇЄҐЎ]/g)?.length ?? 0) >= 3) return true;
   const letters = text.match(/\p{L}/gu) ?? [];
   return letters.length >= minLetters && letters.filter(ch => /[\u0400-\u04FF]/.test(ch)).length / letters.length < 0.3;

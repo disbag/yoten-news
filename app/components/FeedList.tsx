@@ -99,6 +99,7 @@ export default function FeedList({
   }, []);
   const [items, setItems] = useState(initialItems);
   const [hasOlder, setHasOlder] = useState(initialHasOlder);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasNewer, setHasNewer] = useState(restored && live);
   const [newCount, setNewCount] = useState(0);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
@@ -175,6 +176,7 @@ export default function FeedList({
     const cursor = olderCursor.current;
     if (!cursor || loadingOlder.current || replacing.current) return;
     loadingOlder.current = true;
+    setIsLoadingOlder(true);
     const startedIn = generation.current;
     try {
       const res = await fetch(
@@ -193,6 +195,7 @@ export default function FeedList({
       // Сеть моргнула — следующая попытка будет при следующем движении ленты.
     } finally {
       loadingOlder.current = false;
+      setIsLoadingOlder(false);
     }
   }
 
@@ -257,6 +260,7 @@ export default function FeedList({
     if (replacing.current) return;
     replacing.current = true;
     generation.current += 1;
+    setIsLoadingOlder(false);
     pendingNewer.current = null;
     anchorSnapshot.current = null;
     try {
@@ -473,8 +477,53 @@ export default function FeedList({
           />
         ))}
       </div>
+      <div className="feed-loading" role="status">
+        {!stale && hasOlder && isLoadingOlder && (
+          <>
+            <span className="feed-loading-label">Загружаются следующие посты</span>
+            {/* SVG Spinners by Utkarsh Verma: https://github.com/n3r4zzurr0/svg-spinners/blob/main/LICENSE */}
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="4" cy="12" r="3" />
+              <circle cx="12" cy="12" r="3" />
+              <circle cx="20" cy="12" r="3" />
+            </svg>
+          </>
+        )}
+      </div>
 
       <style jsx>{`
+        .feed-loading {
+          display: flex;
+          justify-content: center;
+          color: var(--text-dim);
+        }
+        .feed-loading:not(:empty) {
+          padding: 8px 0 16px;
+        }
+        .feed-loading-label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
+        }
+        .feed-loading circle {
+          animation: feed-dot-bounce 1.05s cubic-bezier(0.33, 0.66, 0.66, 1) infinite;
+        }
+        .feed-loading circle:nth-child(2) {
+          animation-delay: 0.1s;
+        }
+        .feed-loading circle:nth-child(3) {
+          animation-delay: 0.2s;
+        }
+        @keyframes feed-dot-bounce {
+          0%, 57%, 100% { transform: translateY(0); }
+          29% { transform: translateY(-6px); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .feed-loading circle { animation: none; }
+        }
         /* Плашка висит над лентой по центру её колонки и не занимает места
            в потоке: sticky-обёртка нулевой высоты вместо position: fixed,
            который центрировался бы по окну, а не по колонке (на десктопе

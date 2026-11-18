@@ -69,8 +69,8 @@ export default function FeedCard({
   // целиком на чёрном фоне, как кадры в карусели (см. Gallery.tsx).
   const [coverUpright, setCoverUpright] = useState(false);
   const coverRef = useRef<HTMLImageElement>(null);
-  // Просмотр фото на весь экран: номер кадра, с которого открыли, или null.
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [selectedGalleryUrl, setSelectedGalleryUrl] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const cardRef = useRef<HTMLElement>(null);
 
   function checkCoverUpright(img: HTMLImageElement) {
@@ -279,7 +279,15 @@ export default function FeedCard({
         )}
       </div>
       {item.imageUrls && item.imageUrls.length > 1 ? (
-        <Gallery urls={item.imageUrls} onTap={(index) => setLightboxIndex(index)} />
+        <Gallery
+          urls={item.imageUrls}
+          selectedUrl={selectedGalleryUrl}
+          onSelect={setSelectedGalleryUrl}
+          onTap={(url) => {
+            setSelectedGalleryUrl(url);
+            setLightboxOpen(true);
+          }}
+        />
       ) : (
         item.imageUrl &&
         !imageBroken && (
@@ -298,16 +306,17 @@ export default function FeedCard({
             loading="lazy"
             onLoad={(e) => checkCoverUpright(e.currentTarget)}
             onError={() => (imageDirect ? setImageBroken(true) : setImageDirect(true))}
-            onClick={() => setLightboxIndex(0)}
+            onClick={() => setLightboxOpen(true)}
           />
         )
       )}
       {item.thread && item.thread.posts.length > 0 && <ThreadPosts posts={item.thread.posts} />}
-      {lightboxIndex !== null && (
+      {lightboxOpen && (
         <Lightbox
           urls={item.imageUrls && item.imageUrls.length > 1 ? item.imageUrls : item.imageUrl ? [item.imageUrl] : []}
-          startIndex={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          selectedUrl={selectedGalleryUrl}
+          onSelect={setSelectedGalleryUrl}
+          onClose={() => setLightboxOpen(false)}
         />
       )}
 
