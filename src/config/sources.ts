@@ -374,6 +374,7 @@ export const SOURCES: SourceConfig[] = [
     // Vox Media, как The Verge — не блокирует бота, реальный текст статьи на
     // странице (после блока меню/виджета "AI-саммари" самого Polygon вначале).
     name: "Polygon",
+    fetchDisabled: true,
     rssUrl: "https://www.polygon.com/feed/",
     homepageUrl: "https://www.polygon.com",
     gallery: "polygon",

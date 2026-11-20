@@ -31,7 +31,7 @@ export const SOURCE_GROUPS: { label: string; sources: string[] }[] = [
     ],
   },
   { label: "Лайфстайл", sources: ["Lifehacker", "GQ", "Esquire", "Maxim", "Condé Nast Traveler", "Vanity Fair"] },
-  { label: "Игры", sources: ["IGN", "GameSpot", "Kotaku", "Polygon", "Eurogamer"] },
+  { label: "Игры", sources: ["IGN", "GameSpot", "Kotaku", "Eurogamer"] },
   { label: "Кино и сериалы", sources: ["The Hollywood Reporter", "Variety"] },
   { label: "Музыка", sources: ["Pitchfork", "Rolling Stone"] },
   // Creative Bloq в макете нет (добавлен позже) — по профилю это дизайн.

@@ -1,5 +1,6 @@
 import { pool } from "./db.js";
 import type { PoolClient } from "pg";
+import { SOURCES } from "../config/sources.js";
 import { SOURCE_GROUPS, OTHER_SOURCES_LABEL } from "../config/sourceGroups.js";
 
 export type SettingsSource = { id: number; name: string; enabled: boolean };
@@ -17,9 +18,10 @@ export async function getSettingsGroups(userId: number | null): Promise<Settings
     `SELECT min(s.id) AS id, s.name, bool_or(h.user_id IS NOT NULL) AS hidden
      FROM sources s
      LEFT JOIN user_hidden_sources h ON h.source_id = s.id AND h.user_id = $1
+     WHERE s.name <> ALL($2::text[])
      GROUP BY s.name
      ORDER BY s.name`,
-    [userId]
+    [userId, SOURCES.filter(source => source.fetchDisabled).map(source => source.name)]
   );
   const byName = new Map(rows.map((r) => [r.name, { id: r.id, name: r.name, enabled: !r.hidden }]));
 
