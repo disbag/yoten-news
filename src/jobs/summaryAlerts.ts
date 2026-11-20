@@ -23,12 +23,6 @@ export async function queueSummaryAlert(
   await pool.query("INSERT INTO summary_quality_alerts (link, payload) VALUES ($1, $2::jsonb) ON CONFLICT (link) DO NOTHING", [article.link, JSON.stringify(payload)]);
 }
 
-export async function queueContentAlert(article: { link: string; title: string; source: string; attempts: number }): Promise<void> {
-  await initAlerts();
-  const payload: SummaryAlert = { ...article, reasons: ["source_no_text"], action: "skip_no_text" };
-  await pool.query("INSERT INTO summary_quality_alerts (link, payload) VALUES ($1, $2::jsonb) ON CONFLICT (link) DO NOTHING", [article.link, JSON.stringify(payload)]);
-}
-
 function coverageKey(alert: CoverageAlert): string {
   return `coverage:${alert.state}:${alert.link}`;
 }
@@ -72,9 +66,6 @@ export function summaryAlertText(alert: SummaryAlert): string {
     return reasons[reason] ?? reason;
   };
   // Plain text: внешние заголовки не интерпретируются как Telegram HTML.
-  if (alert.action === "skip_no_text") return ["⚠️ Не удалось получить текст статьи", alert.source.slice(0, 150), alert.title.slice(0, 400),
-    `Попыток обработки: ${alert.attempts}. Лимит попыток или срок восстановления исчерпан.`,
-    "Статья не опубликована. Автоповторы остановлены.", alert.link.slice(0, 1500)].join("\n");
   return ["⚠️ Не удалось исправить саммари", alert.source.slice(0, 150), alert.title.slice(0, 400),
     `Попыток: ${alert.attempts}.`, `Причины: ${alert.reasons.map(describe).join("; ").slice(0, 1000)}.`,
     alert.action === "keep_card_summary" ? "Продолжение треда не добавлено. Сохранена самостоятельная карточка с исходным пересказом; автоповторы остановлены."
@@ -95,6 +86,8 @@ export async function sendSummaryAlert(alert: SummaryAlert, token: string, chat:
 // за прогон; неудачная доставка повторяется через 30 минут, без регенерации.
 export async function flushSummaryAlerts(coverage: CoverageAlert[] = []): Promise<void> {
   await initAlerts();
+  // Убираем старые недоставленные сообщения об отсутствии текста до выборки очереди.
+  await pool.query("DELETE FROM summary_quality_alerts WHERE sent_at IS NULL AND payload->>'action' = 'skip_no_text'");
   const current = new Map(coverage.map(alert => [coverageKey(alert), alert]));
   const { rows } = await pool.query<{ link: string; payload: SummaryAlert }>(
     `SELECT link, payload FROM summary_quality_alerts WHERE sent_at IS NULL AND next_attempt_at <= now()

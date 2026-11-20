@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { pool } from "../lib/db.js";
 import { repairSnapshot, recordNoText, claimContentRepair, resolveContentRepair } from "./contentRepairs.js";
-import { summaryAlertText } from "./summaryAlerts.js";
 
 const item = { title: "Article", link: "https://example.com/article", content: "x".repeat(30000), enclosure: { url: "https://example.com/image.jpg", length: 42 } };
 test("снимок ограничивает текст и сохраняет обложку для исчезнувшего RSS item", () => {
@@ -11,7 +10,7 @@ test("снимок ограничивает текст и сохраняет о�
   assert.deepEqual(snapshot.enclosure, item.enclosure);
   assert.equal(item.content.length, 30000);
 });
-test("первый отказ не уведомляет; окончательный отказ сохраняет уведомление до отметки", async t => {
+test("отсутствие текста регистрируется без Telegram на первой и последней попытках", async t => {
   const calls: string[] = [];
   let state = "pending";
   t.mock.method(pool, "query", async (sql: string) => {
@@ -22,9 +21,8 @@ test("первый отказ не уведомляет; окончательн�
   assert.equal(calls.length, 1);
   state = "exhausted";
   assert.equal(await recordNoText({ id: 1, name: "Test" }, item), false);
-  const queued = calls.findIndex(sql => sql.includes("INSERT INTO summary_quality_alerts"));
-  const marked = calls.findIndex(sql => sql.includes("SET alert_queued_at"));
-  assert.ok(queued >= 0 && marked > queued);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(sql => sql.includes("INSERT INTO article_content_repairs")));
 });
 test("запрещённая попытка не запускается; разрешённая атомарно расходует бюджет", async t => {
   let allowed = false;
@@ -44,6 +42,4 @@ test("завершение повтора не удаляет причину о�
   t.mock.method(pool, "query", async (sql: string) => { calls.push(sql); return { rows: [] }; });
   await resolveContentRepair(item.link);
   assert.match(calls[1], /reason = 'no_text'/);
-  const text = summaryAlertText({ ...item, source: "Test", attempts: 3, reasons: ["source_no_text"], action: "skip_no_text" });
-  assert.match(text, /Не удалось получить текст/);
 });

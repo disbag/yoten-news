@@ -1,5 +1,4 @@
 import { pool } from "../lib/db.js";
-import { queueContentAlert } from "./summaryAlerts.js";
 
 export const MAX_CONTENT_ATTEMPTS = 3; // первоначальная обработка + два повтора
 export type RepairItem = { title: string; link: string; isoDate?: string; pubDate?: string;
@@ -19,11 +18,6 @@ export function repairSnapshot(item: RepairItem): RepairItem {
     categories: item.categories?.slice(0, 30) };
 }
 
-async function alert(row: RepairRow, source: string): Promise<void> {
-  await queueContentAlert({ link: row.link, title: row.item.title, source, attempts: row.attempts });
-  await pool.query("UPDATE article_content_repairs SET alert_queued_at = now() WHERE link = $1", [row.link]);
-}
-
 export async function recordNoText(source: { id: number; name: string }, item: RepairItem): Promise<boolean> {
   const { rows: [row] } = await pool.query<RepairRow>(
     `INSERT INTO article_content_repairs (link, source_id, item) VALUES ($1, $2, $3::jsonb)
@@ -33,7 +27,6 @@ export async function recordNoText(source: { id: number; name: string }, item: R
      RETURNING *`, [item.link, source.id, JSON.stringify(repairSnapshot(item))]);
   const pending = row.state === "pending";
   console.log(`CONTENT_REPAIR ${JSON.stringify({ link: row.link, attempts: row.attempts, state: row.state, reason: "no_text" })}`);
-  if (!pending) await alert(row, source.name);
   return pending;
 }
 
@@ -60,18 +53,11 @@ export async function loadContentRepairs(sources: { id: number; name: string }[]
     WHERE r.state = 'pending' AND EXISTS (
       SELECT 1 FROM articles a JOIN articles c ON c.id = a.cluster_id
       WHERE a.link = r.link AND c.ai_summary IS NOT NULL)`);
-  // Также завершаем последнюю попытку, оборванную квотой/аварией. Событие
-  // отправки дедуплицируется в существующей очереди Telegram.
-  const { rows: expired } = await pool.query<RepairRow>(
+  // Также завершаем последнюю попытку, оборванную квотой или аварией.
+  await pool.query(
     `UPDATE article_content_repairs SET state = 'exhausted', updated_at = now()
      WHERE source_id = ANY($1::int[]) AND state = 'pending'
-       AND (attempts >= 3 OR first_failed_at <= now() - interval '24 hours') RETURNING *`, [ids]);
-  for (const row of expired) await alert(row, sources.find(s => s.id === row.source_id)!.name);
-  // Если запись в очередь уведомлений оборвалась после UPDATE, следующий
-  // прогон повторит INSERT ... ON CONFLICT, не потеряв окончательный отказ.
-  const { rows: unsent } = await pool.query<RepairRow>(
-    "SELECT * FROM article_content_repairs WHERE source_id = ANY($1::int[]) AND state = 'exhausted' AND alert_queued_at IS NULL ORDER BY updated_at LIMIT 10", [ids]);
-  for (const row of unsent) await alert(row, sources.find(s => s.id === row.source_id)!.name);
+       AND (attempts >= 3 OR first_failed_at <= now() - interval '24 hours')`, [ids]);
   const { rows } = await pool.query<RepairRow>(
     `SELECT * FROM (SELECT r.*, row_number() OVER (PARTITION BY source_id ORDER BY next_attempt_at) AS position
        FROM article_content_repairs r WHERE source_id = ANY($1::int[]) AND state = 'pending'
