@@ -243,8 +243,10 @@ export async function getFeed(
       -- как дополнение именно к своему главному, с чужим оно бы повторялось.
       -- Предпочитаем статью с продолжением (кластер мог начаться с тизера, а
       -- полный текст пришёл позже, см. fetchAndProcess.ts), иначе — первую.
-      (array_agg(a.ai_summary ORDER BY a.ai_summary_more IS NULL, a.created_at ASC))[1] AS summary,
-      (array_agg(a.ai_summary_more ORDER BY a.ai_summary_more IS NULL, a.created_at ASC))[1] AS summary_more,
+      (array_agg(a.ai_summary ORDER BY a.ai_summary_more IS NULL, a.created_at ASC, a.id)
+        FILTER (WHERE a.ai_summary IS NOT NULL))[1] AS summary,
+      (array_agg(a.ai_summary_more ORDER BY a.ai_summary_more IS NULL, a.created_at ASC, a.id)
+        FILTER (WHERE a.ai_summary IS NOT NULL))[1] AS summary_more,
       -- Статья, чьи обложка и галерея идут в карточку (DIS-62): та, что даёт
       -- главное издание (порядок как у primary_source ниже), — если у неё
       -- есть картинка; иначе следующая с картинкой. Галерея важнее: если она
@@ -270,7 +272,8 @@ export async function getFeed(
       (array_agg(s.name ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_source,
       (array_agg(s.homepage_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_homepage,
       (array_agg(a.link ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_link,
-      (array_agg(a.title_ru ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS title_ru,
+      (array_agg(a.title_ru ORDER BY a.ai_summary IS NULL, a.ai_summary_more IS NULL, a.created_at, a.id)
+        FILTER (WHERE NULLIF(btrim(a.title_ru), '') IS NOT NULL))[1] AS title_ru,
       jsonb_agg(DISTINCT jsonb_build_object('name', s.name, 'homepage', s.homepage_url, 'link', a.link))
         FILTER (WHERE h.user_id IS NULL) AS source_list,
       -- category — TEXT[] на статью (см. схему), поэтому паттерн

@@ -11,9 +11,9 @@ import {
 } from "./prompt.js";
 import { sleep } from "./http.js";
 import { checkedSummary, looksNonRussian, summaryQualityIssues, MAX_SUMMARY_ATTEMPTS, type SummaryBudget } from "./summaryQuality.js";
-import { stripExclusiveSuffix, validateTranslatedTitles, parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
+import { checkTranslatedTitle, TITLE_TRANSLATION_RULES, stripExclusiveSuffix, validateTranslatedTitles, parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
 
-export type SummaryResult = { summary: string; category: Category[] | null };
+export type SummaryResult = { summary: string; category: Category[] | null; titleRu?: string | null };
 
 // Ниже этой длины исходного текста — только короткое саммари без ката "Читать":
 // у NYT/WSJ/Bloomberg и т.п. страница платная/заблокирована для бота и есть
@@ -24,6 +24,18 @@ export type SummaryResult = { summary: string; category: Category[] | null };
 // 18 слов продолжения, ничего нового).
 export const MIN_DETAIL_CONTEXT_LENGTH = Number(process.env.MIN_DETAIL_CONTEXT_LENGTH ?? 600);
 
+// Заголовок занимает отдельную строку. Ошибка перевода не требует заново
+// генерировать саммари: сборщик отправит в резерв только заголовок.
+export function parseArticleResponse(raw: string, originalTitle: string): SummaryResult {
+  const first = extractCategory(raw);
+  const header = first.summary.match(/^\s*ЗАГОЛОВОК[^\S\r\n]*:[^\S\r\n]*([^\r\n]*)(?:\r?\n|$)/iu);
+  const body = header ? extractCategory(first.summary.slice(header[0].length)) : first;
+  const result = { summary: body.summary, category: body.category ?? first.category };
+  if (!header || isNoContentSignal(result.summary)) return { ...result, titleRu: null };
+  const checked = checkTranslatedTitle(header[1], originalTitle);
+  return { ...result, titleRu: checked.issues.length ? null : checked.title };
+}
+
 // Единая точка, через которую проходит любой сырой ответ модели — поэтому
 // разбор темы (см. extractCategory) делается здесь один раз, а не в каждом
 // вызывающем коде. Для промптов без разметки темы
@@ -33,16 +45,25 @@ export async function summarize(
   title: string,
   rawSummary: string,
   systemPrompt: string = SUMMARY_PROMPT,
-  budget: SummaryBudget = { attempts: 0, reasons: [] }
+  budget: SummaryBudget = { attempts: 0, reasons: [] },
+  translateTitle = false,
 ): Promise<SummaryResult> {
   const articlePrompt = systemPrompt === SUMMARY_PROMPT || systemPrompt === LEAD_AND_MORE_PROMPT;
+  const combinedPrompt = translateTitle
+    ? `${systemPrompt}
+
+Если составляешь пересказ, вынеси перевод исходного заголовка в первую строку в формате «ЗАГОЛОВОК: текст». Затем выведи строку ТЕМА и сам пересказ в описанном выше формате. Если данных нет, весь ответ — NO_CONTENT.
+
+${TITLE_TRANSLATION_RULES}`
+    : systemPrompt;
+  const parse = (raw: string) => translateTitle ? parseArticleResponse(raw, title) : extractCategory(raw);
   const raw = await checkedSummary(async (attempt, reasons) => {
     // Повтор — с напоминанием и в системном промпте, и в конце текста статьи,
     // а последняя попытка — другой моделью (Groq): на некоторых статьях
     // gemini-3.5-flash-lite отвечала по-украински даже с напоминанием
     // примерно два раза из трёх.
     const remind = attempt > 1;
-    const prompt = remind ? systemPrompt + LANGUAGE_REMINDER + `\nИсправь ошибки предыдущего ответа: ${reasons.join(", ")}.` : systemPrompt;
+    const prompt = remind ? combinedPrompt + LANGUAGE_REMINDER + `\nИсправь ошибки предыдущего ответа: ${reasons.join(", ")}.` : combinedPrompt;
     const text = remind ? rawSummary + LANGUAGE_REMINDER : rawSummary;
     const lastTry = attempt === MAX_SUMMARY_ATTEMPTS;
     return (
@@ -50,9 +71,9 @@ export async function summarize(
         ? await summarizeWithGroq(title, text, prompt)
         : await generate(title, text, prompt));
   }, raw => articlePrompt
-    ? summaryQualityIssues(extractCategory(raw).summary, systemPrompt === LEAD_AND_MORE_PROMPT)
+    ? summaryQualityIssues(parse(raw).summary, systemPrompt === LEAD_AND_MORE_PROMPT)
     : looksNonRussian(raw) ? ["language"] : [], budget);
-  return extractCategory(raw);
+  return parse(raw);
 }
 
 // Изредка модель (реально — gemini-3.5-flash-lite) пишет пересказ на соседнем
@@ -138,7 +159,7 @@ async function generate(title: string, rawSummary: string, systemPrompt: string)
   }
 }
 
-export type ArticleSummary = { summary: string; more: string | null; category: Category[] | null };
+export type ArticleSummary = { summary: string; more: string | null; category: Category[] | null; titleRu: string | null };
 
 export async function translateArticleTitles(titles: readonly ArticleTitle[]): Promise<ArticleTitle[]> {
   const input = JSON.stringify(titles.map(({ id, title }) => ({ id, title: stripExclusiveSuffix(title) })));
@@ -173,7 +194,8 @@ export async function translateArticleTitles(titles: readonly ArticleTitle[]): P
 // summary === title — тот же сигнал "у статьи нет текста", что и раньше.
 export async function summarizeArticle(
   title: string,
-  sources: { excerpt?: string; description?: string; rawSummary: string }
+  sources: { excerpt?: string; description?: string; rawSummary: string },
+  translateTitle = false,
 ): Promise<ArticleSummary> {
   const budget: SummaryBudget = { attempts: 0, reasons: [] };
   const candidates = [sources.excerpt, sources.description, sources.rawSummary].filter(
@@ -182,12 +204,12 @@ export async function summarizeArticle(
 
   for (const input of candidates) {
     const withMore = input.length >= MIN_DETAIL_CONTEXT_LENGTH;
-    const result = await summarize(title, input, withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT, budget);
+    const result = await summarize(title, input, withMore ? LEAD_AND_MORE_PROMPT : SUMMARY_PROMPT, budget, translateTitle);
     if (isNoContentSignal(result.summary)) continue;
-    if (!withMore) return { summary: result.summary, more: null, category: result.category };
+    if (!withMore) return { summary: result.summary, more: null, category: result.category, titleRu: result.titleRu ?? null };
     const { lead, more } = splitLeadAndMore(result.summary);
-    return { summary: lead, more, category: result.category };
+    return { summary: lead, more, category: result.category, titleRu: result.titleRu ?? null };
   }
 
-  return { summary: title, more: null, category: null };
+  return { summary: title, more: null, category: null, titleRu: null };
 }

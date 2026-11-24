@@ -62,3 +62,42 @@ test("принимаются законченный короткий перес�
   assert.equal(isValidArticleSummary("NO_CONTENT", false), true);
   assert.equal(isValidArticleSummary("NO_CONTENT", true), true);
 });
+
+test("заголовок в ответе саммаризации отделяется от текста и темы", async () => {
+  const { parseArticleResponse } = await import("../lib/summarizer.js");
+  const lead = "Компания представила новую версию своего приложения.";
+  const more = "В приложении появилась поддержка нескольких языков.";
+  const body = `ТЕМА: technology\n${lead}\n===\n${more}`;
+  const original = "Company launches its new app (EXCLUSIVE)";
+  const result = parseArticleResponse(`ЗАГОЛОВОК: компания обновила приложение (ЭКСКЛЮЗИВ)\n${body}`, original);
+  assert.deepEqual(result, { titleRu: "Компания обновила приложение", summary: `${lead}\n===\n${more}`, category: ["technology"] });
+  assert.deepEqual(parseArticleResponse(`ЗАГОЛОВОК: Company launches its new application worldwide\n${body}`, original), { ...result, titleRu: null });
+  assert.deepEqual(parseArticleResponse(body, original), { ...result, titleRu: null });
+  assert.equal(parseArticleResponse("NO_CONTENT", original).titleRu, null);
+  assert.ok(summaryQualityIssues(`${lead}\nЗАГОЛОВОК: Компания обновила приложение.`, false).includes("lead:markup"));
+});
+
+test("запрос новой карточки получает заголовок и пересказ за один вызов модели", async t => {
+  const { summarizeArticle } = await import("../lib/summarizer.js");
+  const { default: fs } = await import("node:fs");
+  t.mock.method(fs, "writeFileSync", () => {});
+  const previousKey = process.env.GEMINI_API_KEYS;
+  process.env.GEMINI_API_KEYS = "fake-key-for-test";
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => Response.json({
+    candidates: [{ finishReason: "STOP", content: { parts: [{
+      text: "ЗАГОЛОВОК: Компания обновила приложение\nТЕМА: technology\nКомпания представила новую версию своего приложения.",
+    }] } }],
+  }));
+  try {
+    assert.deepEqual(await summarizeArticle("Company updates the app", { rawSummary: "The company released an update today." }, true), {
+      titleRu: "Компания обновила приложение",
+      summary: "Компания представила новую версию своего приложения.",
+      more: null,
+      category: ["technology"],
+    });
+    assert.equal(fetchMock.mock.callCount(), 1);
+  } finally {
+    if (previousKey === undefined) delete process.env.GEMINI_API_KEYS;
+    else process.env.GEMINI_API_KEYS = previousKey;
+  }
+});

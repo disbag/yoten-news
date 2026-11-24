@@ -7,6 +7,7 @@ import { pool, toVectorLiteral } from "../lib/db.js";
 import { cleanupBrowsers } from "../lib/browserAccounts.js";
 import { embed } from "../lib/embeddings.js";
 import { summarizeArticle, MIN_DETAIL_CONTEXT_LENGTH } from "../lib/summarizer.js";
+import { backfillArticleTitles } from "./translateTitles.js";
 import { SummaryQualityError } from "../lib/summaryQuality.js";
 import { queueSummaryAlert, flushSummaryAlerts, queueCoverageAlerts } from "./summaryAlerts.js";
 import {
@@ -415,6 +416,10 @@ export async function processSource(
     if (sample) sample.decision = value;
   };
 
+  // Пока текущая статья проходит склейку и саммаризацию, читаем одну
+  // следующую свежую страницу. Генерация и запись остаются последовательными.
+  const fetchPage = (link: string) => fetchOgTags(link, contentSelector, sourceConfig?.gallery);
+  let prefetchedPage: { link: string; response: Promise<OgTags> } | undefined;
   let pageFailureLogged = false;
   for (const [index, item] of fresh.entries()) {
     progress(); // "я жив и продвигаюсь" — см. src/lib/fetchLock.ts
@@ -465,7 +470,9 @@ export async function processSource(
     } else if (sourceConfig?.skipArticlePage ||
       (sourceConfig?.feedDescriptionIsFull && sufficientFeedArticle(feedContent))) excerpt = feedContent;
     else try {
-      const og = await fetchOgTags(item.link, contentSelector, sourceConfig?.gallery);
+      const page = prefetchedPage?.link === item.link ? prefetchedPage.response : fetchPage(item.link);
+      if (prefetchedPage?.link === item.link) prefetchedPage = undefined;
+      const og = await page;
       // TIME иногда присылает кредит фотографа вместо заголовка RSS.
       if (source.name === "TIME" && og.headline && /(?:[—–\/-]|courtesy of)\s*Getty Images\s*$/i.test(item.title)) {
         item.title = stripExclusiveSuffix(og.headline);
@@ -531,6 +538,17 @@ export async function processSource(
     // Обложку взять неоткуда (страница закрыта, в фиде её нет), а фото статьи
     // есть — обложкой становится первое из них.
     imageUrl ??= gallery?.[0];
+
+    if (!prefetchedPage && remaining.count > 1 && !sourceConfig?.skipArticlePage &&
+        !sourceConfig?.feedDescriptionIsFull && source.name !== "Abduzeedo") {
+      const next = fresh.slice(index + 1).find(candidate => !known.has(candidate.link));
+      if (next && !repairLinks.includes(next.link) && inFetchWindow(next.isoDate, now, 24)) {
+        const response = fetchPage(next.link);
+        // Отказ учитывается в обычном обработчике, когда очередь дойдёт до статьи.
+        void response.catch(() => {});
+        prefetchedPage = { link: next.link, response };
+      }
+    }
 
     // Эмбеддим оригинальный текст статьи (excerpt/fullDescription/rawSummary
     // по убыванию качества) ДО саммаризации — раньше порядок был обратным
@@ -700,14 +718,15 @@ export async function processSource(
     // сигналит NO_CONTENT. excerpt нигде не хранится — только временный
     // контекст для генерации, не для показа пользователю.
     let aiSummary: string;
+    let titleRu: string | null;
     let aiSummaryMore: string | null;
     let category: string[] | null;
     try {
-      ({ summary: aiSummary, more: aiSummaryMore, category } = await summarizeArticle(item.title, {
+      ({ summary: aiSummary, more: aiSummaryMore, category, titleRu } = await summarizeArticle(item.title, {
         excerpt,
         description: fullDescription,
         rawSummary,
-      }));
+      }, true));
     } catch (err) {
       diagnostic.summaryErrors++;
       if (err instanceof SummaryQualityError) {
@@ -790,10 +809,11 @@ export async function processSource(
     }
 
     await pool.query(
-      `UPDATE articles SET ai_summary = $1, ai_summary_more = $2, category = $3 WHERE id = $4`,
-      [aiSummary, aiSummaryMore, category, newId]
+      `UPDATE articles SET ai_summary = $1, ai_summary_more = $2, category = $3, title_ru = $4 WHERE id = $5`,
+      [aiSummary, aiSummaryMore, category, titleRu, newId]
     );
 
+    if (!titleRu) outcome(diagnostic, "title_pending");
     console.log(`  + "${item.title.slice(0, 60)}..." → новый кластер #${clusterId}`);
     diagnostic.saved++;
     if (repairing) await resolveContentRepair(item.link);
@@ -886,11 +906,21 @@ async function markSkipped(link: string, reason: "sport" | "shopping" | "no_text
 // Статьи прогона появляются в ленте одной пачкой, а не по одной каждые
 // 10 секунд (DIS-25): иначе плашка "N Новых" у открытой ленты срабатывала бы
 // заново каждую минуту все 3-8 минут, что идёт прогон. Статья вставляется
-// скрытой (visible_at = NULL, см. INSERT выше), а здесь все скрытые
-// открываются одним запросом. Склейке скрытость не мешает: она смотрит на все
-// статьи в базе.
+// скрытой. Открываем готовые кластеры одним запросом. Готовность наследуют
+// дубли, которым своё саммари и перевод не нужны.
 async function revealBatch() {
-  const res = await pool.query("UPDATE articles SET visible_at = now() WHERE visible_at IS NULL");
+  const res = await pool.query(
+    `UPDATE articles a SET visible_at = now()
+     WHERE a.visible_at IS NULL AND EXISTS (
+       SELECT 1 FROM articles member
+       WHERE member.cluster_id = a.cluster_id
+         AND NULLIF(btrim(member.title_ru), '') IS NOT NULL
+         AND (member.ai_summary IS NOT NULL OR member.visible_at IS NOT NULL)
+     ) AND EXISTS (
+       SELECT 1 FROM articles member
+       WHERE member.cluster_id = a.cluster_id AND member.ai_summary IS NOT NULL
+     )`,
+  );
   if (res.rowCount) console.log(`Показано в ленте: ${res.rowCount}`);
 }
 
@@ -908,6 +938,16 @@ async function main() {
   const diagnostics: SourceDiagnostic[] = [];
   let diagnosticsReady = false;
   let coverageReady = false;
+  let titlesChecked = false;
+  const publishBatch = async () => {
+    if (!titlesChecked) {
+      titlesChecked = true;
+      await backfillArticleTitles().catch(err => {
+        console.error(`TITLE_BACKFILL_ERROR: ${err.message}`);
+      });
+    }
+    await revealBatch();
+  };
   try {
     const previous = await initDiagnostics().then(state => { diagnosticsReady = true; return state; })
       .catch(err => { console.error(`Диагностика недоступна: ${(err as Error).message}`); return new Map<number, PreviousFetch>(); });
@@ -991,13 +1031,13 @@ async function main() {
         console.log(`SOURCE_DIAGNOSTIC ${JSON.stringify(d)}`);
       }
     }
+    await publishBatch();
     // Треды (DIS-36): новые карточки раскладываются по тредам (показывает их
     // лента с THREADS_VIEW, см. src/lib/feed.ts). Только после показа пачки —
     // раскладка берёт видимые карточки. THREADS_SHADOW=0 отключает. Ошибка
     // раскладки не роняет прогон: статьи уже собраны и показаны, а
     // непроверенные карточки раскладка возьмёт в следующий раз.
     if (process.env.THREADS_SHADOW !== "0") {
-      await revealBatch();
       try {
         const t = await assignThreads({ sinceHours: 24 });
         console.log(
@@ -1009,7 +1049,7 @@ async function main() {
       }
     }
   } finally {
-    const batchRevealed = await revealBatch().then(() => true, err => {
+    const batchRevealed = await publishBatch().then(() => true, err => {
       console.error(`не удалось показать статьи: ${(err as Error).message}`);
       return false;
     });

@@ -34,7 +34,7 @@ export function summaryQualityIssues(text: string, withMore: boolean): string[] 
     const prefix = i === 0 ? "lead" : "more";
     if ((t.match(/\p{L}+/gu)?.length ?? 0) < 4 || (t.match(/\p{L}/gu)?.length ?? 0) < 20) issues.push(`${prefix}:too_short`);
     if (!/[.!?…][»”"')\]]*$/.test(t)) issues.push(`${prefix}:unfinished`);
-    if (/(^|\n)\s*(ТЕМА(?=\s|:|$)|главное\s*:|подробности\s*:|часть\s*\d|===|```)/iu.test(t)) issues.push(`${prefix}:markup`);
+    if (/(^|\n)\s*(ТЕМА(?=\s|:|$)|заголовок\s*:|главное\s*:|подробности\s*:|часть\s*\d|===|```)/iu.test(t)) issues.push(`${prefix}:markup`);
     if (looksNonRussian(t, 20)) issues.push(`${prefix}:language`);
     if (isNoContentSignal(t) || /^(?:извините[,!]?\s*)?(?:я не могу|я не имею доступа|как (?:языковая модель|ИИ))(?=\s|[,.:!]|$)/iu.test(t)) issues.push(`${prefix}:model_commentary`);
   });
