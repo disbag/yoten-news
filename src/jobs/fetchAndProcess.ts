@@ -28,6 +28,7 @@ import { isAd } from "../lib/adFilter.js";
 import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
 import { stripExclusiveSuffix } from "../lib/titleTranslation.js";
 import { descriptionArticle, sufficientFeedArticle, canonicalAbduzeedoLink, cmsFeedArticle, cleanFeedMarkup } from "../lib/feedArticle.js";
+import { newsSitemapRss } from "../lib/newsSitemap.js";
 import { clipArticleText } from "../lib/articleText.js";
 import { describeContext, type ContentOrigin } from "../lib/contentQuality.js";
 import { loadContentRepairs, claimContentRepair, recordNoText, resolveContentRepair } from "./contentRepairs.js";
@@ -234,11 +235,11 @@ export async function fetchFeedText(rssUrl: string, attempts = 3, userAgent = BR
 const FEED_CONCURRENCY = 8;
 export async function fetchSourceFeed(source: { name: string; rss_url: string }): Promise<FeedResponse> {
   const config = SOURCES.find(s => s.name === source.name);
-  if (!config || (!config.primaryFeedUrl && !config.fallbackAtomUrl) || source.rss_url !== config.rssUrl) {
+  if (!config || (!config.primaryFeedUrl && !config.fallbackAtomUrl && !config.fallbackNewsSitemapUrl) || source.rss_url !== config.rssUrl) {
     return fetchFeedText(source.rss_url, undefined, config?.feedUserAgent);
   }
   const primaryUrl = config.primaryFeedUrl ?? source.rss_url;
-  const fallbackUrl = config.fallbackAtomUrl ?? source.rss_url;
+  const fallbackUrl = config.fallbackAtomUrl ?? config.fallbackNewsSitemapUrl ?? source.rss_url;
   let primaryError: string;
   try {
     // Две сетевые попытки основного канала, одна резервного — максимум
@@ -255,6 +256,9 @@ export async function fetchSourceFeed(source: { name: string; rss_url: string })
   console.log(`  ${source.name}: основной RSS недоступен (${primaryError}), резерв ${fallbackUrl}`);
   try {
     const response = await fetchFeedText(fallbackUrl, 1, config.feedUserAgent);
+    if (config.fallbackNewsSitemapUrl) {
+      return { ...response, xml: newsSitemapRss(response.xml, fallbackUrl), fetchedUrl: fallbackUrl, primaryFeedError: primaryError };
+    }
     const feed = await parser.parseString(response.xml);
     if (!feed.items.some(item => item.title && item.link && item.isoDate && Number.isFinite(Date.parse(item.isoDate)) && (!config.fallbackAtomUrl || Boolean(item.content?.trim())))) {
       throw new Error("Резервный RSS не содержит пригодных статей");

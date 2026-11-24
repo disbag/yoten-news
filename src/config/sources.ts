@@ -29,6 +29,8 @@ export type SourceConfig = {
   primaryFeedUrl?: string;
   // Резерв того же издателя. Atom передаёт полный текст в <content>.
   fallbackAtomUrl?: string;
+  // Официальная карта новостей издателя, если обычный RSS недоступен.
+  fallbackNewsSitemapUrl?: string;
   contentSelector?: string;
   // "hearst" — ссылка(и) на подгалерею /photos с несколькими кадрами
   // (Motor Trend, Car and Driver). "futureplc" (Wallpaper, Creative Bloq —
@@ -193,6 +195,7 @@ export const SOURCES: SourceConfig[] = [
     // картинки галереи (страница ~1-1.6МБ, фото в теле идут ближе к концу).
     name: "Wallpaper",
     rssUrl: "https://www.wallpaper.com/feeds.xml",
+    fallbackNewsSitemapUrl: "https://www.wallpaper.com/sitemap-news.xml",
     homepageUrl: "https://www.wallpaper.com",
     gallery: "futureplc",
     preferFeedContent: true,
@@ -205,6 +208,7 @@ export const SOURCES: SourceConfig[] = [
     // реклама, иллюстрация, 3D, креативная техника.
     name: "Creative Bloq",
     rssUrl: "https://www.creativebloq.com/feeds.xml",
+    fallbackNewsSitemapUrl: "https://www.creativebloq.com/sitemap-news.xml",
     homepageUrl: "https://www.creativebloq.com",
     gallery: "futureplc",
     preferFeedContent: true,
@@ -405,6 +409,8 @@ export const SOURCES: SourceConfig[] = [
     // Основной фид — раздел "Мир" (политика, происшествия); искусство и
     // дизайн, книги и путешествия — отдельными фидами.
     name: "The Guardian",
+    // Официальные RSS принимают идентификатор сборщика. Браузерный профиль получает 403.
+    feedUserAgent: "Yoten/1.0 (+https://yoten.io)",
     rssUrl: "https://www.theguardian.com/world/rss",
     extraFeeds: [
       "https://www.theguardian.com/artanddesign/rss",
