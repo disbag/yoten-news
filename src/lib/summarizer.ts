@@ -11,7 +11,7 @@ import {
 } from "./prompt.js";
 import { sleep } from "./http.js";
 import { checkedSummary, looksNonRussian, summaryQualityIssues, MAX_SUMMARY_ATTEMPTS, type SummaryBudget } from "./summaryQuality.js";
-import { validateTranslatedTitles, parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
+import { stripExclusiveSuffix, validateTranslatedTitles, parseTranslatedTitles, TITLE_TRANSLATION_PROMPT, type ArticleTitle } from "./titleTranslation.js";
 
 export type SummaryResult = { summary: string; category: Category[] | null };
 
@@ -141,7 +141,7 @@ async function generate(title: string, rawSummary: string, systemPrompt: string)
 export type ArticleSummary = { summary: string; more: string | null; category: Category[] | null };
 
 export async function translateArticleTitles(titles: readonly ArticleTitle[]): Promise<ArticleTitle[]> {
-  const input = JSON.stringify(titles);
+  const input = JSON.stringify(titles.map(({ id, title }) => ({ id, title: stripExclusiveSuffix(title) })));
   const result = await checkedSummary(
     (attempt, reasons) => {
       const prompt = attempt > 1 ? `${TITLE_TRANSLATION_PROMPT}\nИсправь ошибки предыдущего ответа: ${reasons.join(", ")}. Проверь JSON, все id и строки перевода.` : TITLE_TRANSLATION_PROMPT;

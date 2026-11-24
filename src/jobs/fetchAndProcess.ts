@@ -25,6 +25,7 @@ import { acquireLock, releaseLock, heartbeat } from "../lib/fetchLock.js";
 import { assignThreads } from "../lib/threads.js";
 import { isAd } from "../lib/adFilter.js";
 import { BROWSER_USER_AGENT, sleep } from "../lib/http.js";
+import { stripExclusiveSuffix } from "../lib/titleTranslation.js";
 import { descriptionArticle, sufficientFeedArticle, canonicalAbduzeedoLink, cmsFeedArticle, cleanFeedMarkup } from "../lib/feedArticle.js";
 import { clipArticleText } from "../lib/articleText.js";
 import { describeContext, type ContentOrigin } from "../lib/contentQuality.js";
@@ -348,7 +349,7 @@ export async function prepareSource(
     // grouping.ts) и в промпт: Hearst (Esquire, Car and Driver) размечает в
     // нём названия фильмов тегами <i><em>, а The Art Newspaper оборачивает
     // заголовки в пробелы и переносы строк.
-    item.title = stripHtml(item.title);
+    item.title = stripExclusiveSuffix(stripHtml(item.title));
     if (!item.title) return reject("missing_title_link");
     // Ссылка из чужого фида попадает прямо в <a href> карточки, а React 18
     // не блокирует javascript:-ссылки — взломанный фид издания дал бы XSS.
@@ -465,6 +466,10 @@ export async function processSource(
       (sourceConfig?.feedDescriptionIsFull && sufficientFeedArticle(feedContent))) excerpt = feedContent;
     else try {
       const og = await fetchOgTags(item.link, contentSelector, sourceConfig?.gallery);
+      // TIME иногда присылает кредит фотографа вместо заголовка RSS.
+      if (source.name === "TIME" && og.headline && /(?:[—–\/-]|courtesy of)\s*Getty Images\s*$/i.test(item.title)) {
+        item.title = stripExclusiveSuffix(og.headline);
+      }
       pageExtraction = og.extraction;
       if (og.retrieval) console.log(`  резервный источник ${og.retrieval}: ${item.link}`);
       fullDescription = og.description;

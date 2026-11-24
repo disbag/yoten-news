@@ -879,7 +879,7 @@ function collectFrames($: CheerioAPI, baseUrl: string, site: GallerySite, cover?
   return Array.from(urls);
 }
 
-export type OgTags = { description?: string; image?: string; excerpt?: string; gallery?: string[]; retrieval?: "abduzeedo-cms";
+export type OgTags = { headline?: string; description?: string; image?: string; excerpt?: string; gallery?: string[]; retrieval?: "abduzeedo-cms";
   extraction?: { method: "selector" | "jsonld" | "article" | "page" | "none"; selectorMiss: boolean; possibleTeaser: boolean } };
 
 function editorialTextSelector(url: URL): string | undefined {
@@ -945,6 +945,7 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
   if (pageUrl.hostname.replace(/^www\./, "") === "caranddriver.com") {
     jsonLd = jsonLd?.replace(/➡\uFE0F?\s*Skip the lot\.[\s\S]*$/, "").trim();
   }
+  const headline = gallery === "time" ? $("h1").first().text().trim() || extractMetaContent($, "og:title") : undefined;
   cleanArticleDom($, url);
   const articleScope = findLargestArticleScope($);
   // Порядок: ручной селектор источника (если задан и сработал) > JSON-LD
@@ -975,6 +976,7 @@ export function parseArticleHtml(html: string, url: string, contentSelector?: st
   const image = (pageSite && GALLERY_SITES[pageSite].coverFromFirstFrame && frames?.[0]) ||
     (pageSite === "hearst" ? hearstLeadImage($) : undefined) || cover;
   return {
+    headline,
     description: extractMetaContent($, "og:description"),
     image,
     excerpt,

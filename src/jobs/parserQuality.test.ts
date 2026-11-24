@@ -124,3 +124,8 @@ test("обрезка текста сохраняет последнее заве
   const result = clipArticleText(complete + " A final sentence that cannot fit.", complete.length + 14);
   assert.equal(result, complete);
 });
+
+test("TIME отдаёт редакционный заголовок страницы для замены фотокредита в RSS", () => {
+  const result = parse("TIME", '<meta property="og:title" content="Social headline"><article><h1>Original headline</h1><figure><figcaption>Scott Olson—Getty Images</figcaption></figure></article>');
+  assert.equal(result.headline, "Original headline");
+});

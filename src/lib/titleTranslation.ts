@@ -7,6 +7,11 @@ export const TITLE_TRANSLATION_PROMPT = `Ты переводчик заголо�
 
 export type ArticleTitle = { id: number; title: string };
 
+// Редакционная помета встречается и в RSS, и в уже переведённых заголовках.
+export function stripExclusiveSuffix(title: string): string {
+  return title.replace(/(?:\s*[-–—]\s*|\s*)\(\s*(?:exclusive|эксклюзив)\s*\)\s*$/iu, "").trimEnd();
+}
+
 // Издания со строчными заголовками в RSS иногда передают этот регистр переводу.
 // Латиницу сохраняем, чтобы не менять названия вроде iPhone и macOS.
 export function capitalizeTranslatedTitle(title: string): string {
@@ -65,7 +70,7 @@ export function validateTranslatedTitles(raw: string, originals: readonly Articl
       issues.push(prefix + "not_string");
       continue;
     }
-    const title = item.title.trim();
+    const title = stripExclusiveSuffix(item.title.trim());
     if (!title) issues.push(prefix + "empty");
     if (title.length > 600) issues.push(prefix + "too_long");
     if (/[\u0000-\u001f]/.test(title)) issues.push(prefix + "control_characters");
