@@ -506,7 +506,11 @@ export async function processSource(
         pageFailureLogged = true;
       }
     }
-    imageUrl ??= extractFeedImage(item["media:content"]) ?? extractEnclosureImage(item.enclosure);
+    if (!imageUrl) {
+      const feedImage = extractFeedImage(item["media:content"]) ?? extractEnclosureImage(item.enclosure);
+      // Guardian RSS отдаёт миниатюры шириной 140 px даже для больших фотографий.
+      imageUrl = feedImage && sourceConfig?.gallery === "guardian" ? normalizeCover("guardian", feedImage) : feedImage;
+    }
 
     // Галерея из самого RSS — для сайтов, чья страница закрыта от бота, но
     // RSS несёт фото статьи (GameSpot, см. GALLERY_SITES в src/lib/ogTags.ts).
