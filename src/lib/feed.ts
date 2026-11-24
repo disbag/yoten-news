@@ -180,11 +180,17 @@ export async function getFeed(
     havingClauses.push(`bool_or(${ofSource})`);
     preferSource = `NOT (${ofSource}), `;
   }
-  // "Новые" идут по дате публикации, "Прочитанные" — по времени прочтения,
-  // последнее прочитанное сверху. По дате публикации только что прочитанная
-  // карточка вставала в список по своему возрасту и терялась среди сотен
-  // прочитанных раньше: выглядело так, будто она туда не попала (DIS-39).
-  const sortExpr = readOnly ? "max(ar.read_at)" : "max(a.published_at)";
+  // Дату прочитанной карточки фиксируем по источникам, видимым на момент
+  // прочтения. У непрочитанной учитываем все источники. У треда сохраняем
+  // дату последней публикации, чтобы он поднимался при обновлении.
+  const clusterPublishedAt = `COALESCE(
+    max(a.published_at) FILTER (WHERE ar.read_at IS NULL OR a.visible_at <= ar.read_at),
+    min(a.published_at)
+  )`;
+  const publishedAtExpr = threads
+    ? `CASE WHEN bool_or(tp.thread_id IS NOT NULL) THEN max(a.published_at) ELSE ${clusterPublishedAt} END`
+    : clusterPublishedAt;
+  const sortExpr = readOnly ? "max(ar.read_at)" : publishedAtExpr;
   if (before) {
     havingClauses.push(
       `(${sortExpr}, ${unitExpr}) < ($${params.push(before.cursor)}::timestamptz, $${params.push(before.clusterId)})`
@@ -195,20 +201,19 @@ export async function getFeed(
       `(${sortExpr}, ${unitExpr}) > ($${params.push(after.cursor)}::timestamptz, $${params.push(after.clusterId)})`
     );
   }
-  if (fromClusterId && threads) {
-    // Запомненная карточка могла с тех пор попасть в тред — открываем с места
-    // треда.
+  if (fromClusterId) {
     const n = params.push(fromClusterId);
-    const unitOf = `COALESCE(-(SELECT thread_id FROM thread_posts WHERE cluster_id = $${n} AND thread_id IS NOT NULL), $${n})`;
+    // Запомненная карточка могла попасть в тред. Для якоря используем
+    // те же дату, видимость и рубрику, что и для самой ленты.
+    const unitOf = threads
+      ? `COALESCE(-(SELECT thread_id FROM thread_posts WHERE cluster_id = $${n} AND thread_id IS NOT NULL), $${n})`
+      : `$${n}`;
     havingClauses.push(
-      `(max(a.published_at), ${unitExpr}) <= ((SELECT max(x.published_at) FROM articles x
-         LEFT JOIN thread_posts t ON t.cluster_id = x.cluster_id AND t.thread_id IS NOT NULL
-         WHERE COALESCE(-t.thread_id, x.cluster_id) = ${unitOf}), ${unitOf})`
-    );
-  } else if (fromClusterId) {
-    const n = params.push(fromClusterId);
-    havingClauses.push(
-      `(max(a.published_at), a.cluster_id) <= ((SELECT max(published_at) FROM articles WHERE cluster_id = $${n}), $${n})`
+      `(${sortExpr}, ${unitExpr}) <= ((SELECT ${sortExpr}
+         FROM articles a
+         LEFT JOIN article_reads ar ON ar.cluster_id = a.cluster_id AND ar.user_id = $2
+         ${threadJoin}
+         ${categoryClause} AND ${unitExpr} = ${unitOf}), ${unitOf})`
     );
   }
   // Тред остаётся во "Новых", пока в нём есть непрочитанная карточка.
@@ -260,13 +265,7 @@ export async function getFeed(
       -- Своя картинка главного издания (может не быть) — для превью ссылки
       -- в мессенджерах: там подписано издание, и фото должно быть его.
       (array_agg(a.image_url ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_image_url,
-      -- Дата карточки = дата САМОЙ СВЕЖЕЙ статьи в кластере — то же значение,
-      -- по которому идёт сортировка ленты (см. ORDER BY ниже). Раньше дата
-      -- бралась от первой добавленной в кластер статьи (ORDER BY created_at),
-      -- а сортировка — от самой свежей: карточка могла всплыть наверх ленты
-      -- из-за нового источника, но показывать дату многодневной давности —
-      -- выглядело как "лента отсортирована неправильно".
-      max(a.published_at) AS published_at,
+      ${publishedAtExpr} AS published_at,
       ${sortExpr} AS sort_at,
       to_char(${sortExpr} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
       (array_agg(s.name ORDER BY h.user_id IS NOT NULL, ${preferSource}a.created_at, a.id))[1] AS primary_source,
